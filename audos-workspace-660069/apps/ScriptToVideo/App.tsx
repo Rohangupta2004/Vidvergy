@@ -17,7 +17,7 @@
 import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlertCircle, ArrowLeft, Download } from 'lucide-react';
-import { Film, FilmCharacter, FilmScene, StoredReference, T, db, generateBackdropImage, newSceneKey, referenceSlug } from './api';
+import { Film, FilmCharacter, FilmScene, StoredReference, T, db, generateBackdropImage, newSceneKey, referenceSlug, uploadDataUrl } from './api';
 import {
   AssemblyProgress, allScenesDone, assembleReadyFilm,
   autoPostProduce, autoProduce, changeMusicDirection, changeNarrationVoice,
@@ -62,6 +62,7 @@ import type { ClipAudioProbe } from './pipeline/capture';
 import CampaignSetLauncher from './CampaignSetLauncher';
 import { STUDIO_CHROME_CSS, StudioStepper, StudioToast } from './StudioChrome';
 import { saveVideoToHistory } from '../../lib/videoHistory';
+import { workspaceFetch } from '../../lib/workspace';
 
 type Screen = 'library' | 'create' | 'board' | 'final' | 'legacy';
 
@@ -581,10 +582,39 @@ function ScriptToVideoApp() {
   async function startUnattendedProduction(targetFilm: Film, targetScenes: FilmScene[], reviewBeforeAssembly: boolean, includeCaptions: boolean) {
     const access = await callHook<{ approved?: boolean; founderExempt?: boolean; error?: string }>('stv-scene-generate', { op: 'access-check' });
     if (!access?.approved) throw new Error(access?.error || 'This account is not approved for founder-funded video generation.');
+    const styleLock = String(targetFilm.plan?.custom_visual_direction || targetFilm.plan?.visual_style || targetFilm.plan?.style_direction || 'cinematic');
+    for (const scene of [...targetScenes].sort((a, b) => a.idx - b.idx)) {
+      if (String(scene.prompt || '').trim()) continue;
+      const spec = { ...(scene.spec as any) };
+      const duration = Math.round(Number(scene.duration_s) || 8);
+      const beats = Array.isArray(spec.timed_beats) && spec.timed_beats.length ? spec.timed_beats : [{ start_s: 0, end_s: duration, action: spec.visual_goal || spec.summary || scene.script_segment }];
+      const dialogue = scene.dialogue?.line ? String(scene.dialogue.line) : '';
+      const written = await askOpusJson<{ prompt: string }>({
+        system: `You are Claude Opus 5 writing one saved Gemini Omni block prompt. Reply only with {"prompt":string}. Preserve every supplied timecode. Put the exact dialogue line once inside its own beat and nowhere else; do not paraphrase or split it. Include concrete action, camera and sound. Later blocks must repeat the supplied STYLE LOCK. Do not add a separate Dialogue/Narration block; the browser appends that deterministically.`,
+        user: `BLOCK ${scene.idx + 1}, ${duration}s, ${spec.cut_type || (scene.idx ? 'continuous' : 'new_shot')}\nSTYLE LOCK: ${styleLock}\nSCRIPT: ${scene.script_segment}\nBEATS: ${JSON.stringify(beats)}\nEXACT SPOKEN LINE: ${dialogue || 'none'}\nCAST: ${JSON.stringify((targetFilm.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => ({ name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+        maxTokens: 6000,
+        effort: 'medium',
+      });
+      let prompt = String(written?.prompt || '').trim();
+      const exactBlock = dialogue ? `${scene.dialogue?.kind === 'narrator' ? 'Narration' : 'Dialogue'} — exact words: "${dialogue}"` : '';
+      const count = dialogue ? prompt.split(dialogue).length - 1 : 0;
+      if (dialogue && count !== 1) {
+        prompt = beats.map((beat: any, index: number) => `${beat.start_s}-${beat.end_s}s: ${beat.action || ''}${beat.camera ? ` Camera: ${beat.camera}.` : ''}${beat.dialogue ? ` Exact speech: "${beat.dialogue}"` : index === 0 && dialogue ? ` Exact speech: "${dialogue}"` : ''}`).join('\n');
+      }
+      if (exactBlock) prompt = `${prompt}\n${exactBlock}`;
+      if (scene.idx > 0 && !prompt.includes('STYLE LOCK:')) prompt = `STYLE LOCK: ${styleLock}\n${prompt}`;
+      await db.updateScene(scene.id, { prompt, spec: { ...spec, prompt_version: Number(spec.prompt_version || 0) + 1 } });
+      scene.prompt = prompt;
+      scene.spec = { ...spec, prompt_version: Number(spec.prompt_version || 0) + 1 };
+    }
+    if (!audioReady(targetFilm.audio)) {
+      setNote('Preparing every narration line and music bed in this signed-in browser before Start…');
+      await prepareFilmAudioStage(targetFilm, targetScenes, hooks, { voiceSource, openaiVoice });
+    }
     const newlyCharged = await preauthorizeBackgroundScenes(targetFilm, targetScenes);
     try {
       const result = await callHook<{ success?: boolean; status?: string; error?: string }>('stv-scene-generate', {
-        op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions,
+        op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: targetFilm.plan?.execution_mode !== 'automatic',
       });
       if (!result?.success) {
         await Promise.all(newlyCharged.map((key) => refundCreditsStrict(key, 'Script-to-Video Start was rejected before any render submit')));
@@ -614,7 +644,7 @@ function ScriptToVideoApp() {
         ? await createManualScriptFilm({ script: params.script, aspect: params.aspect, targetDuration: params.targetDuration, characterRefUrl: params.characterRefUrl || null, referenceImageUrl: params.screenshotUrl, note: params.note, videoModel: params.videoModel, styleLock: params.styleLock !== false, audioEnabled: params.audioEnabled !== false, narrationEnabled: params.narrationEnabled === true, charactersSpeak: params.charactersSpeak === true, entryType: params.entryType, controlMode: params.controlMode, executionMode: params.executionMode, motionEngine: params.motionEngine, videoStyle: params.videoStyle, customVisualDirection: params.customVisualDirection, audioPolicy: params.audioPolicy, maxAuthorizedCredits: params.maxAuthorizedCredits, storyboardRequested: params.storyboardRequested }, hooks)
         : await createAndSegmentFilm({ script: params.script, aspect: params.aspect, targetDuration: params.targetDuration, referenceImageUrl: params.screenshotUrl, characterRefUrl: params.characterRefUrl || null, note: params.note, videoModel: params.videoModel, styleLock: params.styleLock !== false, audioEnabled: params.audioEnabled !== false, narrationEnabled: params.narrationEnabled === true, charactersSpeak: params.charactersSpeak === true, entryType: params.entryType, controlMode: params.controlMode, executionMode: params.executionMode, motionEngine: params.motionEngine, videoStyle: params.videoStyle, customVisualDirection: params.customVisualDirection, audioPolicy: params.audioPolicy, maxAuthorizedCredits: params.maxAuthorizedCredits, storyboardRequested: params.storyboardRequested }, hooks);
       let createdFilm = res.film;
-      if (params.storyboardRequested && createdFilm.plan) {
+      if (createdFilm.plan) {
         const storyboardPlan = { ...createdFilm.plan, storyboard_requested: true } as typeof createdFilm.plan;
         await db.updateFilm(createdFilm.id, { plan: storyboardPlan });
         createdFilm = { ...createdFilm, plan: storyboardPlan };
@@ -844,26 +874,58 @@ function ScriptToVideoApp() {
     }, { block: true });
   }
 
+  async function cropStoryboardToAspect(imageBase64: string, mimeType: string, aspect: string, fileName: string): Promise<string> {
+    const [targetW, targetH] = aspect === '9:16' ? [1080, 1920] : aspect === '1:1' ? [1080, 1080] : [1920, 1080];
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image(); element.onload = () => resolve(element); element.onerror = reject;
+      element.src = `data:${mimeType || 'image/png'};base64,${imageBase64}`;
+    });
+    const canvas = document.createElement('canvas'); canvas.width = targetW; canvas.height = targetH;
+    const context = canvas.getContext('2d'); if (!context) throw new Error('Storyboard canvas is unavailable.');
+    const scale = Math.max(targetW / image.naturalWidth, targetH / image.naturalHeight);
+    const drawW = image.naturalWidth * scale; const drawH = image.naturalHeight * scale;
+    context.drawImage(image, (targetW - drawW) / 2, (targetH - drawH) / 2, drawW, drawH);
+    return uploadDataUrl(canvas.toDataURL('image/png'), fileName);
+  }
+
   async function generateStoryboardFrame(f: Film, target: FilmScene) {
     if (!f.plan || f.plan.background?.enabled) throw new Error('Storyboards can only change before paid production starts.');
     const spec = { ...(target.spec as any), storyboard_status: 'loading', storyboard_error: null };
     await db.updateScene(target.id, { spec });
     Object.assign(target, { spec });
     try {
+      const visibleSheets = (f.character_refs || []).filter((character) => (spec.characters || []).includes(character.id) && character.url);
       const written = await askOpusJson<{ caption: string; prompt: string }>({
-        system: `You write one human-review storyboard still for a production plan. Reply only with JSON: {"caption":string,"prompt":string}. The caption is a short literal description of the scene beat. The image prompt states every visible character's locked identity and frame position, one physically realistic action, object contact, camera framing/lens, motivated light source, setting and end pose. Preserve the approved visual style. Ban vague filler, teleporting, sudden appearances, morphing, text, captions, logos, interfaces, watermarks and unrequested objects. This still is review-only and must never be described as a video-model reference.`,
-        user: `FILM: ${f.title || 'Untitled film'}\nSTYLE: ${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic live action'}\nSCENE ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify((f.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
-        maxTokens: 16000,
-        effort: 'xhigh',
+        system: `You write one production keyframe prompt. Reply only with JSON: {"caption":string,"prompt":string}. The image prompt states every visible character's locked identity and frame position, one physical action, camera/lens, motivated light, setting and end pose. Preserve the approved visual style. No text, captions, logos, interfaces, watermarks or extra people.`,
+        user: `FILM: ${f.title || 'Untitled film'}\nSTYLE: ${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}\nBLOCK ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify(visibleSheets.map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+        maxTokens: 6000,
+        effort: 'medium',
       });
-      const storyboardUrl = await generateBackdropImage(written.prompt, (f.aspect_ratio || '16:9') as any, 'draft');
+      let storyboardUrl = '';
+      if (visibleSheets.length) {
+        const response = await workspaceFetch('/api/generate/image-to-image', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'gpt-image-1.5', prompt: written.prompt,
+            images: visibleSheets.slice(0, 10).map((character) => ({ data: character.url, label: `PERSON IDENTITY: ${character.name}; face, hair and wardrobe likeness only` })),
+            referenceLimit: Math.min(10, visibleSheets.length), inputFidelity: 'high', quality: 'medium',
+            size: f.aspect_ratio === '9:16' ? '1024x1536' : f.aspect_ratio === '1:1' ? '1024x1024' : '1536x1024',
+            fallbackPolicy: 'none', returnBase64: true,
+          }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.imageBase64) throw new Error(String(data?.error?.message || data?.error || `Storyboard image edit failed (HTTP ${response.status}).`));
+        storyboardUrl = await cropStoryboardToAspect(String(data.imageBase64), String(data.mimeType || 'image/png'), String(f.aspect_ratio || '16:9'), `s2v-storyboard-${f.id}-${target.idx + 1}.png`);
+      } else {
+        storyboardUrl = await generateBackdropImage(written.prompt, (f.aspect_ratio || '16:9') as any, 'draft');
+      }
       const nextSpec = { ...spec, storyboard_url: storyboardUrl, storyboard_caption: written.caption, storyboard_only: true, storyboard_status: 'ready', storyboard_error: null, storyboard_approved: false };
       await Promise.all([
         db.updateScene(target.id, { spec: nextSpec }),
         db.addAsset({ film_id: f.id, kind: 'storyboard', name: `Scene ${target.idx + 1} storyboard`, description: String(spec.visual_goal || spec.summary || '').slice(0, 200), url: storyboardUrl, tags: ['storyboard-only', 'human-review'] }),
       ]);
       Object.assign(target, { spec: nextSpec });
-      const plan = { ...f.plan, storyboard_requested: true, storyboard_only_asset_ids: Array.from(new Set([...(f.plan.storyboard_only_asset_ids || []), storyboardUrl])) } as typeof f.plan;
+      const plan = { ...f.plan, scenes: (f.plan.scenes || []).map((item) => item.scene_key === target.scene_key ? { ...item, spec: nextSpec } : item), storyboard_requested: true, storyboard_only_asset_ids: Array.from(new Set([...(f.plan.storyboard_only_asset_ids || []), storyboardUrl])) } as typeof f.plan;
       await db.updateFilm(f.id, { plan });
       Object.assign(f, { plan });
     } catch (caught: any) {
@@ -946,9 +1008,10 @@ function ScriptToVideoApp() {
     const f = engineFilm.current;
     if (!f?.plan?.background?.enabled || !f.plan.orchestration) return;
     await run(async () => {
-      const plan = { ...f.plan, orchestration: { ...f.plan!.orchestration!, paused, state: paused ? 'resumable' as const : 'queued' as const, checkpoint: paused ? 'paused_after_current_job' : 'resume_requested', updated_at: new Date().toISOString() } };
-      await db.updateFilm(f.id, { plan, stage_note: paused ? 'Paused — the current provider job may finish, but no future block will be submitted.' : 'Resume requested — the durable worker will continue from the saved checkpoint.' });
-      Object.assign(f, { plan, stage_note: paused ? 'Paused — the current provider job may finish, but no future block will be submitted.' : 'Resume requested — the durable worker will continue from the saved checkpoint.' });
+      const plan = { ...f.plan, background: { ...(f.plan.background || {}), ...(!paused && f.plan.background?.review_gate_pending ? { review_gate_pending: false, look_approved_at: new Date().toISOString(), stage: 'generating' as const } : {}) }, orchestration: { ...f.plan!.orchestration!, paused, state: paused ? 'resumable' as const : 'queued' as const, checkpoint: paused ? 'paused_after_current_job' : f.plan.background?.review_gate_pending ? 'look_approved' : 'resume_requested', updated_at: new Date().toISOString() } };
+      const stageNote = paused ? 'Paused — the current provider job may finish, but no future block will be submitted.' : f.plan.background?.review_gate_pending ? 'Look approved — the remaining blocks will now render.' : 'Resume requested — the durable worker will continue from the saved checkpoint.';
+      await db.updateFilm(f.id, { plan, stage_note: stageNote });
+      Object.assign(f, { plan, stage_note: stageNote });
       setFilm({ ...f });
       if (!paused) await callHook('s2v-recovery-sweeper', { op: 'tick', film_id: f.id, chain_id: f.plan?.background?.chain_id, source: 'creator-resume' });
     }, { block: true });
@@ -1005,46 +1068,44 @@ function ScriptToVideoApp() {
   }
 
   async function handleSwitchToOmni() {
-    const f = engineFilm.current;
-    if (!f?.plan || running.current) return;
+    const original = engineFilm.current;
+    if (!original?.plan || running.current) return;
     await run(async () => {
-      if (f.plan?.background?.enabled) throw new Error('Production is already running in the background, so its models cannot change now. Pause it first, or wait for it to finish.');
-      const omni = VideoModelService.config;
-      const changed = new Map<string, any>();
-      let tooLong = 0;
-      for (const scene of engineScenes.current) {
-        if (scene.status === 'completed' || scene.status === 'skipped') continue;
-        const currentSpec = { ...(scene.spec as any) };
-        if (resolveVideoModel(currentSpec.engine_id || f.video_model).id === omni.id) continue;
-        const seconds = Number(scene.duration_s || 0);
-        if (seconds > omni.safeMaxDuration || seconds < Number(omni.minDuration || 1)) { tooLong += 1; continue; }
-        const reason = `Creator switched this scene to ${omni.label} so it can generate in the background.`;
-        const spec = {
-          ...currentSpec,
-          engine_id: omni.id,
-          engine_reason: reason,
-          model_assignment: { model_id: omni.apiModel, operation: 'generate', locked: false, reason },
-          prompt_version: Number(currentSpec.prompt_version || 1) + 1,
-        };
-        await db.updateScene(scene.id, { spec, prompt: null, status: 'waiting', error: null });
-        Object.assign(scene, { spec, prompt: null, status: 'waiting', error: null });
-        changed.set(scene.scene_key, { spec });
-      }
-      if (!changed.size) {
-        throw new Error(tooLong
-          ? `${OMNI_LABEL} renders up to ${omni.safeMaxDuration} seconds per scene and the remaining scenes are longer. Shorten those scenes, or stay on this tab while Kling or Seedance renders.`
-          : `Every unfinished scene already uses ${OMNI_LABEL}.`);
-      }
-      const plan = { ...f.plan, scenes: (f.plan.scenes || []).map((scene) => changed.has(scene.scene_key) ? { ...scene, spec: changed.get(scene.scene_key).spec } : scene), scene_plan_version: Number(f.plan.scene_plan_version || 1) + 1 };
-      const allOmni = engineScenes.current.every((scene) => scene.status === 'completed' || scene.status === 'skipped' || resolveVideoModel((scene.spec as any)?.engine_id || f.video_model).id === omni.id);
-      const stageNote = tooLong
-        ? `${changed.size} scene${changed.size === 1 ? '' : 's'} switched to ${omni.label}; ${tooLong} longer scene${tooLong === 1 ? ' stays' : 's stay'} on the current model. Review, then Start.`
-        : `Switched ${changed.size} scene${changed.size === 1 ? '' : 's'} to ${omni.label}. Press Start to generate in the background; you can close this tab.`;
-      const filmPatch = { plan, error: null, stage_note: stageNote, ...(allOmni ? { video_model: omni.id } : {}) } as Partial<Film>;
-      await db.updateFilm(f.id, filmPatch);
-      Object.assign(f, filmPatch);
-      setScenes([...engineScenes.current]); setFilm({ ...f });
-      setNote(stageNote);
+      const selected = resolveVideoModel(original.video_model);
+      const originalPlan = { ...original.plan, orchestration: original.plan.orchestration ? { ...original.plan.orchestration, paused: true, state: 'resumable' as const, checkpoint: 'provider_failed_retry_same_model', updated_at: new Date().toISOString() } : original.plan.orchestration };
+      await db.updateFilm(original.id, { plan: originalPlan, status: 'error', stage_note: `Paused. Retry on ${selected.label}; this film and its completed clips remain unchanged.` });
+      const result = await createAndSegmentFilm({
+        script: original.script,
+        aspect: (original.aspect_ratio || '16:9') as any,
+        targetDuration: Number(original.plan.requested_duration_s || original.plan.target_duration_sec || original.duration_s || 0) || undefined,
+        referenceImageUrl: original.product_screenshot_url,
+        note: `Create a separate Omni version of “${original.title || 'Untitled film'}”. Preserve every source word and re-time only at sentence or clause boundaries.`,
+        videoModel: VideoModelService.config.id,
+        styleLock: original.style_lock !== false,
+        audioEnabled: original.plan.audio_enabled !== false,
+        narrationEnabled: original.plan.narration_enabled === true,
+        charactersSpeak: original.plan.characters_speak === true,
+        entryType: original.plan.entry_type || 'script',
+        controlMode: original.plan.control_mode || 'agentic',
+        executionMode: 'review',
+        motionEngine: original.plan.motion_engine || 'browser',
+        videoStyle: original.plan.video_style || 'cinematic-live-action',
+        customVisualDirection: original.plan.custom_visual_direction || original.plan.visual_style || '',
+        audioPolicy: original.plan.audio_policy,
+        maxAuthorizedCredits: Number(original.plan.max_authorized_credits || 0) || undefined,
+        storyboardRequested: true,
+        reuseCharacterRefs: original.character_refs || [],
+      }, hooks);
+      const omniTitle = `${original.title || result.film.title || 'Untitled film'} — Omni version`;
+      const castReviewed = (result.film.character_refs || []).every((character) => character.approved && character.url);
+      const omniPlan = { ...result.film.plan!, title: omniTitle, cast_reviewed: castReviewed };
+      await db.updateFilm(result.film.id, { title: omniTitle, plan: omniPlan, status: 'plan_ready', stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' });
+      const omniFilm = { ...result.film, title: omniTitle, plan: omniPlan, status: 'plan_ready' as const, stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' };
+      for (const scene of result.scenes) await generateStoryboardFrame(omniFilm, scene);
+      const freshScenes = await db.listScenes(omniFilm.id);
+      adopt(omniFilm, freshScenes);
+      setScreen('board');
+      setNote(`Created “${omniTitle}”. The original remains paused with Retry on ${selected.label}.`);
     }, { block: true });
   }
 

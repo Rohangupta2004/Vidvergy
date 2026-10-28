@@ -61,6 +61,7 @@ import {
 } from '../v2Contracts';
 import type { AudioPolicy, CodeMotionEngine, ControlMode, EntryType, ExecutionMode, VideoStyleId } from '../v2Contracts';
 import { createHyperframesMotion } from '../../../lib/hyperframes';
+import { workspaceFetch } from '../../../lib/workspace';
 
 export interface RunHooks {
   onFilm?: (patch: Partial<Film>) => void;
@@ -169,8 +170,15 @@ function frameExtractionOf(scene: FilmScene | null | undefined): NonNullable<Vid
 
 function onScreenCharacterReferences(film: Film, scene: FilmScene): ReferenceAsset[] {
   const spec = (scene.spec || {}) as VideoClipSpec;
-  const ids = Array.isArray(spec.characters) ? spec.characters.map((id) => String(id)) : [];
-  if (!ids.length) return [];
+  const profiles = Array.isArray(film.plan?.characters) ? film.plan!.characters! : [];
+  const explicit = Array.isArray(spec.characters) ? spec.characters.map(String) : [];
+  const sourceText = `${scene.script_segment || ''} ${scene.dialogue?.speaker || ''} ${scene.dialogue?.line || ''}`.toLowerCase();
+  const named = profiles.filter((profile) => [profile.id, profile.name].some((value) => sourceText.includes(String(value || '').toLowerCase()))).map((profile) => String(profile.id));
+  const ids = Array.from(new Set([...explicit, ...named]));
+  if (!ids.length && /\b(person|people|man|woman|boy|girl|character|speaker|customer|athlete)\b/i.test(sourceText)) {
+    const main = profiles.find((profile) => profile.kind === 'main');
+    if (main) ids.push(String(main.id));
+  }
   const cast = Array.isArray(film.character_refs) ? film.character_refs : [];
   const seen = new Set<string>();
   const out: ReferenceAsset[] = [];
@@ -178,7 +186,7 @@ function onScreenCharacterReferences(film: Film, scene: FilmScene): ReferenceAss
     const character = cast.find((item) => String(item.id) === id && isHttpUrl(item.url));
     if (!character || seen.has(id)) continue;
     seen.add(id);
-    out.push({ role: 'reference', url: String(character.url), type: 'character', label: character.name || id, characterId: id, priority: 500, critical: true });
+    out.push({ role: 'reference', url: String(character.url), type: 'character', label: character.name || id, characterId: id, priority: character.kind === 'main' ? 550 : 500, critical: true });
   }
   return out;
 }
@@ -189,8 +197,11 @@ function supportingSceneReferences(film: Film): ReferenceAsset[] {
   for (const ref of Array.isArray(film.at_references) ? film.at_references : []) {
     if (!isHttpUrl(ref?.url) || ref.type === 'character') continue;
     const type = ref.type === 'location' ? 'environment' : 'style';
-    out.push({ role: 'reference', url: ref.url, type, label: `@${ref.name}`, priority: type === 'environment' ? 200 : 100 });
+    out.push({ role: 'reference', url: ref.url, type, label: `@${ref.name}`, priority: type === 'environment' ? 300 : 200 });
   }
+  const first = Array.isArray(film.plan?.scenes) ? film.plan!.scenes.find((scene) => scene.idx === 0) : null;
+  const styleAnchor = String((first?.spec as VideoClipSpec | undefined)?.storyboard_url || '');
+  if (isHttpUrl(styleAnchor) && !out.some((asset) => asset.url === styleAnchor)) out.push({ role: 'reference', url: styleAnchor, type: 'style', label: 'Block 1 style anchor', priority: 100 });
   return out;
 }
 
@@ -216,122 +227,44 @@ export function allScenesDone(scenes: FilmScene[]): boolean {
  * dependent 10-second jobs. The final remainder is rebalanced, never padded or
  * discarded. */
 function packPlannedBlocks(source: any[], model: VideoModelConfig, targetDuration?: number | null): any[] {
-  const max = Math.max(1, Number(model.safeMaxDuration) || 8);
-  const min = Math.max(1, Number(model.minDuration) || 1);
-  let input = Array.isArray(source) ? source.map((beat) => ({ ...beat })) : [];
+  const max = Math.max(4, Number(model.safeMaxDuration) || 8);
+  const min = Math.max(4, Number(model.minDuration) || 4);
+  const blocks = (Array.isArray(source) ? source : []).map((scene, index) => {
+    const duration = Math.round(Number(scene?.duration_s) || max);
+    if (duration > max) throw new Error(`${model.label} block ${index + 1} is ${duration}s; re-plan it at ${max}s or less without splitting dialogue.`);
+    return { ...scene, duration_s: Math.max(min, duration), transition: index === 0 ? 'new_shot' : scene.transition === 'continuous' ? 'continuous' : 'new_shot' };
+  });
+  if (!blocks.length) return [];
   const wanted = Math.max(0, Math.round(Number(targetDuration) || 0));
-  const groups: any[][] = [];
-  if (wanted && input.length) {
-    const desiredBlocks = Math.max(1, Math.ceil(wanted / max));
-    // A terse script can produce fewer director beats than the chosen runtime
-    // needs. Split the longest source segment at a word boundary until every
-    // legal block has real, non-duplicated script coverage.
-    while (input.length < desiredBlocks) {
-      let longest = -1;
-      for (let i = 0; i < input.length; i += 1) {
-        if (longest < 0 || String(input[i].script_segment || '').length > String(input[longest].script_segment || '').length) longest = i;
-      }
-      const beat = input[longest];
-      const words = String(beat?.script_segment || '').trim().split(/\s+/).filter(Boolean);
-      if (!beat || words.length < 2) break;
-      const split = Math.max(1, Math.floor(words.length / 2));
-      const seconds = Math.max(2, Number(beat.duration_s) || 2);
-      const dialogueWords = beat.dialogue?.line ? String(beat.dialogue.line).trim().split(/\s+/).filter(Boolean) : [];
-      const dialogueCut = dialogueWords.length > 1 ? Math.max(1, Math.min(dialogueWords.length - 1, Math.round(dialogueWords.length * (split / words.length)))) : dialogueWords.length;
-      const firstDialogue = dialogueWords.length ? { ...beat.dialogue, line: dialogueWords.slice(0, dialogueCut).join(' ') } : beat.dialogue;
-      const secondDialogue = dialogueWords.length > 1 ? { ...beat.dialogue, line: dialogueWords.slice(dialogueCut).join(' ') } : null;
-      const first = { ...beat, script_segment: words.slice(0, split).join(' '), duration_s: Math.max(1, Math.floor(seconds / 2)), summary: `${String(beat.summary || 'Beat')} — part 1`, dialogue: firstDialogue };
-      const second = { ...beat, script_segment: words.slice(split).join(' '), duration_s: Math.max(1, Math.ceil(seconds / 2)), summary: `${String(beat.summary || 'Beat')} — part 2`, dialogue: secondDialogue };
-      input.splice(longest, 1, first, second);
+  if (wanted) {
+    let delta = wanted - blocks.reduce((sum, block) => sum + Number(block.duration_s), 0);
+    for (let i = blocks.length - 1; i >= 0 && delta !== 0; i -= 1) {
+      const room = delta > 0 ? max - blocks[i].duration_s : blocks[i].duration_s - min;
+      const change = delta > 0 ? Math.min(delta, room) : -Math.min(-delta, room);
+      blocks[i].duration_s += change;
+      delta -= change;
     }
-    const blockCount = Math.max(1, Math.min(input.length, desiredBlocks));
-    let cursor = 0;
-    for (let block = 0; block < blockCount; block += 1) {
-      const remainingBlocks = blockCount - block;
-      const remainingBeats = input.length - cursor;
-      const take = remainingBlocks === 1
-        ? remainingBeats
-        : Math.max(1, Math.min(remainingBeats - (remainingBlocks - 1), Math.round(input.length / blockCount)));
-      groups.push(input.slice(cursor, cursor + take).map((beat) => ({ ...beat })));
-      cursor += take;
-    }
-    const blockDurations: number[] = [];
-    let remaining = wanted;
-    for (let index = 0; index < blockCount; index += 1) {
-      const duration = Math.min(max, remaining);
-      blockDurations.push(duration);
-      remaining -= duration;
-    }
-    // Legal remainder handling: borrow only enough from the preceding full
-    // block to bring the final block up to the provider floor. For the current
-    // choices this yields Seedance 45s = 30+15 and Kling 15s = 10+5.
-    if (blockDurations.length > 1 && blockDurations[blockDurations.length - 1] < min) {
-      const need = min - blockDurations[blockDurations.length - 1];
-      blockDurations[blockDurations.length - 2] -= need;
-      blockDurations[blockDurations.length - 1] += need;
-    }
-    groups.forEach((beats, index) => {
-      const blockDuration = blockDurations[index];
-      const weight = beats.reduce((n, beat) => n + Math.max(1, Number(beat?.duration_s) || 1), 0) || 1;
-      let allocated = 0;
-      beats.forEach((beat, beatIndex) => {
-        const seconds = beatIndex === beats.length - 1
-          ? Math.max(1, blockDuration - allocated)
-          : Math.max(1, Math.round(blockDuration * (Math.max(1, Number(beat?.duration_s) || 1) / weight)));
-        beat.duration_s = seconds; allocated += seconds;
-      });
-    });
-  } else {
-    let current: any[] = [];
-    let currentS = 0;
-    for (const beat of input) {
-      const seconds = Math.max(1, Number(beat?.duration_s) || min);
-      if (current.length && currentS + seconds > max) {
-        groups.push(current); current = []; currentS = 0;
-      }
-      current.push({ ...beat, duration_s: seconds }); currentS += seconds;
-    }
-    if (current.length) groups.push(current);
+    if (delta !== 0) throw new Error(`The accepted script cannot fit ${wanted}s as ${min}–${max}s ${model.label} blocks without cutting or padding dialogue. Revise the script or duration.`);
   }
-  if (groups.length > 1) {
-    const last = groups[groups.length - 1];
-    const lastS = last.reduce((n, beat) => n + Number(beat.duration_s || 0), 0);
-    const prev = groups[groups.length - 2];
-    const prevS = prev.reduce((n, beat) => n + Number(beat.duration_s || 0), 0);
-    if (lastS < min && prevS + lastS <= max) groups.splice(groups.length - 2, 2, [...prev, ...last]);
-  }
-  return groups.map((beats) => {
-    const duration = beats.reduce((n, beat) => n + Number(beat.duration_s || 0), 0);
-    let cursor = 0;
-    const timedBeats = beats.map((beat) => {
-      const start = cursor; cursor += Number(beat.duration_s || 0);
-      return {
-        start_s: start,
-        end_s: cursor,
-        action: String(beat.visual_goal || beat.summary || '').trim(),
-        dialogue: beat.dialogue?.line ? String(beat.dialogue.line) : undefined,
-        audio: beat.dialogue?.kind === 'narrator' ? 'narration' : beat.dialogue?.line ? 'native dialogue' : 'native ambience/effects',
-      };
-    });
-    const dialogueLines = beats.map((beat) => beat.dialogue).filter(Boolean);
-    return {
-      ...beats[0],
-      duration_s: duration,
-      script_segment: beats.map((beat) => String(beat.script_segment || '')).join('\n').trim(),
-      summary: beats.map((beat) => String(beat.summary || '')).filter(Boolean).join(' → '),
-      visual_goal: timedBeats.map((beat) => `[${beat.start_s.toFixed(0)}–${beat.end_s.toFixed(0)}s] ${beat.action}`).join('\n'),
-      timed_beats: timedBeats,
-      characters: Array.from(new Set(beats.flatMap((beat) => Array.isArray(beat.characters) ? beat.characters : []))),
-      dialogue: dialogueLines.length === 1 ? dialogueLines[0] : dialogueLines.length ? {
-        kind: dialogueLines.every((line: any) => line.kind === 'narrator') ? 'narrator' : 'character',
-        line: dialogueLines.map((line: any) => String(line.line || '')).filter(Boolean).join(' '),
-        speaker: dialogueLines.map((line: any) => String(line.speaker || '')).filter(Boolean).join(' / '),
-        delivery: 'Follow each timed line exactly; never pad, paraphrase or drop dialogue.',
-        language: dialogueLines[0].language || 'English',
-        accent: dialogueLines[0].accent,
-      } : null,
-      duration_notes: beats.flatMap((beat) => Array.isArray(beat.duration_notes) ? beat.duration_notes : []),
-    };
+  return blocks.map((block) => {
+    const duration = Number(block.duration_s);
+    const supplied = Array.isArray(block.timed_beats) ? block.timed_beats.filter((beat: any) => Number(beat?.end_s) > Number(beat?.start_s)) : [];
+    const timedBeats = supplied.length ? supplied.map((beat: any) => ({
+      start_s: Number(beat.start_s), end_s: Number(beat.end_s), action: String(beat.action || block.visual_goal || block.summary || ''),
+      camera: beat.camera ? String(beat.camera) : undefined, dialogue: beat.dialogue ? String(beat.dialogue) : undefined,
+      audio: beat.dialogue ? (block.dialogue?.kind === 'narrator' ? 'narration' : 'native dialogue') : 'native ambience/effects',
+    })) : [{ start_s: 0, end_s: duration, action: String(block.visual_goal || block.summary || ''), dialogue: block.dialogue?.line || undefined, audio: block.dialogue?.kind === 'narrator' ? 'narration' : block.dialogue?.line ? 'native dialogue' : 'native ambience/effects' }];
+    const last = timedBeats[timedBeats.length - 1];
+    if (timedBeats[0].start_s !== 0 || last.end_s !== duration) throw new Error(`Block timecodes must cover 0–${duration}s exactly.`);
+    for (const beat of timedBeats) {
+      const line = String(beat.dialogue || '');
+      if (!line) continue;
+      const words = line.trim().split(/\s+/).filter(Boolean).length;
+      const hindi = /[\u0900-\u097F]/.test(line);
+      const capacity = (Number(beat.end_s) - Number(beat.start_s)) * (hindi ? 2.2 : 2.5);
+      if (words > capacity + 0.01) throw new Error(`Dialogue in ${beat.start_s}–${beat.end_s}s needs more speaking time. Lengthen or move the whole line; it was not cut.`);
+    }
+    return { ...block, timed_beats: timedBeats, visual_goal: timedBeats.map((beat: any) => `[${beat.start_s}–${beat.end_s}s] ${beat.action}`).join('\n') };
   });
 }
 
@@ -489,10 +422,12 @@ export async function createAndSegmentFilm(params: {
   audioPolicy?: AudioPolicy;
   maxAuthorizedCredits?: number | null;
   storyboardRequested?: boolean;
+  /** Separate-provider versions reuse these exact approved sheets. */
+  reuseCharacterRefs?: FilmCharacter[];
 }, hooks: RunHooks = {}): Promise<{ film: Film; scenes: FilmScene[] }> {
   const requestedDuration = Math.round(Number(params.targetDuration) || 0);
   if (requestedDuration > 600) throw new Error('The maximum assembled project duration is 10:00.');
-  if (requestedDuration && requestedDuration < 2) throw new Error('Choose at least a 2-second project duration.');
+  if (requestedDuration && requestedDuration < 4) throw new Error('Choose at least a 4-second project duration.');
   // Anything the script summoned with @name is resolved BEFORE the row is
   // written, so every scene of this film carries the same references.
   const atReferences = await resolveFilmAtReferences(params.script);
@@ -556,6 +491,7 @@ export async function createAndSegmentFilm(params: {
       spec: {
         summary: s.summary,
         visual_goal: s.visual_goal,
+        cut_type: s.transition === 'continuous' ? 'continuous' : 'new_shot',
         characters: s.characters,
         shot_intent: s.shot_intent,
         workflow_kind: s.workflow_kind,
@@ -595,9 +531,15 @@ export async function createAndSegmentFilm(params: {
         dialogue: s.dialogue || null,
       });
     }
-    const characterRefs = await generateInitialCharacterSheets(
-      film, plan.characters, plan.visual_style, params.characterRefUrl || null, atReferences, hooks,
-    );
+    const reusableCast = Array.isArray(params.reuseCharacterRefs) ? params.reuseCharacterRefs : [];
+    const characterRefs = reusableCast.length
+      ? plan.characters.map((profile) => {
+          const match = reusableCast.find((item) => castSlug(item.id) === castSlug(profile.id) || castSlug(item.name) === castSlug(profile.name));
+          return match ? { ...profile, ...match, id: profile.id, name: profile.name, approved: match.approved === true } : { ...profile, url: null, approved: false, source: 'generated' as const, image_error: 'The original film has no approved sheet for this named character.' };
+        })
+      : await generateInitialCharacterSheets(
+          film, plan.characters, plan.visual_style, params.characterRefUrl || null, atReferences, hooks,
+        );
     await patchFilm(film, hooks, {
       title: plan.title,
       status: 'plan_ready',
@@ -680,6 +622,32 @@ function castSlug(value: string): string {
 /** Generate every proposed sheet before plan approval. Existing @name library
  * references and a creator-uploaded cast image are reused first; only the
  * remaining sheets spend image-generation credits. Nothing is auto-approved. */
+async function requestCharacterSheet(profile: FilmCharacterProfile, visualStyle: string, sourceUrl?: string): Promise<string> {
+  const prompt = characterPortraitBrief(profile, visualStyle);
+  const response = sourceUrl
+    ? await workspaceFetch('/api/generate/image-to-image', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gpt-image-1.5', prompt, images: [{ data: sourceUrl, label: 'PERSON IDENTITY: likeness only' }], referenceLimit: 1, inputFidelity: 'high', quality: 'medium', size: '1536x1024', fallbackPolicy: 'none' }),
+      })
+    : await workspaceFetch('/api/veo/generate/image', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'gemini-3.1-flash-image', prompt, aspectRatio: '16:9' }),
+      });
+  const data = await response.json().catch(() => null);
+  const url = String(data?.imageUrl || data?.url || '');
+  if (!response.ok || !isHttpUrl(url)) throw new Error(String(data?.error?.message || data?.error || `Character sheet generation failed (HTTP ${response.status}).`));
+  return url;
+}
+
+async function inspectCharacterSheet(profile: FilmCharacterProfile, url: string): Promise<{ pass: boolean; issues: string[] }> {
+  const result = await askOpusJson<{ pass: boolean; issues: string[] }>({
+    system: 'Use the GPT 6.1 Sol visual handoff to verify one character sheet. Reply only with JSON {"pass":boolean,"issues":string[]}. Pass only when there is one large face close-up plus full-body front, three-quarter, side and back views; every panel is the same person with matching face, hair, build, wardrobe, shoes and accessories; backdrop is plain; there are no extra people and no text.',
+    user: `CHARACTER: ${profile.name}. WARDROBE: ${profile.wardrobe}. APPEARANCE: ${profile.appearance}.`,
+    images: [url], maxTokens: 2000, effort: 'medium',
+  });
+  return { pass: result?.pass === true, issues: Array.isArray(result?.issues) ? result.issues.map(String) : [] };
+}
+
 async function generateInitialCharacterSheets(
   film: Film,
   profiles: FilmCharacterProfile[],
@@ -692,21 +660,22 @@ async function generateInitialCharacterSheets(
   for (let index = 0; index < profiles.length; index += 1) {
     const profile = profiles[index];
     const matched = atReferences.find((ref) => castSlug(ref.name) === castSlug(profile.name) || castSlug(ref.name) === castSlug(profile.id));
-    const uploaded = index === 0 && isHttpUrl(uploadedUrl) ? String(uploadedUrl) : '';
-    let url = uploaded || String(matched?.url || '');
-    let source: FilmCharacter['source'] = uploaded ? 'uploaded' : matched ? 'library' : 'generated';
+    const identitySource = index === 0 && isHttpUrl(uploadedUrl) ? String(uploadedUrl) : String(matched?.url || '');
+    const source: FilmCharacter['source'] = identitySource ? (index === 0 && uploadedUrl ? 'uploaded' : 'library') : 'generated';
+    let url = '';
     let imageError = '';
-    if (!url) {
-      try {
-        say(hooks, `Generating ${profile.name}'s character sheet…`);
-        url = await generateBackdropImage(characterPortraitBrief(profile, visualStyle), '1:1', 'draft');
-      } catch (error: any) {
-        source = 'generated';
-        imageError = String(error?.message || error).slice(0, 240);
-        say(hooks, `${profile.name}'s fast draft could not be generated (${imageError.slice(0, 100)}). Retry the sheet, upload one, reuse one, or remove this cast member.`);
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        say(hooks, `${attempt ? 'Regenerating' : 'Generating'} ${profile.name}'s 16:9 character sheet…`);
+        url = await requestCharacterSheet(profile, visualStyle, identitySource || undefined);
+        const check = await inspectCharacterSheet(profile, url);
+        if (check.pass) { imageError = ''; break; }
+        imageError = `Vision check: ${check.issues.join('; ') || 'sheet layout or identity consistency failed'}`.slice(0, 500);
       }
+    } catch (error: any) {
+      imageError = String(error?.message || error).slice(0, 500);
     }
-    const sheet: FilmCharacter = { ...profile, url: url || null, approved: false, source, ...(imageError ? { image_error: imageError } : {}), ...(url && source === 'generated' ? { image_model: 'gemini-3.1-flash-image' } : {}) };
+    const sheet: FilmCharacter = { ...profile, url: url || null, approved: false, source, ...(imageError ? { image_error: `${imageError}. Review or regenerate this sheet before approval.` } : {}), ...(url ? { image_model: identitySource ? 'gpt-image-1.5' : 'gemini-3.1-flash-image' } : {}) };
     output.push(sheet);
     if (url) await db.addAsset({ film_id: film.id, kind: 'character', name: `${profile.name} character sheet`, description: profile.appearance.slice(0, 200), url });
   }
@@ -732,7 +701,8 @@ export async function prepareScene(
   // the director model is never called for a manual film.
   if (isManualFilm(film)) { await prepareManualScene(film, scenes, scene, hooks, opts); return; }
   const statusBefore = scene.status;
-  const prev = previousCompletedScene(scenes, scene.idx);
+  const plannedCut = ((scene.spec || {}) as VideoClipSpec).cut_type || (scene.idx === 0 ? 'new_shot' : 'continuous');
+  const prev = plannedCut === 'continuous' ? immediatePreviousScene(scenes, scene.idx) : null;
   await setState(
     film, hooks,
     scene.idx === 0 || !prev ? 'PREPARING_SCENE' : 'DETERMINE_NEXT_REFERENCE',
@@ -747,7 +717,7 @@ export async function prepareScene(
       prevScene: prev,
       characterRefs: Array.isArray(film.character_refs) ? film.character_refs : [],
       revisionNote: opts.revisionNote,
-      forceIndependent: opts.forceIndependent,
+      forceIndependent: opts.forceIndependent || plannedCut === 'new_shot',
     });
 
     if (prev && scene.idx > 0) await setState(film, hooks, 'PREPARE_NEXT_SCENE', `Scene ${scene.idx + 1}: ${prepared.continuation ? `continuing from scene ${prev.idx + 1}'s final frame` : 'independent scene'} — writing the prompt…`);
@@ -761,7 +731,7 @@ export async function prepareScene(
     let continuation = false;
     let referenceType: ReferenceType = 'none';
     const immediate = scene.idx > 0 ? immediatePreviousScene(scenes, scene.idx) : null;
-    if (scene.idx > 0) {
+    if (scene.idx > 0 && plannedCut === 'continuous') {
       const extraction = frameExtractionOf(immediate);
       if (!immediate || (immediate.status !== 'completed' && !(immediate.status === 'skipped' && extraction?.status === 'continued_without'))) {
         throw new Error(`Scene ${scene.idx + 1} is waiting for Scene ${scene.idx}'s validated last frame.`);
@@ -944,6 +914,8 @@ export async function createManualScriptFilm(params: {
   audioPolicy?: AudioPolicy;
   maxAuthorizedCredits?: number | null;
   storyboardRequested?: boolean;
+  /** Separate-provider versions reuse these exact approved sheets. */
+  reuseCharacterRefs?: FilmCharacter[];
 }, hooks: RunHooks = {}): Promise<{ film: Film; scenes: FilmScene[] }> {
   const requestedDuration = Math.round(Number(params.targetDuration) || 0);
   if (requestedDuration > 600) throw new Error('The maximum assembled project duration is 10:00.');

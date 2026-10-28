@@ -39,7 +39,7 @@ export interface FriendlyError {
 }
 
 export const TAB_REQUIRED_MESSAGE =
-  'This saved project selected a provider that is no longer verified. Vidverge will continue the scene on Gemini Omni in the background; refresh once if the migration has not started.';
+  'This model runs from your signed-in browser. Keep this tab open; the selected model will not be changed.';
 export const AUTH_MESSAGE =
   'Your sign-in needs a quick refresh, so nothing was started or charged. Tap Retry. If it happens again, refresh the page and sign in once more.';
 export const EMPTY_RESULTS_MESSAGE =
@@ -123,8 +123,8 @@ export function classifyError(value: unknown): FriendlyError {
   if (/cast_approval_required|approve every retained character|confirm that this script needs no cast/i.test(probe)) {
     return make('cast-approval', 'Approve every retained character sheet, or confirm that no cast is needed, before Start.', { canRetry: false });
   }
-  if (/key limit exceeded|spending limit|openrouter_key_limit|provider key/i.test(probe)) {
-    return make('outage', 'The selected provider could not fund or authenticate this scene, so Vidverge switched it to verified Gemini Omni automatically. If the scene still stopped, tap Retry once; completed clips are safe.', { canSwitchToOmni: true });
+  if (/key limit exceeded|spending limit|openrouter_key_limit|provider budget reached/i.test(probe)) {
+    return make('outage', 'Provider budget reached. This film remains paused; retry on the selected model later or create a separate Omni version.', { canSwitchToOmni: true, canRetry: false });
   }
   if (/keep (?:this|the) (?:browser )?tab open|stay on this tab|closed-tab|browser session token|workspace_service_credential|workspace-level service credential|needs your current signed-in workspace session|founder workspace (?:backend )?credential/i.test(probe)) {
     return make('tab-required', TAB_REQUIRED_MESSAGE, { canSwitchToOmni: true });
@@ -132,8 +132,14 @@ export function classifyError(value: unknown): FriendlyError {
   if (/not_approved_for_founder_billing|not approved for founder-funded|not on the founder-approved/i.test(probe)) {
     return make('not-approved', 'This account is not on the founder-approved testing list. No credits were charged and no provider render was submitted.', { canRetry: false });
   }
-  if (/authentication required|session required|workspace session|session (?:expired|invalid)|billing_http_(?:401|403)|no_credentials|unauthori[sz]ed|\b401\b|\b403\b/i.test(probe)) {
+  if (/\bnot_a_workspace_member\b/i.test(probe)) {
+    return make('auth', 'This signed-in account is not a member of this workspace. Nothing was submitted.', { canRetry: false });
+  }
+  if (/\b(?:no_credentials|workspace_token_invalid)\b|authentication required|session required|workspace session|session (?:expired|invalid)|\b401\b/i.test(probe)) {
     return make('auth', AUTH_MESSAGE);
+  }
+  if (/\b403\b|wrong workspace|wrong owner|provider refused this workspace/i.test(probe)) {
+    return make('outage', 'The provider refused this workspace or task owner. The selected film remains paused; retry after access is restored.', { canSwitchToOmni: true });
   }
   if (/empty results?|returned no results|no results returned/i.test(probe)) return make('empty-results', EMPTY_RESULTS_MESSAGE);
   if (/statement timeout|canceling statement|query (?:timed out|timeout)|database[^.]*time(?:d)? ?out|db[^.]*time(?:d)? ?out|connection (?:terminated|timeout)|ETIMEDOUT/i.test(probe)) {

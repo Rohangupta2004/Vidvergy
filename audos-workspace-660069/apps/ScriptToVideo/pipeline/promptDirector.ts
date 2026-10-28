@@ -48,13 +48,18 @@ export function sportsMotionClause(sport: string | null): string {
 export function scrubProviderPrompt(value: string): string {
   return String(value || '').split('\n').map((line) => {
     let naturalPhraseSeen = false;
-    return line
-      .replace(BANNED_PROVIDER_PROMPT_TERMS, '')
-      .replace(NATURAL_CAMERA_PHRASE, (phrase) => {
-        if (naturalPhraseSeen) return '';
-        naturalPhraseSeen = true;
-        return phrase;
-      })
+    // Dialogue and narration are immutable source material. Provider cleanup
+    // applies only outside quoted spans, so words such as “weight” survive.
+    return line.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g).map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part
+        .replace(BANNED_PROVIDER_PROMPT_TERMS, '')
+        .replace(NATURAL_CAMERA_PHRASE, (phrase) => {
+          if (naturalPhraseSeen) return '';
+          naturalPhraseSeen = true;
+          return phrase;
+        });
+    }).join('')
       .replace(/\s+([,.;:])/g, '$1')
       .replace(/([,;])\s*\1+/g, '$1')
       .replace(/\s{2,}/g, ' ')
@@ -74,12 +79,12 @@ export function polishShotPrompt(value: string, _style = '', maxWords = 80): str
 }
 
 function beatLine(beat: TimecodedBeat, input: PromptDirectorInput, sport: string | null): string {
-  const dialogue = input.dialogue?.find((line) => line.start < beat.end && line.end > beat.start);
+  const dialogue = input.dialogue?.find((line) => line.start >= beat.start && line.start < beat.end);
   const spoken = dialogue ? ` [${dialogue.speaker}: ${dialogue.tone}]: "${dialogue.line}"` : '';
   const style = polishShotPrompt(input.style || input.anchor, '', 14);
   const motion = sport ? `MOTION: ${sportsMotionClause(sport)}.` : '';
-  const action = polishShotPrompt(`${input.anchor}. ${beat.text}${spoken}`, '', sport ? 38 : 58);
-  return capWords(`${beat.start}-${beat.end}s: STYLE: ${style}. ${motion} ${action}`, 80);
+  const action = polishShotPrompt(`${input.anchor}. ${beat.text}`, '', sport ? 38 : 58);
+  return `${capWords(`${beat.start}-${beat.end}s: STYLE: ${style}. ${motion} ${action}`, 80)}${spoken}`;
 }
 
 export function directPrompt(input: PromptDirectorInput): PromptDirectorOutput {
@@ -99,10 +104,7 @@ export function directPrompt(input: PromptDirectorInput): PromptDirectorOutput {
   const opening = input.sceneIndex > 0 && input.previousFinalState
     ? `CONTINUITY: Begin from ${polishShotPrompt(input.previousFinalState, input.style)}. Input: ${capability.continuityMode}.`
     : `ANCHOR: ${polishShotPrompt(input.anchor, input.style)}.`;
-  const beatLines = beats.map((beat, index) => {
-    const label = adapter === 'kling-3' ? `SHOT ${index + 1} — ` : '';
-    return `${label}${beatLine(beat, input, sport)}`;
-  });
+  const beatLines = beats.map((beat) => beatLine(beat, input, sport));
   const referenceLine = input.references.length
     ? adapter === 'kling-3'
       ? `REFERENCES: ${input.references.map((reference, index) => `@image_${index + 1}=${reference}`).join('; ')}`

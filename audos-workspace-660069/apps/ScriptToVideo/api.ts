@@ -345,6 +345,8 @@ export interface ParsedScript { scenes: ParsedScene[]; globalStyle: string }
 /** Sequential-pipeline scene spec: prep context stored beside the prompt.
  * The prompt itself lives in the scene row's `prompt` column. */
 export interface VideoClipSpec {
+  /** Only continuous blocks receive the immediately previous final frame. */
+  cut_type?: 'continuous' | 'new_shot';
   summary?: string;              // what happens in this clip (director's one-liner)
   visual_goal?: string;          // the visual outcome this clip must land
   negative?: string;             // negative prompt sent with the generation
@@ -373,6 +375,9 @@ export interface VideoClipSpec {
   request_evidence?: {
     built_at: string;
     model: string;
+    /** Exact provider prompt and request body; authentication headers/tokens are never stored. */
+    prompt?: string;
+    request_body?: Record<string, unknown>;
     frame_chain: { source_scene_id?: number; source_scene_index?: number; method?: string; at_second?: number; url?: string; status: 'first_scene' | 'sent' | 'continued_without' };
     references_used: ReferenceAsset[];
     dropped: Array<ReferenceAsset & { dropReason: string }>;

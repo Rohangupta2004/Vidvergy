@@ -61,7 +61,7 @@
 import { Aspect, ReferenceAsset, uploadBlob, uploadDataUrl } from '../api';
 import { capabilityFor, rankReferences } from '../v2Contracts';
 import { scrubProviderPrompt } from './promptDirector';
-import { WORKSPACE_ID, getWorkspaceToken } from '../../../lib/workspace';
+import { WORKSPACE_ID, workspaceFetch } from '../../../lib/workspace';
 import { TAB_REQUIRED_MESSAGE, callS2vHook as callHook } from '../friendlyErrors';
 export { S2V_CAPABILITY_REGISTRY_VERSION, S2V_VIDEO_CAPABILITIES } from '../v2Contracts';
 export {
@@ -729,13 +729,10 @@ const BROWSER_KLING_PREFIX = 'browser-kling:';
 const BROWSER_VEO_PREFIX = 'browser-veo:';
 
 async function browserWorkspaceJson(path: string, init: RequestInit = {}): Promise<any> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('A signed-in workspace session is required for this model.');
-  const response = await fetch(path, {
+  const response = await workspaceFetch(path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
-      'X-Workspace-DB-Token': token,
       ...((init.headers || {}) as Record<string, string>),
     },
   });
@@ -800,10 +797,12 @@ function classifySubmitError(status: number, data: any): string {
   const message = (publicMessage: string) => publicMessage;
   if (code === 'cast_approval_required') return message('Approve every retained character sheet, or confirm that no cast is needed, before Start.');
   if (code === 'workspace_service_credential_unavailable') return message(TAB_REQUIRED_MESSAGE);
-  if (status === 401 || status === 403 || /billing_http_(?:401|403)|no_credentials|workspace session|unauth|credential|token/i.test(`${code} ${raw}`)) return message('Sign-in session expired — refresh and retry. No render was submitted.');
+  if (code === 'no_credentials' || code === 'workspace_token_invalid' || /\b(?:no_credentials|workspace_token_invalid)\b/i.test(raw) || status === 401) return message('Your workspace session could not be verified. Refresh and retry; no render was submitted.');
+  if (code === 'not_a_workspace_member' || /\bnot_a_workspace_member\b/i.test(raw)) return message('This signed-in account is not a member of this workspace. No render was submitted.');
+  if (status === 403) return message('The provider refused this workspace or task owner. No render was submitted; the selected film remains paused.');
   if (code === 'insufficient_credits' || /\binsufficient_credits\b/i.test(raw)) return message('You do not have enough Vidverge credits for this scene. Add credits, then retry; no paid render was started.');
   if (/^billing[_-]/i.test(code)) return message('Vidverge credit authorization could not be confirmed, so no render was submitted. Retry after refreshing your signed-in session.');
-  if (/key limit exceeded|openrouter_key_limit|limit_usd|spend_usd/i.test(raw)) return message('The Seedance provider spending limit has been reached. No render was started, and the scene credit authorization was refunded. Retry after provider funding is restored.');
+  if (/key limit exceeded|openrouter_key_limit|limit_usd|spend_usd/i.test(raw)) return message('Provider budget reached. No render was started. Keep this film paused and retry later, or create a separate Omni version.');
   if (status === 402 || /workspace wallet|wallet balance|provider wallet/i.test(raw)) return message('The studio provider wallet needs funding before this render can start. The scene credit authorization was refunded.');
   if (status === 429 || /rate.?limit|quota/i.test(raw)) return message('The video provider is rate-limited. Wait briefly, then retry this scene or switch models.');
   if (/blocked|safety|likeness|moderation/i.test(raw)) return message('The provider blocked this scene on safety or likeness checks. Regenerate the prompt or adjust its references before retrying.');
@@ -893,8 +892,9 @@ function providerRejectedPrompt(status: number, value: unknown): boolean {
 /** A stricter second-pass rewrite: keeps concrete actions and motion clauses,
  * removes abstract quality/jargon words, and never touches continuity media. */
 export function rewritePromptForSafeRetry(prompt: string): string {
-  return scrubProviderPrompt(prompt)
-    .replace(/\b(?:biomechanics?|kinetics?|physically|lifelike|ultra[- ]?detailed|technically precise)\b/gi, '')
+  return scrubProviderPrompt(prompt).split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g)
+    .map((part, index) => index % 2 === 1 ? part : part.replace(/\b(?:biomechanics?|kinetics?|physically|lifelike|ultra[- ]?detailed|technically precise)\b/gi, ''))
+    .join('')
     .replace(/\s+([,.;:])/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -1156,7 +1156,7 @@ export const VideoModelService = {
       body.generateAudio = params.generateAudio !== false;
       body.resolution = '720p';
     } else if (refs.length && cfg.provider !== 'openrouter' && (cfg.referencesWithSeed !== false || !seed)) {
-      body.referenceImages = refs.map((r) => ({ imageData: r.url, referenceType: 'asset' }));
+      body.referenceImages = refs.map((r) => ({ imageData: r.url, referenceType: r.type === 'style' ? 'style' : 'asset' }));
     }
 
     const sanitizedBody = sanitizeVideoRequestBody(cfg, body);
@@ -1194,9 +1194,13 @@ export const VideoModelService = {
         }
         return { status: 'processing', progress: Number(state?.progress) || undefined };
       } catch (error: any) {
-        if ([401, 403].includes(Number(error?.status))) {
+        if (Number(error?.status) === 401) {
           if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The browser-authenticated provider task could not be reconciled');
-          return { status: 'failed', error: 'Your sign-in expired while checking this render. Its scene credits were refunded. Refresh, sign in, and retry only this scene.' };
+          return { status: 'failed', error: 'Your workspace session could not be verified while checking this render. Refresh and retry only this scene.' };
+        }
+        if (Number(error?.status) === 403) {
+          if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The provider rejected this workspace or task owner');
+          return { status: 'failed', error: 'The provider refused this workspace or task owner. The selected film remains paused; retry on the same model after access is restored.' };
         }
         if ([404, 410].includes(Number(error?.status))) {
           if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The provider no longer has this operation');

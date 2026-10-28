@@ -699,7 +699,7 @@ function ScenePanel(props: {
             <label style={{ color: T.dim, fontSize: 10.5 }}>Sound<input defaultValue={String((spec as any).sound || '')} onBlur={(event) => props.onUpdatePlanScene(s, { sound: event.target.value })} style={{ ...planField, display: 'block', marginTop: 4 }} /></label>
             <label style={{ color: T.dim, fontSize: 10.5 }}>Continuity notes<input defaultValue={String((spec as any).continuity_notes || '')} onBlur={(event) => props.onUpdatePlanScene(s, { continuity_notes: event.target.value })} style={{ ...planField, display: 'block', marginTop: 4 }} /></label>
             <label style={{ color: T.dim, fontSize: 10.5 }}>Product / brand reference URL<input defaultValue={String((spec as any).product_reference_url || '')} onBlur={(event) => props.onUpdatePlanScene(s, { reference_url: event.target.value })} placeholder="https://…" style={{ ...planField, display: 'block', marginTop: 4 }} /></label>
-            <label style={{ color: T.dim, fontSize: 10.5 }}>Duration (seconds)<input type="number" min={2} max={30} defaultValue={Math.round(Number(s.duration_s) || 6)} onBlur={(event) => props.onUpdatePlanScene(s, { duration_s: Number(event.target.value) })} style={{ ...planField, display: 'block', marginTop: 4 }} /></label>
+            <label style={{ color: T.dim, fontSize: 10.5 }}>Duration (seconds)<input type="number" min={Math.max(4, Number(selectedModel.minDuration || 4))} max={30} defaultValue={Math.round(Number(s.duration_s) || 8)} onBlur={(event) => props.onUpdatePlanScene(s, { duration_s: Number(event.target.value) })} style={{ ...planField, display: 'block', marginTop: 4 }} /></label>
             <label style={{ color: T.dim, fontSize: 10.5 }}>Scene model<select value={modelAudioMismatch ? '' : selectedModel.id} onChange={(event) => props.onUpdatePlanScene(s, { engine_id: event.target.value, engine_reason: `Creator-approved assignment: ${event.target.options[event.target.selectedIndex]?.text || event.target.value}.` })} style={{ ...planField, display: 'block', marginTop: 4 }}>{modelAudioMismatch ? <option value="" disabled>Choose a model with native audio</option> : null}{pickerModels(needsNativeSpeech).map((m) => <option key={m.id} value={m.id} disabled={m.id === 'omni-1.1-flash' && Number(s.duration_s || 0) > 8}>{SCENE_MODEL_LABELS[m.id] || m.label}</option>)}</select></label>
           </div>
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', marginTop: 11 }}>
@@ -713,6 +713,7 @@ function ScenePanel(props: {
         </details>
       ) : null}
 
+      <div style={{ marginTop: 10, color: T.muted, fontSize: 11 }}><b style={{ color: T.bone }}>Block type:</b> {spec.cut_type === 'continuous' ? 'continuous — previous final frame is sent' : 'new shot — starts fresh from sheets and style anchor'}</div>
       {sentRefs.length ? (
         <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }} aria-label="References actually sent in provider order">
           {sentRefs.map((r, i) => (
@@ -726,17 +727,17 @@ function ScenePanel(props: {
       ) : null}
       {droppedRefs.length ? <div style={{ marginTop: 8, color: T.muted, fontSize: 10.8, lineHeight: 1.45 }}><b style={{ color: T.bone }}>Dropped by {selectedModel.label} cap:</b> {droppedRefs.map((item) => `${proofRole(item)} — ${item.dropReason}`).join('; ')}</div> : null}
 
-      {/* Only the ACTIVE scene's full prompt is exposed — completed scenes keep
-          theirs for reference; future scenes have none yet. */}
       {s.prompt ? (
         <div style={{ marginTop: 14 }}>
           <div style={{ color: T.dim, fontSize: 11, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Final provider prompt · editable before generation</div>
           <textarea defaultValue={s.prompt} disabled={!planEditable} onBlur={(event) => { if (planEditable && event.target.value !== s.prompt) props.onUpdatePlanScene(s, { prompt: event.target.value }); }} rows={9} style={{ width: '100%', minWidth: 0, background: '#18150A', border: `1px solid ${T.dim}`, borderRadius: 9, padding: '12px 14px', color: T.bone, fontSize: 12, lineHeight: 1.65, fontFamily: T.mono, resize: 'vertical' }} />
         </div>
-      ) : s.status === 'waiting' ? (
-        <div style={{ color: T.dim, fontSize: 12.5, marginTop: 14 }}>
-          {isActive ? 'The director prepares this scene\u2019s prompt after the previous clip lands (or prepare it now).' : 'Waiting its turn — the prompt is written one scene at a time, after the previous clip\u2019s final frame is known.'}
-        </div>
+      ) : s.status === 'waiting' ? <div style={{ color: T.dim, fontSize: 12.5, marginTop: 14 }}>The block prompt is prepared in your signed-in browser before Start.</div> : null}
+      {requestEvidence?.request_body ? (
+        <details style={{ marginTop: 10 }}>
+          <summary style={{ color: T.live, cursor: 'pointer', fontSize: 11.5, fontWeight: 700 }}>Provider evidence · token removed</summary>
+          <pre style={{ marginTop: 8, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', background: T.canvas, color: T.muted, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 10.5, lineHeight: 1.5 }}>{JSON.stringify({ outputVideoUrl: s.asset_url || null, prompt: requestEvidence.prompt || s.prompt, requestBody: requestEvidence.request_body, referencesSent: sentRefs.map((item) => ({ label: item.label || proofRole(item), type: item.type, url: item.url })) }, null, 2)}</pre>
+        </details>
       ) : null}
 
       {/* Skeleton shimmer while the clip renders (pure CSS keyframes). */}

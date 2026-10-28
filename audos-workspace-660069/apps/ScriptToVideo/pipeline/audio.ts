@@ -169,9 +169,13 @@ function narrationBatches(lines: AudioNarrationEntry[]): AudioNarrationEntry[][]
 // Plan identity
 // ---------------------------------------------------------------------------
 
-/** The scenes the audio plan covers: completed clips, in film order. */
+/** The scenes the audio plan covers, in film order. Audio is deliberately
+ * prepared from approved planned blocks before Start; finished media is not a
+ * prerequisite because server runners only assemble the saved URLs later. */
 export function audioScenes(scenes: FilmScene[]): FilmScene[] {
-  return [...scenes].filter((s) => s.status === 'completed' && s.asset_url).sort((a, b) => a.idx - b.idx);
+  return [...scenes]
+    .filter((s) => s.status !== 'skipped' && !!String(s.script_segment || '').trim())
+    .sort((a, b) => a.idx - b.idx);
 }
 
 export function audioFingerprint(scenes: FilmScene[]): string {
