@@ -42,14 +42,14 @@
     {
       "id": "ads-studio",
       "name": "Vergeye Ads Studio",
-      "description": "Research, strategy, creative angles and production for short-form campaigns and ad assets.",
+      "description": "Discover verified competitor handles, rank public reels and ads, analyse winning structures, and remake original evidence-backed UGC campaigns.",
       "icon": "Target",
       "component": "apps/AdsStudio/App.tsx"
     },
     {
       "id": "ugc-studio",
       "name": "UGC Studio",
-      "description": "Runway-only product UGC ads with product intake, AI-assisted scripts and creator direction, exact quotes, live progress and saved history.",
+      "description": "Regional synthetic actors present products through capability-validated Runway recipes, editable multilingual scripts, Vidverge pricing and portrait-safe assembly.",
       "icon": "Video",
       "component": "apps/UGCStudio/App.tsx"
     },

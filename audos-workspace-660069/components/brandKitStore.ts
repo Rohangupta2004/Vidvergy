@@ -5,13 +5,14 @@ export type BrandPageStatus = 'read' | 'limited' | 'not found';
 export interface BrandPage { url: string; label: string; status: BrandPageStatus; title?: string; note?: string; durationMs?: number; readableChars?: number }
 export interface BrandImage { url: string; alt: string; sourceUrl: string }
 export interface BrandClip { id: string; url: string; key?: string; name: string; type: string; bytes?: number; createdAt: string }
+export interface BrandSocialProfile { platform: 'instagram' | 'tiktok' | 'youtube' | 'facebook' | 'x' | 'linkedin' | 'threads' | string; handle: string; url: string; verified: boolean }
 export interface BrandRecord {
   id: string;
   websiteUrl: string;
   identity: { businessName: string; tagline: string };
   offer: { summary: string; features: string[]; benefits: string[]; pricing: string[]; offersCtas: string[] };
   audienceTone: { audience: string; tone: string };
-  visuals: { logoUrl: string; colors: string[]; fonts: string[]; images: BrandImage[]; socialLinks: string[]; clips?: BrandClip[] };
+  visuals: { logoUrl: string; colors: string[]; fonts: string[]; images: BrandImage[]; socialLinks: string[]; socialProfiles?: BrandSocialProfile[]; clips?: BrandClip[] };
   pages: BrandPage[];
   gaps: string[];
   sources: Record<string, string>;
@@ -95,6 +96,7 @@ export function brandToContextText(brand: BrandRecord): string {
     `Logo: ${brand.visuals.logoUrl}`,
     `Colors: ${brand.visuals.colors.join(', ')}`,
     `Fonts: ${brand.visuals.fonts.join(', ')}`,
+    `Social profiles: ${(brand.visuals.socialProfiles || []).map((profile) => `${profile.platform}:${profile.handle}${profile.verified ? ' ✓' : ''} (${profile.url})`).join('; ')}`,
     `Founder clips: ${(brand.visuals.clips || []).map((clip) => `${clip.name} (${clip.url})`).join('; ')}`,
   ];
   return lines.filter((line) => !/:\s*$/.test(line)).join('\n');

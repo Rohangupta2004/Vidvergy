@@ -43,6 +43,13 @@ export interface VidvergeHandoff {
   videoModel?: string;
   /** Structured Vergeye Phase 3 intake for the shared five-stage engine. */
   scriptToVideo?: ScriptToVideoHandoff;
+  /** Evidence-backed competitor-remake intake for UGC Studio. */
+  ugc?: {
+    variation: { hook: string; clips: Array<{ role: string; duration: number; line: string; action: string }> };
+    handoff: Record<string, unknown>;
+    creativeAngle: Record<string, unknown>;
+    productDescription?: string;
+  };
   ts: number;
 }
 

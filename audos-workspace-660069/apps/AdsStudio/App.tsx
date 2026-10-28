@@ -54,6 +54,7 @@ import { withBrandContext } from '../../components/BrandContextLayer';
 import { useSpaceRuntime } from '../../SpaceRuntimeContext';
 import { fetchBrandFromWebsite, matchSavedBrand, type BrandRecord, useBrandKit } from '../../components/brandKitStore';
 import CampaignContextView from './CampaignContextView';
+import CompetitorsTab from './CompetitorsTab';
 import { saveVideoToHistory } from '../../lib/videoHistory';
 
 function OwnerVideoIntegrationPicker(props: any) {
@@ -239,18 +240,16 @@ function formatClipElapsed(ms: number): string {
 // ---------------------------------------------------------------------------
 
 function VergeyeAdsStudioApp() {
-  const [surface, setSurface] = useState<'intelligence' | 'campaign' | 'create'>('intelligence');
+  const [surface, setSurface] = useState<'intelligence' | 'competitors' | 'campaign' | 'create'>('intelligence');
   if (surface === 'campaign') return <CampaignContextView onBack={() => setSurface('intelligence')} />;
+  if (surface === 'competitors') return <CompetitorsTab onBack={() => setSurface('intelligence')} />;
   if (surface === 'intelligence') {
     return (
       <div style={{ minHeight: '100%', position: 'relative' }}>
-        <button
-          type="button"
-          onClick={() => setSurface('campaign')}
-          style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}
-        >
-          Campaign Context
-        </button>
+        <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8 }}>
+          <button type="button" onClick={() => setSurface('competitors')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.raised, color: T.accent, cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Competitors</button>
+          <button type="button" onClick={() => setSurface('campaign')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Campaign Context</button>
+        </div>
         <VergeyeIntelligence onOpenCreate={() => setSurface('create')} />
       </div>
     );
