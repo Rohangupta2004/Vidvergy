@@ -15,6 +15,8 @@ const STAGE = 'assets' as const;
 
 export const VIDEO_COST = 0.4;
 export const VIDEO_MODEL = 'gemini-omni-1.1-flash';
+/** Backward-compatible import name; intentionally resolves to verified Omni. */
+export const SEEDANCE_VIDEO_MODEL = VIDEO_MODEL;
 export type FacelessVideoModel = typeof VIDEO_MODEL;
 export const MAX_CLIP_SECONDS = 8;
 

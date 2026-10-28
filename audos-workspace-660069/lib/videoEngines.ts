@@ -1912,58 +1912,39 @@ export function routeShotIntent(intent: ShotIntent, avail: EngineAvailability = 
   switch (intent) {
     case 'ui_demo':
       return {
-        kind: 'code', engineId: null, fallbackChain: [],
-        reason: 'Product UI is recreated deterministically — real screenshot (or coded interface skeleton) inside an animated device/browser mockup with cursor, clicks and highlights, rendered through Remotion. Generative video is never asked to draw an interface.',
+        kind: 'unavailable', engineId: null, fallbackChain: [],
+        reason: 'No verified generative model can reproduce product UI faithfully, and this workflow does not use Remotion. Keep the real screenshot as footage or edit it in Video Enhancer.',
       };
     case 'cinematic_hero':
-      return {
-        kind: 'engine', engineId: VEO_31, fallbackChain: [VEO_31_FAST, OMNI, SEEDANCE],
-        reason: 'Real Veo 3.1 via OpenRouter for a text-led cinematic hero shot. This path accepts one seed image, no reference images, and does not promise 4K.',
-      };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Gemini Omni 1.1 Flash is the only model that passed today’s paid sweep.' };
     case 'fast_broll':
-      return avail.openRouterHealthy !== false
-        ? { kind: 'engine', engineId: SEEDANCE, fallbackChain: [OMNI, VEO_31_FAST], reason: 'Seedance 2.0 Fast is the cheapest, fastest B-roll engine, and it was re-verified end to end on 9 Oct 2026.' }
-        : { kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31_FAST], reason: 'An openrouter/* submit came back as a synthetic openrouter_error_* id this session, so Omni Flash takes the fast B-roll work — the same route veh-broll-generate uses.' };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'OpenRouter is over its provider key limit; verified Gemini Omni handles B-roll.' };
     case 'character_consistency':
       return {
-        kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31],
+        kind: 'engine', engineId: OMNI, fallbackChain: [],
         reason: 'Omni Flash: reference images + seed image together — the same face/mascot carries across every scene.',
       };
     case 'product_consistency':
       return {
-        kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31, VEO_31_FAST],
+        kind: 'engine', engineId: OMNI, fallbackChain: [],
         reason: 'Omni 1.1 is the only engine here that accepts reference images (up to ten, combinable with a seed frame), so it is the product-consistency route.',
       };
     case 'motion_background':
-      return {
-        kind: 'engine', engineId: VEO_31_FAST, fallbackChain: [OMNI],
-        reason: 'Veo 3.1 Fast is the proven ambient-plate route (pv-ad-director backdrop stage). Backgrounds must support foreground readability — plan safe text/UI zones with the foreground, and degrade to a brand gradient rather than overpowering it.',
-      };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Verified Gemini Omni creates the ambient plate; keep foreground-safe composition in the prompt.' };
     case 'stills_to_motion':
-      return avail.runwayEnabled !== false
-        ? { kind: 'engine', engineId: 'gen4_turbo', fallbackChain: [VEO_31_FAST, OMNI], reason: 'Runway Gen 4 Turbo at $0.05/s is the cheapest image-to-video once enabled.' }
-        : { kind: 'engine', engineId: VEO_31_FAST, fallbackChain: [OMNI], reason: 'Runway answered 503 this session — Veo 3.1 Fast animates a single seed image (imageData) as the fallback; gen4_turbo resumes when Runway recovers.' };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Verified Gemini Omni animates the supplied still while preserving it as the seed frame.' };
     case 'surreal_stylized':
-      return {
-        kind: 'engine', engineId: VEO_31, fallbackChain: [VEO_31_FAST, OMNI],
-        reason: 'Veo 3.1 carries surreal, stylized and complex multi-subject scenes — strong prompt adherence for dream logic, crowds and impossible physics.',
-      };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Verified Gemini Omni is the only available generation target.' };
     case 'video_to_video':
       return avail.runwayEnabled !== false
         ? { kind: 'recipe', engineId: 'product_swap', fallbackChain: [], reason: 'Runway product_swap performs a real video transformation (reference video + product swap).' }
         : { kind: 'unavailable', engineId: null, fallbackChain: [], reason: 'Runway answered 503 this session, and no other enabled provider performs true video-to-video (Kling has no video-to-video route on the platform proxy, Higgsfield founder-excluded). Do NOT fake it with text-to-video — retry Runway shortly or offer Video Enhancer\u2019s editorial treatments (real transforms of the real footage) instead.' };
     case 'finished_product_ad':
-      return avail.runwayEnabled !== false
-        ? { kind: 'recipe', engineId: 'product_ad', fallbackChain: [], reason: 'Runway product_ad assembles a complete polished advertisement from product photos in one call.' }
-        : { kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31_FAST], reason: 'Run the Ads Studio agentic pipeline (Opus director + Omni clips + GSAP overlays + FFmpeg assembly); the one-call recipe activates when Runway is enabled.' };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Verified Gemini Omni generates the product-ad clips; provider recipes remain disabled until a paid sweep passes.' };
     case 'ugc_testimonial':
-      return avail.runwayEnabled !== false
-        ? { kind: 'recipe', engineId: 'product_ugc', fallbackChain: [], reason: 'Runway UGC Creator builds a creator-style testimonial from a character photo + product photo.' }
-        : { kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31], reason: 'Omni Flash with the character photo as a reference image keeps the same presenter across takes.' };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Verified Gemini Omni uses the creator and product images as references.' };
     case 'multi_shot':
-      return avail.runwayEnabled !== false
-        ? { kind: 'recipe', engineId: 'multi_shot_video', fallbackChain: [], reason: 'Runway multi_shot_video auto-cuts several directed shots into one video.' }
-        : { kind: 'engine', engineId: OMNI, fallbackChain: [VEO_31_FAST], reason: 'Per-scene Omni renders with frame-chained continuity (extract the last frame, seed the next shot), stitched server-side — the proven Script-to-Video pattern.' };
+      return { kind: 'engine', engineId: OMNI, fallbackChain: [], reason: 'Per-scene Gemini Omni renders use frame-chained continuity and server-side stitching.' };
     default:
       return { kind: 'engine', engineId: DEFAULT_ENGINE_ID, fallbackChain: [OMNI], reason: 'Unknown intent — the quality-to-speed all-rounder.' };
   }

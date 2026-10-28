@@ -146,7 +146,7 @@ export function defaultModelForIntegration(integration: VideoIntegrationId): str
   if (integration === 'image-and-video-generation' || integration === 'google-veo3') {
     return models.find((m) => m.id === DEFAULT_ENGINE_ID && isEngineAvailable(m.id))?.id || working?.id || DEFAULT_ENGINE_ID;
   }
-  return working?.id || models[0]?.id || '';
+  return working?.id || '';
 }
 
 /** Infer integration from a legacy engine id stored on older projects. */
@@ -357,7 +357,7 @@ export function loadVideoSelection(): { integration: VideoIntegrationId; model: 
     const chosen = models.some((m) => m.id === model) ? model : defaultModelForIntegration(integration);
     // A stale session must not silently reopen on a model the health sweep
     // proved broken. Fall back to the verified-working global default instead.
-    if (!isEngineAvailable(chosen)) return fallback;
+    if (!chosen || !isEngineAvailable(chosen)) return fallback;
     return { integration, model: chosen };
   } catch {
     return fallback;
