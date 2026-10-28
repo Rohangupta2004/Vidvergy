@@ -344,23 +344,6 @@ const KLING_LIPSYNC: LabModel = {
   capMs: 1_800_000, costHint: '$0.25 / sync', available: true,
 };
 
-const LAB_HEALTH_FAILURES: Record<string, string> = {
-  [SEEDANCE_20_FAST.key]: 'OpenRouter key limit exceeded ($254.45 used of $250.00); no render started.',
-  [SEEDANCE_25.key]: 'Founder Scene 2 and today’s sweep hit the non-resetting OpenRouter spending limit; no render starts.',
-  'groupa:openrouter/google/veo-3.1': 'OpenRouter key limit exceeded ($254.45 used of $250.00); no render started.',
-  'groupa:openrouter/google/veo-3.1-fast': 'OpenRouter key limit exceeded ($254.45 used of $250.00); no render started.',
-  'groupa:openrouter/google/veo-3.1-lite': 'OpenRouter key limit exceeded ($254.45 used of $250.00); no render started.',
-  [RUNWAY_45.key]: 'Catalog and quote passed, but generation returned 401 no_credentials.',
-  [RUNWAY_TURBO.key]: 'Catalog and quote passed, but generation returned 401 no_credentials.',
-  [KLING_25.key]: 'Generation returned 401 no_credentials; no charge.',
-  [KLING_26.key]: 'Generation returned 401 no_credentials; no charge.',
-  [KLING_30.key]: 'Generation returned 401 no_credentials; no charge.',
-  [KLING_30_OMNI.key]: 'Generation returned 401 no_credentials; no charge.',
-  [KLING_OMNI_REFERENCES.key]: 'Kling generation returned 401 no_credentials; references do not change provider auth.',
-  [KLING_EXTEND.key]: 'Disabled while Kling generation authentication is failing.',
-  [KLING_LIPSYNC.key]: 'Disabled while Kling generation authentication is failing.',
-};
-
 const LAB_MODEL_CATALOG: LabModel[] = [
   SEEDANCE_20_FAST, SEEDANCE_25, GEMINI_OMNI,
   veo('veo-3.1', 'Veo 3.1', ['720p', '1080p', '4k']),
@@ -371,10 +354,10 @@ const LAB_MODEL_CATALOG: LabModel[] = [
   KLING_OMNI_REFERENCES, KLING_EXTEND, KLING_LIPSYNC,
 ];
 
-export const LAB_MODELS: LabModel[] = LAB_MODEL_CATALOG.map((model) => {
-  const reason = LAB_HEALTH_FAILURES[model.key];
-  return reason ? { ...model, available: false, unavailableReason: reason } : model;
-});
+// Provider Lab is deliberately ungated: the founder tests with their real
+// browser workspace credential and sees the provider's exact response. Health
+// observations never disable an option here.
+export const LAB_MODELS: LabModel[] = LAB_MODEL_CATALOG;
 
 export const DEFAULT_LAB_MODEL_KEY = GEMINI_OMNI.key;
 
@@ -397,11 +380,12 @@ export function pluginLabel(plugin: LabPlugin): string { return plugin; }
 
 export type VerifiedOutcome = 'pass' | 'fail' | 'inconclusive' | 'no-endpoint';
 export interface VerifiedResult { outcome: VerifiedOutcome; note: string }
-export const LAB_VERIFIED_AT = '2026-10-28';
+export const LAB_VERIFIED_AT = 'founder-test';
 export const LAB_VERIFIED: Record<string, VerifiedResult> = Object.fromEntries(
-  LAB_MODELS.map((model) => [model.key, model.key === GEMINI_OMNI.key
-    ? { outcome: 'pass' as VerifiedOutcome, note: 'Paid 8s test passed in 32.2s and returned a durable MP4.' }
-    : { outcome: 'fail' as VerifiedOutcome, note: model.unavailableReason || 'No paid pass was recorded in the 28 Oct 2026 sweep.' }]),
+  LAB_MODELS.map((model) => [model.key, {
+    outcome: 'inconclusive' as VerifiedOutcome,
+    note: 'Available for founder testing in Provider Lab. The run card will show the provider’s exact result.',
+  }]),
 );
 export function labVerified(key: string): VerifiedResult | null { return LAB_VERIFIED[key] || null; }
 
