@@ -1,0 +1,147 @@
+{
+  "workspaceId": "f24710e5-7c6d-4db4-92b4-c2c235877575",
+  "configId": 660069,
+  "seo": {
+    "title": "Vidverge — AI Video Generator | Brief to Video in One Shot",
+    "description": "Drop a URL, script, idea or raw footage and let Verger plan the path to a publish-ready video.",
+    "imageUrl": "https://storage.googleapis.com/audos-images/generated-images/image-1791994146120-6y0ebr.png"
+  },
+  "name": "Vidverge",
+  "tagline": "Turn any idea into a publish-ready video — brief to video in one shot",
+  "logoUrl": "https://storage.googleapis.com/audos-images/chat-attachments/8a9adad1-ad34-40e6-823c-8195cdcf7d6c.png",
+  "iconUrl": "https://storage.googleapis.com/audos-images/chat-attachments/8a9adad1-ad34-40e6-823c-8195cdcf7d6c.png",
+  "logoOnDarkUrl": "https://storage.googleapis.com/audos-images/attachments/general/c0902809-6dc4-4e0c-b04e-1f60e01b31e6.png",
+  "colors": {
+    "primary": "#F2B544",
+    "highlight": "#FFD16F",
+    "contrast": "#1B1308",
+    "secondary": "#B7BBC4",
+    "accent": "#F2B544",
+    "primaryScale": {
+      "50": "#342716",
+      "100": "#342716",
+      "200": "#94501A",
+      "500": "#F2B544",
+      "600": "#D69529",
+      "700": "#B96F1C",
+      "900": "#7A4318"
+    },
+    "highlightScale": {
+      "50": "#342716",
+      "100": "#342716",
+      "200": "#94501A",
+      "500": "#FFD16F",
+      "600": "#F2B544",
+      "700": "#D69529",
+      "900": "#94501A"
+    },
+    "surfaces": {
+      "page": "#0D0E10",
+      "pageAlt": "#17191D",
+      "gradientFrom": "#0D0E10",
+      "gradientVia": "#17191D",
+      "gradientTo": "#0D0E10",
+      "card": "#17191D",
+      "cardHover": "#2A2E35",
+      "panel": "#17191D",
+      "panelStrong": "#21242A",
+      "muted": "#21242A",
+      "accentSoft": "#342716",
+      "border": "#393E47",
+      "borderStrong": "#747D8B"
+    },
+    "text": {
+      "primary": "#F6F2E9",
+      "secondary": "#B7BBC4",
+      "brand": "#F2B544",
+      "accent": "#F2B544",
+      "muted": "#929AA7",
+      "onPrimary": "#1B1308",
+      "onHighlight": "#1B1308",
+      "onContrast": "#F2B544"
+    },
+    "semantic": {
+      "success": "#79D5A5",
+      "warning": "#F1C778",
+      "danger": "#FF9A9A"
+    },
+    "shell": {
+      "buttonText": "#1B1308",
+      "accentButtonText": "#1B1308",
+      "dockText": "#1B1308",
+      "icon": "#F2B544",
+      "shadow": "#0D0E10",
+      "shadowStrong": "#0D0E10"
+    }
+  },
+  "palette": {
+    "primary": "#F2B544",
+    "highlight": "#FFD16F",
+    "contrast": "#1B1308",
+    "secondary": "#B7BBC4",
+    "accent": "#F2B544",
+    "primaryScale": {
+      "50": "#342716",
+      "100": "#342716",
+      "200": "#94501A",
+      "500": "#F2B544",
+      "600": "#D69529",
+      "700": "#B96F1C",
+      "900": "#7A4318"
+    },
+    "highlightScale": {
+      "50": "#342716",
+      "100": "#342716",
+      "200": "#94501A",
+      "500": "#FFD16F",
+      "600": "#F2B544",
+      "700": "#D69529",
+      "900": "#94501A"
+    },
+    "surfaces": {
+      "page": "#0D0E10",
+      "pageAlt": "#17191D",
+      "gradientFrom": "#0D0E10",
+      "gradientVia": "#17191D",
+      "gradientTo": "#0D0E10",
+      "card": "#17191D",
+      "cardHover": "#2A2E35",
+      "panel": "#17191D",
+      "panelStrong": "#21242A",
+      "muted": "#21242A",
+      "accentSoft": "#342716",
+      "border": "#393E47",
+      "borderStrong": "#747D8B"
+    },
+    "text": {
+      "primary": "#F6F2E9",
+      "secondary": "#B7BBC4",
+      "brand": "#F2B544",
+      "accent": "#F2B544",
+      "muted": "#929AA7",
+      "onPrimary": "#1B1308",
+      "onHighlight": "#1B1308",
+      "onContrast": "#F2B544"
+    },
+    "semantic": {
+      "success": "#79D5A5",
+      "warning": "#F1C778",
+      "danger": "#FF9A9A"
+    },
+    "shell": {
+      "buttonText": "#1B1308",
+      "accentButtonText": "#1B1308",
+      "dockText": "#1B1308",
+      "icon": "#F2B544",
+      "shadow": "#0D0E10",
+      "shadowStrong": "#0D0E10"
+    }
+  },
+  "typography": {
+    "font": "Manrope",
+    "category": "sans-serif",
+    "weights": [400, 500, 600, 700],
+    "headingFont": "Space Grotesk",
+    "bodyFont": "Manrope"
+  }
+}

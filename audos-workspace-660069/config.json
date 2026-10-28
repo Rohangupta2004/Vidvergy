@@ -1,0 +1,308 @@
+{
+  "id": "workspace-660069",
+  "name": "Vidverge",
+  "description": "Agent-led video creation: describe the outcome once, then Verger plans and runs the right production workflow.",
+  "version": "1.0.0",
+  "apps": [
+    {
+      "id": "vidverge-agent",
+      "name": "Verger",
+      "description": "Vidverge's calm, persistent assistant for planning, creating, editing and tracking video work from one conversation.",
+      "icon": "Bot",
+      "component": "apps/VidvergeAgent/App.tsx"
+    },
+    {
+      "id": "faceless",
+      "name": "Faceless",
+      "description": "Narration-first faceless films with editorial planning, generated or sourced visuals, rendering and quality review.",
+      "icon": "Film",
+      "component": "apps/Faceless/App.tsx"
+    },
+    {
+      "id": "video-enhancer",
+      "name": "Video Enhancer",
+      "description": "Transcript-led editing, reframing, captions, overlays and export for footage the customer already has.",
+      "icon": "Sparkles",
+      "component": "apps/VideoEnhancer/App.tsx"
+    },
+    {
+      "id": "script-to-video",
+      "name": "Script-to-Video",
+      "description": "Turns an approved script into a scene-by-scene film with continuity, review and final assembly.",
+      "icon": "Clapperboard",
+      "component": "apps/ScriptToVideo/App.tsx"
+    },
+    {
+      "id": "sceneforge",
+      "name": "SceneForge",
+      "description": "Presenter, avatar and explanatory-video production with premade ElevenLabs voice selection and resumable rendering.",
+      "icon": "Film",
+      "component": "apps/SceneForge/App.tsx"
+    },
+    {
+      "id": "ads-studio",
+      "name": "Vergeye Ads Studio",
+      "description": "Research, strategy, creative angles and production for short-form campaigns and ad assets.",
+      "icon": "Target",
+      "component": "apps/AdsStudio/App.tsx"
+    },
+    {
+      "id": "ugc-studio",
+      "name": "UGC Studio",
+      "description": "Runway-only product UGC ads with product intake, AI-assisted scripts and creator direction, exact quotes, live progress and saved history.",
+      "icon": "Video",
+      "component": "apps/UGCStudio/App.tsx"
+    },
+    {
+      "id": "video-provider-lab",
+      "name": "Video Provider Lab",
+      "description": "Diagnostics for comparing the workspace's configured video providers.",
+      "icon": "FlaskConical",
+      "component": "apps/VideoProviderLab/App.tsx"
+    },
+    {
+      "id": "cineagent",
+      "name": "CineAgent",
+      "description": "Autonomous post-production for raw footage: analyse, direct, edit, render and review a finished cut.",
+      "icon": "Wand2",
+      "component": "apps/CineAgent/App.tsx"
+    },
+    {
+      "id": "brand-context",
+      "name": "Brand Kit",
+      "description": "Saved, verified brand context reused by Verger and production studios.",
+      "icon": "Clipboard",
+      "component": "apps/BrandContext/App.tsx"
+    }
+  ],
+  "terminology": {
+    "reading": "reading",
+    "writing": "writing",
+    "creating": "creating",
+    "deleting": "deleting",
+    "editing": "editing"
+  },
+  "desktop": {
+    "theme": {
+      "gradient": "from-[#0D0E10] to-[#17191D]",
+      "accentColor": "#F2B544",
+      "dockStyle": "glass"
+    },
+    "themeRecipe": "glass",
+    "themeTokens": {
+      "palette": {
+        "primary": "#F2B544",
+        "highlight": "#FFD16F",
+        "contrast": "#1B1308",
+        "secondary": "#B7BBC4",
+        "accent": "#F2B544",
+        "primaryScale": {
+          "50": "#342716",
+          "100": "#342716",
+          "200": "#94501A",
+          "500": "#F2B544",
+          "600": "#D69529",
+          "700": "#B96F1C",
+          "900": "#7A4318"
+        },
+        "highlightScale": {
+          "50": "#342716",
+          "100": "#342716",
+          "200": "#94501A",
+          "500": "#FFD16F",
+          "600": "#F2B544",
+          "700": "#D69529",
+          "900": "#94501A"
+        },
+        "surfaces": {
+          "page": "#0D0E10",
+          "pageAlt": "#17191D",
+          "gradientFrom": "#0D0E10",
+          "gradientVia": "#17191D",
+          "gradientTo": "#0D0E10",
+          "card": "#17191D",
+          "cardHover": "#2A2E35",
+          "panel": "#17191D",
+          "panelStrong": "#21242A",
+          "muted": "#21242A",
+          "accentSoft": "#342716",
+          "border": "#393E47",
+          "borderStrong": "#747D8B"
+        },
+        "text": {
+          "primary": "#F6F2E9",
+          "secondary": "#B7BBC4",
+          "brand": "#F2B544",
+          "accent": "#F2B544",
+          "muted": "#929AA7",
+          "onPrimary": "#1B1308",
+          "onHighlight": "#1B1308",
+          "onContrast": "#F2B544"
+        },
+        "semantic": {
+          "success": "#79D5A5",
+          "warning": "#F1C778",
+          "danger": "#FF9A9A"
+        },
+        "shell": {
+          "buttonText": "#1B1308",
+          "accentButtonText": "#1B1308",
+          "dockText": "#1B1308",
+          "icon": "#F2B544",
+          "shadow": "#0D0E10",
+          "shadowStrong": "#0D0E10"
+        }
+      },
+      "typography": {
+        "headingFont": "Space Grotesk",
+        "bodyFont": "Manrope",
+        "fontFamily": "\"Manrope\", \"Segoe UI\", sans-serif"
+      },
+      "shell": {
+        "accentColor": "#F2B544",
+        "dockStyle": "glass",
+        "pageBackground": "#0D0E10",
+        "gateBackground": "linear-gradient(135deg, #0D0E10, #17191D, #0D0E10)",
+        "panelBackground": "#17191D",
+        "panelStrongBackground": "#21242A"
+      },
+      "cssVariables": {
+        "--space-brand-primary": "#F2B544",
+        "--space-brand-highlight": "#FFD16F",
+        "--space-brand-contrast": "#1B1308",
+        "--space-brand-secondary": "#B7BBC4",
+        "--space-brand-accent": "#F2B544",
+        "--space-brand-primary-50": "#342716",
+        "--space-brand-primary-100": "#342716",
+        "--space-brand-primary-200": "#94501A",
+        "--space-brand-primary-500": "#F2B544",
+        "--space-brand-primary-600": "#D69529",
+        "--space-brand-primary-700": "#B96F1C",
+        "--space-brand-primary-900": "#7A4318",
+        "--space-brand-highlight-50": "#342716",
+        "--space-brand-highlight-100": "#342716",
+        "--space-brand-highlight-200": "#94501A",
+        "--space-brand-highlight-500": "#FFD16F",
+        "--space-brand-highlight-600": "#F2B544",
+        "--space-brand-highlight-700": "#D69529",
+        "--space-brand-highlight-900": "#94501A",
+        "--space-surface-page": "#0D0E10",
+        "--space-surface-bg": "#0D0E10",
+        "--space-surface-page-alt": "#17191D",
+        "--space-surface-gradient-from": "#0D0E10",
+        "--space-surface-gradient-via": "#17191D",
+        "--space-surface-gradient-to": "#0D0E10",
+        "--space-surface-card": "#17191D",
+        "--space-surface-card-hover": "#2A2E35",
+        "--space-surface-panel": "#17191D",
+        "--space-surface-panel-strong": "#21242A",
+        "--space-surface-muted": "#21242A",
+        "--space-surface-accent-soft": "#342716",
+        "--space-border-default": "#393E47",
+        "--space-border-subtle": "#393E47",
+        "--space-border-strong": "#747D8B",
+        "--space-text-primary": "#F6F2E9",
+        "--space-text": "#F6F2E9",
+        "--space-text-secondary": "#B7BBC4",
+        "--space-text-brand": "#F2B544",
+        "--space-text-accent": "#F2B544",
+        "--space-text-muted": "#929AA7",
+        "--space-text-on-primary": "#1B1308",
+        "--space-text-on-highlight": "#1B1308",
+        "--space-text-on-contrast": "#F2B544",
+        "--space-semantic-success": "#79D5A5",
+        "--space-semantic-success-50": "#152B22",
+        "--space-semantic-success-100": "#152B22",
+        "--space-semantic-success-500": "#79D5A5",
+        "--space-semantic-success-600": "#79D5A5",
+        "--space-semantic-success-700": "#79D5A5",
+        "--space-semantic-warning": "#F1C778",
+        "--space-semantic-warning-50": "#302719",
+        "--space-semantic-warning-100": "#302719",
+        "--space-semantic-warning-500": "#F1C778",
+        "--space-semantic-warning-600": "#F1C778",
+        "--space-semantic-warning-700": "#F1C778",
+        "--space-semantic-danger": "#FF9A9A",
+        "--space-semantic-danger-50": "#351E23",
+        "--space-semantic-danger-100": "#351E23",
+        "--space-semantic-danger-500": "#FF9A9A",
+        "--space-semantic-danger-600": "#FF9A9A",
+        "--space-semantic-danger-700": "#FF9A9A",
+        "--space-neutral-0": "#F6F2E9",
+        "--space-neutral-50": "#F6F2E9",
+        "--space-neutral-100": "#B7BBC4",
+        "--space-neutral-200": "#929AA7",
+        "--space-neutral-300": "#747D8B",
+        "--space-neutral-400": "#747D8B",
+        "--space-neutral-500": "#929AA7",
+        "--space-neutral-600": "#393E47",
+        "--space-neutral-700": "#2A2E35",
+        "--space-neutral-800": "#21242A",
+        "--space-neutral-900": "#17191D",
+        "--space-neutral-950": "#0D0E10",
+        "--space-shell-button-text": "#1B1308",
+        "--space-shell-accent-button-text": "#1B1308",
+        "--space-shell-dock-text": "#1B1308",
+        "--space-shell-icon": "#F2B544",
+        "--space-shell-shadow": "#0D0E10",
+        "--space-shell-shadow-strong": "#0D0E10",
+        "--vg-bg": "#0D0E10",
+        "--vg-surface": "#17191D",
+        "--vg-raised": "#21242A",
+        "--vg-hover": "#2A2E35",
+        "--vg-border": "#393E47",
+        "--vg-control-border": "#747D8B",
+        "--vg-text": "#F6F2E9",
+        "--vg-secondary": "#B7BBC4",
+        "--vg-muted": "#929AA7",
+        "--vg-accent": "#F2B544",
+        "--vg-on-accent": "#1B1308",
+        "--vg-accent-hover": "#FFD16F",
+        "--vg-accent-pressed": "#D69529",
+        "--vg-accent-soft": "#342716",
+        "--vg-bronze": "#94501A",
+        "--vg-focus": "#FFE5A3",
+        "--vg-success": "#79D5A5",
+        "--vg-success-bg": "#152B22",
+        "--vg-warning": "#F1C778",
+        "--vg-warning-bg": "#302719",
+        "--vg-danger": "#FF9A9A",
+        "--vg-danger-bg": "#351E23",
+        "--vg-info": "#9DBDFF",
+        "--vg-info-bg": "#1C2840",
+        "--vg-gradient-brand": "linear-gradient(110deg, #B95F16 0%, #ED9C1A 40%, #FFD467 74%, #FFF0BD 100%)",
+        "--vg-gradient-action": "linear-gradient(115deg, #E69A24 0%, #F8C85C 58%, #FFDF8F 100%)",
+        "--vg-gradient-action-hover": "linear-gradient(115deg, #F0AC3C 0%, #FFD477 58%, #FFE8AE 100%)",
+        "--vg-gradient-surface": "linear-gradient(145deg, #25262C 0%, #191B20 56%, #15171B 100%)",
+        "--vg-gradient-selected": "linear-gradient(100deg, #3B2B17 0%, #25221E 100%)",
+        "--vg-gradient-ambient": "radial-gradient(ellipse at 85% 0%, #F2B54418 0%, transparent 55%)"
+      }
+    },
+    "layout": {
+      "agentPosition": "center",
+      "dockPosition": "bottom",
+      "appWindowSize": "fullscreen",
+      "defaultLandingView": "app",
+      "defaultLandingAppId": "vidverge-agent"
+    },
+    "branding": {
+      "name": "Vidverge",
+      "tagline": "Turn any idea into a publish-ready video — brief to video in one shot",
+      "logoUrl": "https://storage.googleapis.com/audos-images/chat-attachments/8a9adad1-ad34-40e6-823c-8195cdcf7d6c.png",
+      "headingFont": "Space Grotesk",
+      "bodyFont": "Manrope",
+      "colors": {
+        "primary": "#F2B544",
+        "highlight": "#FFD16F",
+        "contrast": "#1B1308",
+        "secondary": "#B7BBC4",
+        "accent": "#F2B544"
+      }
+    }
+  },
+  "agent": {
+    "welcomeMessage": "What do you want to make? Verger can turn a website, script, footage or idea into the right video workflow, and will ask only when it needs your input or approval.",
+    "name": "Verger",
+    "thinkingText": "Verger is planning the next step…"
+  }
+}

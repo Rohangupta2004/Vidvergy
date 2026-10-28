@@ -1,0 +1,373 @@
+/**
+ * Native Audos video integrations — one catalog for all six platform proxies.
+ * Apps pick an integration, then a model within it; `generateVideoClip` routes
+ * to the correct endpoint with `X-Workspace-DB-Token` on every paid call.
+ */
+
+import type { AppId } from './appIds';
+import {
+  GROUP_A_MODELS,
+  DEFAULT_ENGINE_ID,
+  KLING_MODELS,
+  HIGGSFIELD_VIDEO_MODELS,
+  RUNWAY_MODELS,
+  groupAModel,
+  isRunwayModel,
+  runwayModel,
+  runwayVideoRatio,
+  clampRunwayDuration,
+  engineHealthWarning,
+  isEngineAvailable,
+} from './videoEngines';
+import {
+  EngineError,
+  submitGroupA,
+  pollGroupA,
+  postGeneration,
+  submitKlingVideo,
+  pollKling,
+  submitHiggsfieldVideo,
+  pollHiggsfield,
+  runwaySubmitVideo,
+  pollRunway,
+} from './videoEngineClient';
+import { generateWithRunway } from './runwayAdapter';
+import { adoptExternalOperation, resumeExternalOperation } from '../apps/VideoProviderLab/labClient';
+
+export type VideoIntegrationId =
+  | 'image-and-video-generation'
+  | 'google-veo3'
+  | 'kling-video'
+  | 'higgsfield-media'
+  | 'heygen-video'
+  | 'runway-recipes';
+
+export interface VideoIntegrationMeta {
+  id: VideoIntegrationId;
+  label: string;
+  blurb: string;
+  /** Scene-clip integrations (HeyGen is presenter-only). */
+  role: 'scene' | 'presenter';
+}
+
+export const VIDEO_INTEGRATIONS: VideoIntegrationMeta[] = [
+  {
+    id: 'image-and-video-generation',
+    label: 'Image & Video (unified)',
+    blurb: 'Best all-round picture quality for scenes with people, products and places.',
+    role: 'scene',
+  },
+  {
+    id: 'google-veo3',
+    label: 'Google Veo',
+    blurb: 'Strong motion and natural lighting. A safe default for most scenes.',
+    role: 'scene',
+  },
+  {
+    id: 'kling-video',
+    label: 'Kling AI',
+    blurb: 'Keeps one character looking like the same person across every shot. Up to 15s per shot with sound.',
+    role: 'scene',
+  },
+  {
+    id: 'higgsfield-media',
+    label: 'Higgsfield',
+    blurb: 'Cinematic camera moves — push-ins, orbits and crane shots.',
+    role: 'scene',
+  },
+  {
+    id: 'heygen-video',
+    label: 'HeyGen',
+    blurb: 'A presenter on camera. Pick a look, give it a script. Not for background shots.',
+    role: 'presenter',
+  },
+  {
+    id: 'runway-recipes',
+    label: 'Runway Gen-4',
+    blurb: 'Product ads and user-style testimonial clips from a product photo.',
+    role: 'scene',
+  },
+];
+
+/** Convenience id for POST /api/generate/video (platform-managed veo-3.1). */
+export const GOOGLE_VEO_CONVENIENCE_MODEL = 'platform-veo-3.1-managed';
+
+export interface IntegrationModelOption {
+  id: string;
+  label: string;
+  hint?: string;
+}
+
+export function integrationMeta(id: string | null | undefined): VideoIntegrationMeta | null {
+  return VIDEO_INTEGRATIONS.find((entry) => entry.id === id) || null;
+}
+
+/**
+ * Put the last verified outcome in front of the price. A model the platform is
+ * currently refusing still appears in every picker — these outages flip back
+ * — but the customer sees why it may not run before they spend a slot on it,
+ * instead of finding out from a 400 after the submit.
+ */
+function withHealth(modelId: string, hint: string): string {
+  const warning = engineHealthWarning(modelId);
+  return warning ? `⚠ ${warning}${hint ? ` · ${hint}` : ''}` : hint;
+}
+
+export function modelsForIntegration(integration: VideoIntegrationId): IntegrationModelOption[] {
+  switch (integration) {
+    case 'image-and-video-generation':
+      return GROUP_A_MODELS.filter((m) => !m.aliasOf).map((m) => ({ id: m.id, label: m.name, hint: withHealth(m.id, m.costHint) }));
+    case 'google-veo3':
+      return [
+        { id: GOOGLE_VEO_CONVENIENCE_MODEL, label: 'Veo 3.1 (managed default)', hint: 'The standard choice — good quality, no setup.' },
+        ...GROUP_A_MODELS.filter((m) => !m.aliasOf && (m.provider === 'Google' || m.id.startsWith('openrouter/google/veo-'))).map((m) => ({ id: m.id, label: m.name, hint: withHealth(m.id, m.costHint) })),
+
+      ];
+    case 'kling-video':
+      return KLING_MODELS.map((m) => ({ id: m.id, label: m.name, hint: withHealth(m.id, m.blurb.slice(0, 80)) }));
+    case 'higgsfield-media':
+      return HIGGSFIELD_VIDEO_MODELS.map((m) => ({ id: m.id, label: m.name, hint: withHealth(m.id, m.blurb.slice(0, 80)) }));
+    case 'runway-recipes':
+      return RUNWAY_MODELS.filter((m) => m.type === 'video').map((m) => ({
+        id: m.id,
+        label: m.label,
+        hint: m.available ? m.priceNote : (m.unavailableReason || 'unavailable'),
+      }));
+    case 'heygen-video':
+      return [{ id: 'heygen-avatar', label: 'Presenter on camera', hint: 'Pick the look in the presenter panel.' }];
+    default:
+      return [];
+  }
+}
+
+export function defaultModelForIntegration(integration: VideoIntegrationId): string {
+  const models = modelsForIntegration(integration);
+  const working = models.find((m) => isEngineAvailable(m.id));
+  if (integration === 'image-and-video-generation' || integration === 'google-veo3') {
+    return models.find((m) => m.id === DEFAULT_ENGINE_ID && isEngineAvailable(m.id))?.id || working?.id || DEFAULT_ENGINE_ID;
+  }
+  return working?.id || models[0]?.id || '';
+}
+
+/** Infer integration from a legacy engine id stored on older projects. */
+export function integrationForEngineId(engineId: string): VideoIntegrationId {
+  const id = String(engineId || '');
+  if (id === 'heygen' || id === 'heygen-avatar') return 'heygen-video';
+  if (isRunwayModel(id)) return 'runway-recipes';
+  if (KLING_MODELS.some((m) => m.id === id)) return 'kling-video';
+  if (HIGGSFIELD_VIDEO_MODELS.some((m) => m.id === id)) return 'higgsfield-media';
+  if (id === GOOGLE_VEO_CONVENIENCE_MODEL) return 'google-veo3';
+  if (groupAModel(id)) return 'image-and-video-generation';
+  return 'image-and-video-generation';
+}
+
+export interface GenerateVideoClipParams {
+  integration: VideoIntegrationId;
+  model: string;
+  prompt: string;
+  aspectRatio?: '16:9' | '9:16' | '1:1';
+  duration?: number;
+  imageData?: string | null;
+  referenceImages?: { imageData: string; mimeType?: string; referenceType: 'asset' | 'style' }[] | null;
+  appId?: AppId;
+  onProgress?: (progress: number) => void;
+  /** Friendly app/clip name written to the shared background ledger. */
+  historyLabel?: string;
+  /** Persist this id with the app's own draft so reopening can reattach. */
+  onAdopted?: (jobId: number) => void;
+  /** Existing shared-ledger row to resume without another provider submit. */
+  resumeJobId?: number | null;
+}
+
+/**
+ * Generate one clip URL through the selected native integration.
+ * Surfaces provider errors via EngineError — never swallows failures.
+ */
+export async function generateVideoClip(params: GenerateVideoClipParams): Promise<string> {
+  const integration = params.integration;
+  const model = params.model;
+  const aspect = params.aspectRatio || '16:9';
+  const duration = Math.max(1, Math.round(Number(params.duration) || 5));
+  const label = params.historyLabel || `${params.appId || 'Vidverge'} · ${model}`;
+
+  if (params.resumeJobId) {
+    const resumed = await resumeExternalOperation({
+      jobId: params.resumeJobId,
+      label,
+      modelId: model,
+      duration,
+      note: () => undefined,
+    });
+    return resumed.videoUrl;
+  }
+
+  if (integration === 'heygen-video') {
+    throw new EngineError('HeyGen renders avatar videos from the HeyGen character panel — pick a scene engine for B-roll clips.', { code: 'wrong_integration' });
+  }
+
+  if (integration === 'image-and-video-generation') {
+    const kickoff = await submitGroupA({
+      appId: params.appId,
+      model,
+      prompt: params.prompt,
+      aspectRatio: aspect,
+      duration,
+      generateAudio: false,
+      imageData: params.imageData || undefined,
+      referenceImages: params.referenceImages || undefined,
+    });
+    const adopted = await adoptExternalOperation({
+      provider: 'veo', operationId: kickoff.operationId, modelId: model,
+      modelName: label, prompt: params.prompt, duration,
+      cost: kickoff.cost, estimatedDuration: kickoff.estimatedDuration,
+      onAdopted: params.onAdopted,
+    });
+    return adopted?.videoUrl || pollGroupA(kickoff.operationId, { onProgress: params.onProgress, creditKey: kickoff.creditKey, appId: params.appId });
+  }
+
+  if (integration === 'google-veo3') {
+    if (model === GOOGLE_VEO_CONVENIENCE_MODEL) {
+      const body: Record<string, unknown> = {
+        prompt: params.prompt,
+        aspectRatio: aspect,
+        generateAudio: false,
+      };
+      if (duration) body.duration = duration;
+      if (params.imageData) body.imageData = params.imageData;
+      const { res, data } = await postGeneration('/api/generate/video', body, params.appId);
+      if (!res.ok) throw new EngineError(String(data?.error || data?.errorMessage || data?.message || `Google Veo request failed (${res.status}).`), { status: res.status });
+      const operationId = String(data?.operationId || '');
+      if (!operationId) throw new EngineError(String(data?.errorMessage || 'Google Veo did not return an operation id.'), { code: 'no_operation' });
+      const adopted = await adoptExternalOperation({
+        provider: 'veo', operationId, modelId: model,
+        modelName: label, prompt: params.prompt, duration,
+        cost: data?.cost, estimatedDuration: data?.estimatedDuration,
+        onAdopted: params.onAdopted,
+      });
+      return adopted?.videoUrl || pollGroupA(operationId, { onProgress: params.onProgress, appId: params.appId });
+    }
+    const kickoff = await submitGroupA({
+      appId: params.appId,
+      model,
+      prompt: params.prompt,
+      aspectRatio: aspect,
+      duration,
+      generateAudio: false,
+      imageData: params.imageData || undefined,
+      referenceImages: params.referenceImages || undefined,
+    });
+    const adopted = await adoptExternalOperation({
+      provider: 'veo', operationId: kickoff.operationId, modelId: model,
+      modelName: label, prompt: params.prompt, duration,
+      cost: kickoff.cost, estimatedDuration: kickoff.estimatedDuration,
+      onAdopted: params.onAdopted,
+    });
+    return adopted?.videoUrl || pollGroupA(kickoff.operationId, { onProgress: params.onProgress, creditKey: kickoff.creditKey, appId: params.appId });
+  }
+
+  if (integration === 'kling-video') {
+    const kickoff = await submitKlingVideo({
+      model,
+      prompt: params.prompt,
+      aspectRatio: aspect,
+      duration,
+      imageData: params.imageData || undefined,
+    });
+    const adopted = await adoptExternalOperation({
+      provider: 'kling', operationId: kickoff.taskId, modelId: model,
+      modelName: label, prompt: params.prompt, duration,
+      onAdopted: params.onAdopted,
+    });
+    return adopted?.videoUrl || pollKling(kickoff.taskId, { onProgress: params.onProgress });
+  }
+
+  if (integration === 'higgsfield-media') {
+    const kickoff = await submitHiggsfieldVideo({
+      model,
+      prompt: params.prompt,
+      aspectRatio: aspect,
+      durationSeconds: duration,
+      imageData: params.imageData || undefined,
+    });
+    const adopted = await adoptExternalOperation({
+      provider: 'higgsfield', operationId: kickoff.requestId, modelId: model,
+      modelName: label, prompt: params.prompt, duration,
+      onAdopted: params.onAdopted,
+    });
+    return adopted?.videoUrl || pollHiggsfield(kickoff.requestId, { onProgress: params.onProgress });
+  }
+
+  if (integration === 'runway-recipes') {
+    const rw = runwayModel(model);
+    if (rw?.available && rw.route === 'video') {
+      const seed = params.imageData && /^https:\/\//.test(params.imageData) ? params.imageData : null;
+      const out = await generateWithRunway({
+        model,
+        prompt: params.prompt,
+        image: seed,
+        aspectRatio: aspect,
+        duration: duration || rw.defaultDurationS || 5,
+        historyLabel: label,
+        onAdopted: params.onAdopted,
+      });
+      const url = out.mediaUrls[0];
+      if (!url) throw new EngineError('Runway finished but returned no clip URL.', { code: 'no_media' });
+      return url;
+    }
+    const seconds = clampRunwayDuration(duration, model);
+    const ratio = runwayVideoRatio(aspect, model, Boolean(params.imageData));
+    const body: Record<string, unknown> = {
+      model,
+      ratio,
+      duration: seconds,
+      promptText: params.prompt,
+    };
+    if (params.imageData && /^https:\/\//.test(params.imageData)) {
+      body.mode = 'image-to-video';
+      body.promptImage = params.imageData;
+    }
+    const kickoff = await runwaySubmitVideo(body, { seconds });
+    const adopted = await adoptExternalOperation({
+      provider: 'runway', operationId: kickoff.taskId, modelId: model,
+      modelName: label, prompt: params.prompt, duration: seconds,
+      onAdopted: params.onAdopted,
+    });
+    if (adopted) return adopted.videoUrl;
+    const result = await pollRunway(kickoff.taskId, { creditKey: kickoff.creditKey });
+    const url = result.mediaUrls[0];
+    if (!url) throw new EngineError('Runway finished but returned no clip URL.', { code: 'no_media' });
+    return url;
+  }
+
+  throw new EngineError(`Unknown video integration "${integration}".`, { code: 'unknown_integration' });
+}
+
+export const VIDEO_INTEGRATION_STORAGE_KEY = 'vidverge:video-integration';
+export const VIDEO_MODEL_STORAGE_KEY = 'vidverge:video-model';
+
+export function loadVideoSelection(): { integration: VideoIntegrationId; model: string } {
+  const fallback = { integration: 'image-and-video-generation' as VideoIntegrationId, model: DEFAULT_ENGINE_ID };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const integration = String(window.sessionStorage.getItem(VIDEO_INTEGRATION_STORAGE_KEY) || '') as VideoIntegrationId;
+    const model = String(window.sessionStorage.getItem(VIDEO_MODEL_STORAGE_KEY) || '');
+    const meta = integrationMeta(integration);
+    if (!meta || meta.role !== 'scene') return fallback;
+    const models = modelsForIntegration(integration);
+    const chosen = models.some((m) => m.id === model) ? model : defaultModelForIntegration(integration);
+    // A stale session must not silently reopen on a model the health sweep
+    // proved broken. Fall back to the verified-working global default instead.
+    if (!isEngineAvailable(chosen)) return fallback;
+    return { integration, model: chosen };
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveVideoSelection(integration: VideoIntegrationId, model: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(VIDEO_INTEGRATION_STORAGE_KEY, integration);
+    window.sessionStorage.setItem(VIDEO_MODEL_STORAGE_KEY, model);
+  } catch { /* preference only */ }
+}

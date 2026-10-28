@@ -1,0 +1,674 @@
+import { useEffect, useRef, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
+import {
+  motion,
+  useMotionValue,
+  useReducedMotion,
+  useScroll,
+  useSpring,
+  useTransform,
+} from 'framer-motion';
+import {
+  ArrowRight,
+  Check,
+  CheckCircle2,
+  Clock3,
+  Download,
+  Film,
+  GitBranch,
+  MessageCircle,
+  Play,
+  Sparkles,
+  UserRoundCheck,
+  WandSparkles,
+  Zap,
+} from 'lucide-react';
+import { AgentThinkingShowcase } from './AgentChat/AgentThinkingShowcase';
+const LIGHTBEAM_LOGO = 'https://storage.googleapis.com/audos-images/attachments/general/c0902809-6dc4-4e0c-b04e-1f60e01b31e6.png';
+const ENTRANCE_SPRING = { type: 'spring' as const, stiffness: 80, damping: 18 };
+const MICRO_SPRING = { type: 'spring' as const, stiffness: 200, damping: 25 };
+const EXAMPLES = [
+  'A 30-second product video for a meditation app with a calm female narrator',
+  '60-second ad for wireless earbuds showing commuters in a city',
+  'Product intro for an AI writing tool, punchy and fast-paced',
+];
+
+const SHOWCASE_ENDPOINT = '/api/workspaces/f24710e5-7c6d-4db4-92b4-c2c235877575/hooks/public-video-showcase/execute';
+
+type ShowcaseVideo = {
+  id: string;
+  url: string;
+  poster: string | null;
+  title: string;
+  description: string | null;
+  category: string;
+  source: string;
+  createdAt: string;
+  aspectRatio: string | null;
+  durationSeconds: number | null;
+  sceneCount: number | null;
+};
+
+function formatDuration(seconds: number | null) {
+  const value = Number(seconds || 0);
+  if (!value) return '';
+  const minutes = Math.floor(value / 60);
+  const remainder = Math.round(value % 60);
+  return `${String(minutes).padStart(2, '0')}:${String(remainder).padStart(2, '0')}`;
+}
+
+function LazyShowcaseVideo({ video, label }: { video: ShowcaseVideo; label?: string }) {
+  const shellRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [near, setNear] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [broken, setBroken] = useState(false);
+
+  useEffect(() => {
+    const node = shellRef.current;
+    if (!node) return;
+    if (!('IntersectionObserver' in window)) {
+      setNear(true);
+      setVisible(true);
+      return;
+    }
+    const preloadObserver = new IntersectionObserver((entries) => {
+      setNear(entries[0].isIntersecting);
+    }, { rootMargin: '320px 0px', threshold: 0.01 });
+    const playbackObserver = new IntersectionObserver((entries) => {
+      setVisible(entries[0].isIntersecting);
+    }, { rootMargin: '0px', threshold: 0.18 });
+    preloadObserver.observe(node);
+    playbackObserver.observe(node);
+    return () => { preloadObserver.disconnect(); playbackObserver.disconnect(); };
+  }, []);
+
+  useEffect(() => {
+    const node = videoRef.current;
+    if (!node || !near) return;
+    if (visible) void node.play().catch(() => undefined);
+    else node.pause();
+  }, [near, visible]);
+
+  if (broken) return null;
+  return (
+    <div
+      ref={shellRef}
+      className="vv-real-video"
+      onMouseEnter={() => { if (near) void videoRef.current?.play().catch(() => undefined); }}
+      onMouseLeave={() => { if (!visible) videoRef.current?.pause(); }}
+    >
+      <video
+        ref={videoRef}
+        src={near ? video.url : undefined}
+        poster={near ? video.poster || undefined : undefined}
+        muted
+        loop
+        playsInline
+        preload={near ? 'metadata' : 'none'}
+        aria-label={label || video.title}
+        onError={() => setBroken(true)}
+      />
+    </div>
+  );
+}
+
+type LandingShowcaseProps = {
+  brandName: string;
+  tagline: string;
+  logoUrl?: string;
+  email: string;
+  loading: boolean;
+  error: string;
+  gdprEnabled: boolean;
+  marketingConsent: boolean;
+  socialProviders: string[];
+  guestModeEnabled: boolean;
+  onEmailChange: (value: string) => void;
+  onMarketingConsentChange: (value: boolean) => void;
+  onEmailSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onSocialLogin: (provider: string) => void;
+  onGuestMode: () => void;
+};
+
+function BrandMark({ name, logoUrl, size = 38 }: { name: string; logoUrl?: string; size?: number }) {
+  const source = logoUrl || LIGHTBEAM_LOGO;
+  return (
+    <span className="vv-logo-shell" style={{ width: size * 1.38, height: size }}>
+      <img src={source} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'center', mixBlendMode: 'normal' }} />
+    </span>
+  );
+}
+
+function LightBeamField() {
+  return (
+    <div className="vv-lightbeam-field" aria-hidden="true">
+      <svg viewBox="0 0 1600 900" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="vvBeamGold" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="#F0B429" stopOpacity="0" />
+            <stop offset=".18" stopColor="#D4920A" stopOpacity=".78" />
+            <stop offset=".5" stopColor="#F0B429" stopOpacity="1" />
+            <stop offset=".82" stopColor="#D4920A" stopOpacity=".78" />
+            <stop offset="1" stopColor="#F0B429" stopOpacity="0" />
+          </linearGradient>
+          <filter id="vvBeamGlow" x="-30%" y="-60%" width="160%" height="220%">
+            <feGaussianBlur stdDeviation="9" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
+        <g className="vv-beam-glow" filter="url(#vvBeamGlow)">
+          <path d="M-80 360 C260 300 420 370 650 520 C790 610 860 620 970 482 C1110 306 1320 278 1680 350" />
+          <path d="M-100 410 C260 350 440 438 665 575 C795 654 872 650 995 520 C1140 365 1360 334 1700 395" />
+          <path d="M-120 305 C250 260 430 316 640 458 C785 556 858 565 962 428 C1104 242 1345 238 1720 315" />
+        </g>
+        <g className="vv-beam-lines">
+          <path d="M-80 360 C260 300 420 370 650 520 C790 610 860 620 970 482 C1110 306 1320 278 1680 350" />
+          <path d="M-100 410 C260 350 440 438 665 575 C795 654 872 650 995 520 C1140 365 1360 334 1700 395" />
+          <path d="M-120 305 C250 260 430 316 640 458 C785 556 858 565 962 428 C1104 242 1345 238 1720 315" />
+          <path d="M-100 455 C230 405 430 475 650 618 C790 710 892 682 1015 558 C1164 408 1390 382 1710 440" />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function representativeVideos(videos: ShowcaseVideo[]) {
+  if (videos.length <= 3) return videos;
+  return [videos[0], videos[Math.floor((videos.length - 1) / 2)], videos[videos.length - 1]];
+}
+
+function HeroVideoShowcase({ name, logoUrl, videos }: { name: string; logoUrl?: string; videos: ShowcaseVideo[] }) {
+  const featured = representativeVideos(videos);
+  return (
+    <div className="vv-hero-reel">
+      <div className="vv-reel-header">
+        <div className="vv-reel-brand"><BrandMark name={name} logoUrl={logoUrl} size={34} /><span><strong>Made with {name}</strong><small>Real database videos · old to new</small></span></div>
+        <span className="vv-live-pill"><i /> {featured.length ? 'Playing now' : 'Loading the reel'}</span>
+      </div>
+      <div className="vv-reel-grid">
+        {featured.length ? featured.map((video, index) => (
+          <div key={video.id} className={`vv-reel-item ${index === 0 ? 'vv-reel-wide' : ''}`}>
+            <LazyShowcaseVideo video={video} />
+            <div className="vv-reel-caption"><strong>{video.title}</strong><span>{video.category}{video.description ? ` · ${video.description}` : ''}</span></div>
+          </div>
+        )) : (
+          <div className="vv-reel-empty"><Sparkles size={22} /><strong>Curating the real VidVerge reel</strong><span>Only verified database videos appear here.</span></div>
+        )}
+      </div>
+      <div className="vv-reel-footer"><CheckCircle2 size={14} /> Best film from every five, preserved from older work to newer work</div>
+    </div>
+  );
+}
+
+function DatabaseShowcase({ videos }: { videos: ShowcaseVideo[] }) {
+  const categories = Array.from(new Set(videos.map((video) => video.category)));
+  if (!videos.length) return null;
+  return (
+    <section className="vv-section vv-work-section" aria-labelledby="vv-work-title">
+      <div className="vv-container">
+        <Reveal><div className="vv-kicker"><span className="vv-eyebrow">Selected work · database live</span><h2 id="vv-work-title">The work, evolving.</h2><p>Within every real category, each group of five contributes its strongest playable film. The sequence stays chronological, so older work leads into the newest.</p></div></Reveal>
+        <div className="vv-work-groups">
+          {categories.map((category) => {
+            const group = videos.filter((video) => video.category === category);
+            return (
+              <div key={category} className="vv-work-group">
+                <div className="vv-work-heading"><h3>{category}</h3><span>{group.length} selected</span></div>
+                <div className="vv-work-row">
+                  {group.map((video) => (
+                    <article key={video.id} className="vv-work-card">
+                      <div className={video.aspectRatio === '9:16' ? 'vv-work-media vv-work-portrait' : 'vv-work-media'}>
+                        <LazyShowcaseVideo video={video} />
+                        <span className="vv-work-category">{video.category}</span>
+                      </div>
+                      <div className="vv-work-copy"><h4>{video.title}</h4>{video.description ? <p>{video.description}</p> : null}<small>{video.source}{formatDuration(video.durationSeconds) ? ` · ${formatDuration(video.durationSeconds)}` : ''}</small></div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Reveal({ children, delay = 0, className = '' }: { children: ReactNode; delay?: number; className?: string }) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <motion.div
+      className={className}
+      initial={reducedMotion ? false : { opacity: 0, y: 28, scale: 0.97 }}
+      whileInView={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      viewport={{ once: true, amount: 0.2 }}
+      transition={{ ...ENTRANCE_SPRING, delay }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function TiltCard({ children, className = '', featured = false }: { children: ReactNode; className?: string; featured?: boolean }) {
+  return (
+    <motion.div
+      className={`vv-tilt-card ${featured ? 'vv-featured-card' : ''} ${className}`}
+      whileTap={{ scale: 0.99 }}
+      transition={MICRO_SPRING}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function MagneticButton({ children, onClick, secondary = false }: { children: ReactNode; onClick: () => void; secondary?: boolean }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const reducedMotion = useReducedMotion();
+  const targetX = useMotionValue(0);
+  const targetY = useMotionValue(0);
+  const x = useSpring(targetX, { stiffness: 200, damping: 25 });
+  const y = useSpring(targetY, { stiffness: 200, damping: 25 });
+
+  useEffect(() => {
+    if (reducedMotion || window.matchMedia('(hover: none), (pointer: coarse)').matches) return;
+    const handlePointer = (event: PointerEvent) => {
+      const node = ref.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const dx = event.clientX - centerX;
+      const dy = event.clientY - centerY;
+      const distance = Math.hypot(dx, dy);
+      if (distance < Math.max(rect.width / 2, rect.height / 2) + 60) {
+        targetX.set(Math.max(-16, Math.min(16, dx * 0.16)));
+        targetY.set(Math.max(-10, Math.min(10, dy * 0.16)));
+      } else {
+        targetX.set(0);
+        targetY.set(0);
+      }
+    };
+    window.addEventListener('pointermove', handlePointer, { passive: true });
+    return () => window.removeEventListener('pointermove', handlePointer);
+  }, [reducedMotion, targetX, targetY]);
+
+  return (
+    <motion.button
+      ref={ref}
+      type="button"
+      onClick={onClick}
+      className={secondary ? 'vv-button vv-button-secondary' : 'vv-button vv-button-primary'}
+      style={{ x, y }}
+      whileHover={reducedMotion ? undefined : { scale: 1.025 }}
+      whileTap={{ scale: 0.97 }}
+      transition={MICRO_SPRING}
+    >
+      {children}
+    </motion.button>
+  );
+}
+
+function WaveBar({ index }: { index: number }) {
+  const reducedMotion = useReducedMotion();
+  const [high, setHigh] = useState(index % 2 === 0);
+  useEffect(() => {
+    if (reducedMotion) return;
+    const timer = window.setInterval(() => setHigh(value => !value), 440 + index * 95);
+    return () => window.clearInterval(timer);
+  }, [index, reducedMotion]);
+  return (
+    <motion.i
+      animate={{ scaleY: reducedMotion ? 0.55 : high ? 1 : 0.28 }}
+      transition={ENTRANCE_SPRING}
+      style={{ transformOrigin: 'center' }}
+    />
+  );
+}
+
+function GeneratingLine({ compact = false }: { compact?: boolean }) {
+  const reducedMotion = useReducedMotion();
+  const [filling, setFilling] = useState(true);
+  useEffect(() => {
+    if (reducedMotion) return;
+    let resetTimer = 0;
+    const cycle = window.setInterval(() => {
+      setFilling(false);
+      resetTimer = window.setTimeout(() => setFilling(true), 500);
+    }, 3500);
+    return () => {
+      window.clearInterval(cycle);
+      window.clearTimeout(resetTimer);
+    };
+  }, [reducedMotion]);
+  return (
+    <div className={`vv-generating ${compact ? 'vv-generating-compact' : ''}`}>
+      <div className="vv-generating-label"><Sparkles size={13} /> Generating video...</div>
+      <div className="vv-progress-track">
+        <motion.span
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: reducedMotion ? 0.68 : filling ? 1 : 0 }}
+          transition={filling ? ENTRANCE_SPRING : MICRO_SPRING}
+        />
+      </div>
+    </div>
+  );
+}
+
+function MiniRender({ accent = '#D4920A' }: { accent?: string }) {
+  return (
+    <div className="vv-mini-render" aria-hidden>
+      <span className="vv-mini-screen" style={{ background: `linear-gradient(135deg, ${accent}, #B87808 72%)` }}>
+        <Play size={12} fill="currentColor" />
+      </span>
+      <span className="vv-mini-timeline">
+        {[36, 72, 48, 86, 58].map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}
+      </span>
+    </div>
+  );
+}
+
+function useTypingExamples(reducedMotion: boolean) {
+  const [exampleIndex, setExampleIndex] = useState(0);
+  const [typed, setTyped] = useState(reducedMotion ? EXAMPLES[0] : '');
+  useEffect(() => {
+    if (reducedMotion) {
+      setTyped(EXAMPLES[0]);
+      return;
+    }
+    const text = EXAMPLES[exampleIndex];
+    let position = 0;
+    setTyped('');
+    const typing = window.setInterval(() => {
+      position += 1;
+      setTyped(text.slice(0, position));
+      if (position >= text.length) window.clearInterval(typing);
+    }, 38);
+    const next = window.setTimeout(() => setExampleIndex(index => (index + 1) % EXAMPLES.length), 4000);
+    return () => {
+      window.clearInterval(typing);
+      window.clearTimeout(next);
+    };
+  }, [exampleIndex, reducedMotion]);
+  return typed;
+}
+
+function SocialIcon({ provider }: { provider: string }) {
+  if (provider === 'google') return <span className="vv-google">G</span>;
+  if (provider === 'facebook') return <span style={{ color: '#60a5fa', fontWeight: 800 }}>f</span>;
+  if (provider === 'apple') return <span style={{ fontSize: 18 }}>●</span>;
+  if (provider === 'linkedin') return <span style={{ color: '#60a5fa', fontWeight: 800 }}>in</span>;
+  return <span>•</span>;
+}
+
+export default function LandingShowcase(props: LandingShowcaseProps) {
+  const reducedMotion = !!useReducedMotion();
+  const heroRef = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
+  const backY = useTransform(scrollYProgress, [0, 1], [0, reducedMotion ? 0 : 70]);
+  const frontY = useTransform(scrollYProgress, [0, 1], [0, reducedMotion ? 0 : 170]);
+  const typedBrief = useTypingExamples(reducedMotion);
+  const [demoReady, setDemoReady] = useState(reducedMotion);
+  const [showcaseVideos, setShowcaseVideos] = useState<ShowcaseVideo[]>([]);
+  const brandName = typeof props.brandName === 'string' && props.brandName.trim() ? props.brandName : 'VidVerge';
+  const tagline = typeof props.tagline === 'string' && props.tagline.trim() ? props.tagline : 'Brief to video in one shot';
+  const socialProviders = Array.isArray(props.socialProviders) ? props.socialProviders : [];
+
+  useEffect(() => {
+    let active = true;
+    fetch(SHOWCASE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || 'Showcase unavailable');
+        return Array.isArray(data?.videos) ? data.videos : [];
+      })
+      .then((videos: ShowcaseVideo[]) => { if (active) setShowcaseVideos(videos.filter((video) => video && video.id && video.url && video.title)); })
+      .catch((error) => { console.warn('[LandingShowcase] real-video showcase unavailable', error); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setDemoReady(true);
+      return;
+    }
+
+    let readyTimer = window.setTimeout(() => setDemoReady(true), 2800);
+    const cycleTimer = window.setInterval(() => {
+      setDemoReady(false);
+      window.clearTimeout(readyTimer);
+      readyTimer = window.setTimeout(() => setDemoReady(true), 2800);
+    }, 7600);
+
+    return () => {
+      window.clearTimeout(readyTimer);
+      window.clearInterval(cycleTimer);
+    };
+  }, [reducedMotion]);
+
+  const scrollToAuth = () => {
+    const form = document.getElementById('vidverge-auth');
+    form?.scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' });
+    window.setTimeout(() => document.querySelector<HTMLInputElement>('[data-testid="input-email"]')?.focus(), reducedMotion ? 0 : 550);
+  };
+
+  const features = [
+    { icon: UserRoundCheck, title: 'Consistent characters, every scene', copy: 'Your character stays the same from shot to shot. No drift. No manual fixes.', accent: '#F0B429' },
+    { icon: GitBranch, title: 'Script to video in one place', copy: 'Brief in. Finished video out. No stitching tools together.', accent: '#D4920A' },
+    { icon: Clock3, title: 'No wasted credits', copy: 'Only generate what you actually need.', accent: '#F0B429' },
+  ];
+  const pricing = [
+    { name: 'Free Trial', price: '$0', unit: '', credits: '30 credits', copy: 'One 30s video, no card needed', fill: '18%', featured: false, details: ['30 seconds included', 'Full pipeline access', 'Publish-ready MP4'] },
+    { name: 'Creator', price: '$35', unit: '/mo', credits: '250 credits/mo', copy: '~4 full-length videos, credits roll over', fill: '58%', featured: true, details: ['250 seconds monthly', 'Credits roll over', 'Priority rendering'] },
+    { name: 'Pro', price: '$70', unit: '/mo', credits: '500 credits/mo', copy: '~8 videos/month, rollover included', fill: '90%', featured: false, details: ['500 seconds monthly', 'Team-ready workflow', 'Priority rendering'] },
+    { name: 'Pay as you go', price: '$9', unit: '', credits: '60 credits', copy: 'A flexible one-off top-up, whenever you need it', fill: '34%', featured: false, details: ['60 video seconds', 'No subscription', 'Credits never expire'] },
+  ];
+
+  return (
+    <main className="vv-landing">
+      <style>{`
+        .vv-landing{min-height:100vh;overflow:hidden;background:#0D0B05;color:#F5E9C8;font-family:'Inter','Geist',system-ui,-apple-system,sans-serif;--amber:#D4920A;--amber-deep:#B87808;--muted:#9E8B55;--glass:rgba(255,255,255,.06);--border:rgba(255,255,255,.14)}
+        .vv-landing *{box-sizing:border-box}.vv-container{width:min(1160px,calc(100% - 40px));margin:0 auto}.vv-section{position:relative;padding:112px 0;border-top:1px solid rgba(255,255,255,.14)}
+        .vv-section:after{content:'';position:absolute;left:8%;right:8%;top:-1px;height:1px;background:linear-gradient(90deg,transparent,rgba(212,146,10,.7),#F0B429,rgba(212,146,10,.7),transparent);box-shadow:0 0 24px rgba(212,146,10,.35);opacity:.7}
+        .vv-logo-shell{position:relative;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;flex:none;filter:drop-shadow(0 0 12px rgba(212,146,10,.45))}.vv-logo-shell img{transform:scale(1.52)}
+        .vv-lightbeam-field{position:absolute;z-index:1;inset:-4% -8% -8%;pointer-events:none;opacity:.92;mix-blend-mode:multiply}.vv-lightbeam-field svg{width:100%;height:100%;overflow:visible}.vv-lightbeam-field path{fill:none;vector-effect:non-scaling-stroke}.vv-beam-glow path{stroke:#D4920A;stroke-width:20;opacity:.19}.vv-beam-lines path{stroke:url(#vvBeamGold);stroke-width:2.2;stroke-linecap:round;stroke-dasharray:15 11;animation:vvBeamFlow 10s linear infinite}.vv-beam-lines path:nth-child(2){animation-duration:13s;animation-direction:reverse;opacity:.82}.vv-beam-lines path:nth-child(3){animation-duration:16s;opacity:.62}.vv-beam-lines path:nth-child(4){animation-duration:19s;animation-direction:reverse;opacity:.48}
+        @keyframes vvBeamFlow{to{stroke-dashoffset:-520}}
+        @keyframes vvLogoBreathe{0%,100%{filter:drop-shadow(0 0 24px rgba(212,146,10,.34));transform:translate3d(0,0,0) scale(1)}50%{filter:drop-shadow(0 0 58px rgba(240,180,41,.72));transform:translate3d(0,-8px,0) scale(1.025)}}
+        @keyframes vvSurfaceSweep{0%{transform:translateX(-145%) skewX(-20deg);opacity:0}22%{opacity:.78}55%,100%{transform:translateX(245%) skewX(-20deg);opacity:0}}
+        .vv-brand-motion{position:fixed;z-index:1;left:50%;top:50%;width:min(58vmax,1060px);height:min(58vmax,1060px);object-fit:contain;object-position:center;transform:translate(-52%,-50%);mix-blend-mode:multiply;opacity:.16;pointer-events:none;animation:vvBrandDrift 24s ease-in-out infinite;will-change:transform,opacity}
+        @keyframes vvBrandDrift{0%,100%{transform:translate(-52%,-50%) scale(1) rotate(0deg);opacity:.11}50%{transform:translate(-47%,-46%) scale(1.07) rotate(2.5deg);opacity:.18}}
+        .vv-hero-copy,.vv-hero-visual{position:relative;z-index:5}
+        .vv-hero-reel,.vv-step-card,.vv-feature-card,.vv-price-card,.vv-demo-panel,.vv-auth-card,.vv-concierge-card{position:relative;overflow:hidden;isolation:isolate}.vv-hero-reel:before,.vv-step-card:before,.vv-feature-card:before,.vv-price-card:before,.vv-demo-panel:before,.vv-auth-card:before,.vv-concierge-card:after{content:'';position:absolute;z-index:0;top:-35%;bottom:-35%;left:-24%;width:26%;background:linear-gradient(90deg,transparent,rgba(212,146,10,.03),rgba(240,180,41,.26),rgba(212,146,10,.04),transparent);filter:blur(5px);animation:vvSurfaceSweep 7.5s ease-in-out infinite;pointer-events:none}.vv-feature-card:nth-child(2):before,.vv-price-card:before{animation-delay:1.4s}.vv-step-card:nth-child(3):before,.vv-auth-card:before{animation-delay:2.8s}
+        .vv-noise{position:absolute;inset:0;pointer-events:none;opacity:.2;background-image:repeating-radial-gradient(circle at 20% 30%,rgba(255,255,255,.11) 0 1px,transparent 1px 4px);background-size:7px 7px;mix-blend-mode:soft-light}
+        .vv-nav{position:absolute;z-index:20;top:0;left:0;right:0;padding:26px 0}.vv-nav-inner{display:flex;justify-content:space-between;align-items:center}.vv-brand{display:flex;gap:11px;align-items:center;font-weight:750;letter-spacing:-.02em}.vv-brand-mark{display:inline-flex;align-items:center;justify-content:center;border-radius:11px;background:linear-gradient(135deg,#F0B429,#D4920A 48%,#B87808);box-shadow:0 8px 30px rgba(212,146,10,.34);font-weight:800}
+        .vv-nav-status{display:flex;align-items:center;gap:8px;color:#9E8B55;font-size:12px}.vv-nav-status i{width:7px;height:7px;border-radius:50%;background:#D4920A;box-shadow:0 0 12px rgba(212,146,10,.55)}
+        .vv-hero{min-height:100svh;position:relative;display:flex;align-items:center;isolation:isolate;background:radial-gradient(900px 600px at 74% 46%,rgba(212,146,10,.16),transparent 62%),radial-gradient(700px 520px at 20% 12%,rgba(240,180,41,.14),transparent 68%),linear-gradient(180deg,#0D0B05,#1C1808 72%,#0D0B05)}
+        .vv-hero-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(460px,1.1fr);align-items:center;gap:28px;padding:130px 0 90px}.vv-hero-copy{position:relative;z-index:5}.vv-eyebrow{display:inline-flex;align-items:center;gap:8px;padding:7px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.24);background:rgba(212,146,10,.09);color:#B87808;font-size:11px;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+        .vv-hero h1{font-size:clamp(52px,6.5vw,92px);line-height:.94;letter-spacing:-.065em;margin:24px 0 24px;max-width:760px}.vv-gradient-text{background:linear-gradient(115deg,#F5E9C8 8%,#B87808 48%,#D4920A 92%);background-clip:text;-webkit-background-clip:text;color:transparent}.vv-hero-copy>p{max-width:620px;color:#9E8B55;font-size:clamp(17px,1.8vw,21px);line-height:1.7;margin:0 0 34px}.vv-hero-actions{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.vv-trust{color:#9E8B55;font-size:12px;display:flex;gap:8px;align-items:center}.vv-trust svg{color:#D4920A}
+        .vv-button{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:10px;border:0;border-radius:14px;padding:15px 21px;font:inherit;font-size:14px;font-weight:750;cursor:pointer;color:#F5E9C8;will-change:transform}.vv-button-primary{background:linear-gradient(135deg,#F0B429,#D4920A 52%,#B87808);color:#FFFFFF;box-shadow:0 14px 38px rgba(212,146,10,.3),inset 0 1px 0 rgba(255,255,255,.35)}.vv-button-secondary{background:rgba(255,255,255,.06);border:1px solid var(--border);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+        .vv-hero-visual{height:560px;position:relative;z-index:2}.vv-hero-canvas{position:absolute;inset:0;display:flex;align-items:center}.vv-orbit{position:absolute;border:1px solid rgba(212,146,10,.14);border-radius:50%;inset:12% 8%;box-shadow:0 0 100px rgba(212,146,10,.08)}
+        .vv-hero-reel{width:100%;padding:14px;border-radius:26px;background:rgba(255,255,255,.94);border:1px solid rgba(255,255,255,.14);box-shadow:0 30px 90px rgba(0,0,0,.12),0 0 80px rgba(212,146,10,.15);backdrop-filter:blur(16px)}.vv-reel-header{display:flex;align-items:center;justify-content:space-between;padding:2px 3px 13px}.vv-reel-brand{display:flex;align-items:center;gap:10px}.vv-reel-brand span{display:grid;gap:2px}.vv-reel-brand strong{font-size:13px;color:#F5E9C8}.vv-reel-brand small{font-size:10px;color:#9E8B55}.vv-live-pill{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:rgba(212,146,10,.12);border:1px solid rgba(255,255,255,.2);color:#B87808;font-size:10px;font-weight:700}.vv-live-pill i{width:6px;height:6px;border-radius:50%;background:#D4920A;box-shadow:0 0 10px rgba(212,146,10,.55)}.vv-reel-grid{height:440px;display:grid;grid-template-columns:1.45fr .75fr;grid-template-rows:1fr 1fr;gap:10px}.vv-reel-item{position:relative;min-height:0;overflow:hidden;border-radius:16px;background:linear-gradient(135deg,#101827,#07101d);border:1px solid rgba(255,255,255,.14)}.vv-reel-wide{grid-row:1 / 3}.vv-real-video,.vv-real-video video{width:100%;height:100%;display:block}.vv-real-video video{object-fit:cover;background:#08090d}.vv-reel-empty{grid-column:1 / -1;grid-row:1 / -1;display:grid;place-content:center;justify-items:center;gap:8px;text-align:center;color:#B87808;background:radial-gradient(circle at 50% 45%,rgba(212,146,10,.17),transparent 38%),#1C1808;border-radius:16px}.vv-reel-empty span{font-size:11px;color:#9E8B55}.vv-reel-caption{position:absolute;left:0;right:0;bottom:0;padding:34px 13px 12px;background:linear-gradient(transparent,rgba(3,5,9,.92));display:grid;gap:2px}.vv-reel-caption strong{font-size:12px;color:#fff}.vv-reel-caption span{font-size:9px;color:#CBD5E1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vv-reel-footer{display:flex;align-items:center;justify-content:center;gap:7px;padding:12px 4px 0;color:#9E8B55;font-size:10px}.vv-reel-footer svg{color:#D4920A}
+        .vv-work-section{background:radial-gradient(900px 480px at 50% 0%,rgba(212,146,10,.10),transparent 68%),#0D0B05}.vv-work-groups{display:grid;gap:44px}.vv-work-group{min-width:0}.vv-work-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:14px}.vv-work-heading h3{margin:0;font-size:20px;letter-spacing:-.025em}.vv-work-heading span{font-size:10px;color:#B87808;text-transform:uppercase;letter-spacing:.12em}.vv-work-row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(250px,31%);gap:14px;overflow-x:auto;scroll-behavior:smooth;padding:2px 2px 14px;scrollbar-color:#D4920A #2A2410;scrollbar-width:thin}.vv-work-row::-webkit-scrollbar{height:8px}.vv-work-row::-webkit-scrollbar-track{background:#2A2410;border-radius:99px}.vv-work-row::-webkit-scrollbar-thumb{background:linear-gradient(90deg,#B87808,#F0B429);border-radius:99px}.vv-work-card{overflow:hidden;border-radius:18px;background:#FFFFFF;border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(12px);box-shadow:0 18px 42px rgba(0,0,0,.12)}.vv-work-media{height:180px;position:relative;background:#08090d}.vv-work-media.vv-work-portrait .vv-real-video video{object-fit:contain}.vv-work-category{position:absolute;left:10px;top:10px;padding:5px 8px;border-radius:999px;background:rgba(5,5,7,.72);border:1px solid rgba(240,180,41,.26);backdrop-filter:blur(8px);color:#F0B429;font-size:9px;text-transform:uppercase;letter-spacing:.08em}.vv-work-copy{padding:14px}.vv-work-copy h4{margin:0 0 6px;font-size:14px;line-height:1.3}.vv-work-copy p{margin:0 0 8px;color:#9E8B55;font-size:11px;line-height:1.55}.vv-work-copy small{color:#9E8B55;font-size:10px}
+        @keyframes vvLoaderSpin{to{transform:rotate(360deg)}}
+        .vv-hero-fallback{height:100%;position:relative;perspective:1200px;transform-style:preserve-3d}.vv-css-stage{position:absolute;inset:2% 0 0;perspective:1200px;transform-style:preserve-3d}.vv-css-object{position:absolute;inset:8% 3%;transform-style:preserve-3d;animation:vvSceneFloat 8s cubic-bezier(.22,1,.36,1) infinite;will-change:transform}.vv-css-halo{position:absolute;left:50%;top:48%;width:62%;aspect-ratio:1;border-radius:50%;border:1px solid rgba(255,255,255,.26);box-shadow:0 0 70px rgba(212,146,10,.2),inset 0 0 50px rgba(184,120,8,.1);transform-style:preserve-3d;animation:vvHaloSpin 18s linear infinite}.vv-css-halo-one{transform:translate(-50%,-50%) rotateX(68deg)}.vv-css-halo-two{width:48%;border-color:rgba(212,146,10,.18);animation-direction:reverse;animation-duration:13s}.vv-css-frame{position:absolute;width:54%;aspect-ratio:1.68;border-radius:18px;padding:10px;background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.14);box-shadow:0 26px 70px rgba(0,0,0,.12),0 0 48px rgba(212,146,10,.18);backdrop-filter:blur(12px);transform-style:preserve-3d}.vv-css-frame-edge{position:absolute;inset:8px -9px -9px 8px;border-radius:18px;background:linear-gradient(145deg,#F0B429,#D4920A);transform:translateZ(-18px);box-shadow:0 26px 60px rgba(0,0,0,.12)}.vv-css-frame-1{left:0;top:34%;transform:translateZ(-34px) rotateY(27deg) rotateZ(-5deg)}.vv-css-frame-2{left:23%;top:20%;z-index:2;transform:translateZ(72px) rotateX(-2deg)}.vv-css-frame-3{right:0;top:36%;transform:translateZ(-34px) rotateY(-27deg) rotateZ(5deg)}.vv-css-frame-screen{height:75%;position:relative;border-radius:12px;background:radial-gradient(circle at 30% 24%,rgba(240,180,41,.58),transparent 28%),linear-gradient(135deg,rgba(212,146,10,.76),#1C1808 68%);display:flex;align-items:center;justify-content:center;overflow:hidden;transform:translateZ(16px)}.vv-css-frame-scene{position:absolute;width:48%;height:120%;right:-7%;bottom:-45%;border-radius:46%;background:linear-gradient(160deg,rgba(255,255,255,.28),rgba(184,120,8,.12));transform:rotate(-18deg)}.vv-css-frame-play{position:relative;width:38px;height:38px;border-radius:50%;background:#FFFFFF;color:#B87808;display:grid;place-items:center;font-size:12px;box-shadow:0 8px 22px rgba(0,0,0,.12);transform:translateZ(24px)}.vv-css-frame-timeline{height:25%;display:flex;align-items:center;gap:6px;padding:4px 8px;transform:translateZ(12px)}.vv-css-frame-timeline i{width:12%;border-radius:3px;background:linear-gradient(#F0B429,#B87808)}.vv-css-logo-extrusion{position:absolute;left:43%;top:43%;width:70px;height:70px;transform-style:preserve-3d;transform:translateZ(142px) rotateY(-12deg)}.vv-css-logo-extrusion span{position:absolute;inset:0;border-radius:18px;display:grid;place-items:center;font-size:31px;font-weight:900;color:#fff;background:linear-gradient(135deg,#D4920A,#B87808);border:1px solid rgba(255,255,255,.28);box-shadow:0 14px 35px rgba(184,120,8,.28)}.vv-css-floor{position:absolute;left:16%;right:16%;bottom:5%;height:90px;border-radius:50%;background:radial-gradient(ellipse,rgba(212,146,10,.28),transparent 68%);filter:blur(22px);transform:rotateX(76deg) translateZ(-70px)}.vv-hero-fallback[data-reduced-motion='true'] .vv-css-object,.vv-hero-fallback[data-reduced-motion='true'] .vv-css-halo{animation:none}.vv-hero-fallback[data-flat='true']{perspective:none}.vv-hero-fallback[data-flat='true'] .vv-css-object{animation:none;transform:none}.vv-hero-fallback[data-flat='true'] .vv-css-frame{transform:none}.vv-hero-fallback[data-flat='true'] .vv-css-frame-1{left:0}.vv-hero-fallback[data-flat='true'] .vv-css-frame-3{right:0}.vv-hero-fallback[data-flat='true'] .vv-css-logo-extrusion{display:none}
+        .vv-kicker{text-align:center;margin-bottom:54px}.vv-kicker h2{font-size:clamp(34px,5vw,58px);line-height:1.02;letter-spacing:-.045em;margin:16px 0}.vv-kicker p{color:#9E8B55;max-width:620px;margin:0 auto;line-height:1.7}.vv-glow-section{background:radial-gradient(700px 400px at 50% 45%,rgba(212,146,10,.11),transparent 70%),#0D0B05}
+        .vv-concierge-section{position:relative;padding:34px 0 44px;background:linear-gradient(180deg,#0D0B05 0%,#1C1808 100%);border-top:1px solid rgba(255,255,255,.18);border-bottom:1px solid rgba(255,255,255,.14)}.vv-concierge-card{position:relative;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.75fr);gap:34px;align-items:center;padding:34px 38px;border-radius:26px;background:linear-gradient(135deg,rgba(212,146,10,.2),rgba(255,255,255,.94) 58%,rgba(240,180,41,.14));border:1px solid rgba(255,255,255,.34);box-shadow:0 24px 70px rgba(0,0,0,.12),0 0 60px rgba(212,146,10,.12)}.vv-concierge-card:before{content:'';position:absolute;width:280px;height:280px;right:-90px;top:-150px;border-radius:50%;background:rgba(240,180,41,.2);filter:blur(70px);pointer-events:none}.vv-concierge-copy,.vv-concierge-action{position:relative;z-index:1}.vv-concierge-copy h2{margin:13px 0 12px;font-size:clamp(30px,4vw,48px);line-height:1.02;letter-spacing:-.045em}.vv-concierge-subtext{max-width:690px;margin:0;color:#9E8B55;font-size:14px;line-height:1.7}.vv-concierge-action{display:grid;gap:16px;padding:22px;border-radius:19px;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(12px)}.vv-concierge-price{display:flex;align-items:baseline;gap:8px}.vv-concierge-price strong{font-size:38px;line-height:1;letter-spacing:-.04em}.vv-concierge-price span{color:#9E8B55;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.09em}.vv-concierge-includes{display:grid;grid-template-columns:1fr 1fr;gap:9px 14px;margin:0;padding:0;list-style:none;color:#9E8B55;font-size:12px}.vv-concierge-includes li{display:flex;align-items:center;gap:7px}.vv-concierge-includes svg{color:#D4920A;flex:none}.vv-concierge-cta{display:inline-flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:14px 18px;border-radius:12px;background:linear-gradient(135deg,#F0B429,#D4920A 52%,#B87808);box-shadow:0 12px 30px rgba(212,146,10,.3);color:#FFFFFF;text-decoration:none;font-size:14px;font-weight:800;transition:transform .2s ease,filter .2s ease,box-shadow .2s ease}.vv-concierge-cta:hover{transform:translateY(-2px);filter:brightness(1.08);box-shadow:0 16px 38px rgba(212,146,10,.42)}
+        .vv-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;position:relative}.vv-step-card,.vv-feature-card,.vv-price-card{height:100%;padding:24px;border-radius:22px;background:var(--glass);border:1px solid var(--border);backdrop-filter:blur(12px);position:relative;overflow:hidden}.vv-tilt-card{transition:transform .22s ease,border-color .22s ease,box-shadow .22s ease}.vv-tilt-card:hover{transform:translateY(-3px);border-color:rgba(212,146,10,.36);box-shadow:0 18px 42px rgba(0,0,0,.12)}.vv-card-content{position:relative;z-index:1}.vv-icon{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;color:#B87808;background:rgba(212,146,10,.13);border:1px solid rgba(255,255,255,.19);margin-bottom:30px}.vv-step-num{position:absolute;right:22px;top:20px;color:rgba(255,255,255,.3);font-weight:800;font-size:13px}.vv-step-card h3,.vv-feature-card h3,.vv-price-card h3{font-size:18px;margin:0 0 8px;letter-spacing:-.02em}.vv-step-card p,.vv-feature-card p{margin:0;color:#9E8B55;font-size:14px;line-height:1.65}.vv-step-render{margin-top:24px}.vv-connector{position:absolute;z-index:3;left:29%;width:14%;top:calc(50% - 1px);pointer-events:none}.vv-generating{padding:11px;border-radius:12px;background:#FFFFFF;border:1px solid rgba(255,255,255,.14);box-shadow:0 14px 30px rgba(0,0,0,.12)}.vv-generating-label{display:flex;align-items:center;gap:6px;font-size:10px;color:#B87808;margin-bottom:8px}.vv-progress-track{height:4px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}.vv-progress-track span{display:block;width:100%;height:100%;transform-origin:left;border-radius:inherit;background:linear-gradient(90deg,#D4920A,#F0B429);box-shadow:0 0 12px rgba(212,146,10,.5)}.vv-generating-compact{padding:9px}
+        .vv-demo-panel{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:22px;border-radius:28px;background:#FFFFFF;border:1px solid rgba(255,255,255,.14);box-shadow:0 35px 100px rgba(0,0,0,.12),0 0 90px rgba(212,146,10,.09);backdrop-filter:blur(14px)}.vv-demo-side{border-radius:20px;background:#1C1808;border:1px solid rgba(255,255,255,.14);padding:22px;min-height:380px}.vv-window-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;color:#9E8B55;font-size:11px}.vv-dots{display:flex;gap:5px}.vv-dots i{width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.28)}.vv-textarea{min-height:210px;border-radius:16px;padding:18px;background:#FFFFFF;border:1px solid rgba(255,255,255,.14);font-size:16px;line-height:1.65;color:#9E8B55}.vv-caret{display:inline-block;width:2px;height:1.1em;margin-left:2px;background:#D4920A;vertical-align:-2px}.vv-demo-output{position:relative;overflow:hidden;padding:0;background:#0D0B05}.vv-demo-output video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transform:scale(1.04);transition:opacity .7s ease,transform 1.2s cubic-bezier(.22,1,.36,1)}.vv-demo-output video.vv-demo-video-ready,.vv-demo-output .vv-real-video video{opacity:.56;transform:scale(1)}.vv-demo-loading{position:absolute;inset:0;z-index:3;display:grid;place-items:center;background:radial-gradient(circle at 50% 42%,rgba(212,146,10,.2),transparent 34%),#1C1808;text-align:center}.vv-loader-orbit{width:76px;height:76px;margin:0 auto 20px;border-radius:50%;border:1px solid rgba(255,255,255,.2);border-top:2px solid #D4920A;box-shadow:0 0 38px rgba(212,146,10,.25);animation:vvLoaderSpin 1.2s linear infinite}.vv-loader-core{position:absolute;left:50%;top:50%;width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#D4920A,#B87808);transform:translate(-50%,-84%) rotate(12deg);box-shadow:0 0 30px rgba(212,146,10,.35)}.vv-demo-loading strong{display:block;font-size:14px}.vv-demo-loading span{display:block;margin-top:7px;color:#9E8B55;font-size:11px}.vv-video-overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,253,244,.06),rgba(255,253,244,.88));display:flex;flex-direction:column;justify-content:flex-end;padding:22px}.vv-play-pulse{position:absolute;left:50%;top:43%;transform:translate(-50%,-50%);width:64px;height:64px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(212,146,10,.85);border:1px solid rgba(255,255,255,.24);box-shadow:0 0 0 12px rgba(212,146,10,.12),0 0 55px rgba(212,146,10,.3)}.vv-wave{height:38px;display:flex;align-items:center;gap:5px;margin:14px 0}.vv-wave i{display:block;width:4px;height:100%;border-radius:99px;background:linear-gradient(#F0B429,#B87808)}.vv-output-meta{display:flex;justify-content:space-between;color:#9E8B55;font-size:11px}.vv-demo-cta{display:flex;justify-content:center;margin-top:30px}
+        .vv-feature-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}.vv-feature-card{min-height:250px}.vv-feature-card .vv-icon{margin-bottom:42px}.vv-feature-copy{display:grid;grid-template-columns:1fr 132px;align-items:end;gap:18px}.vv-mini-render{height:82px;border-radius:11px;background:#1C1808;border:1px solid rgba(255,255,255,.14);padding:8px;display:flex;flex-direction:column;gap:6px}.vv-mini-screen{flex:1;border-radius:7px;display:grid;place-items:center;color:#fff}.vv-mini-timeline{height:13px;display:flex;align-items:center;gap:3px}.vv-mini-timeline i{display:block;flex:1;border-radius:3px;background:rgba(212,146,10,.45)}
+        .vv-pricing-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;align-items:stretch}.vv-pricing-grid>div{height:100%}.vv-price-shell{height:410px;perspective:1200px;transform-style:preserve-3d}.vv-price-pop{transform:translateY(-14px);transform-style:preserve-3d}.vv-price-card-inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .78s cubic-bezier(.22,1,.36,1)}.vv-price-shell:hover .vv-price-card-inner,.vv-price-shell:focus-within .vv-price-card-inner{transform:rotateY(180deg)}.vv-price-card{position:absolute;inset:0;padding:25px;min-height:0;display:flex;flex-direction:column;backface-visibility:hidden;-webkit-backface-visibility:hidden;transform-style:preserve-3d}.vv-price-front{transform:rotateY(0deg)}.vv-price-back{transform:rotateY(180deg);background:radial-gradient(circle at 50% 10%,rgba(212,146,10,.2),transparent 45%),#FFFFFF}.vv-price-back h3,.vv-price-back p,.vv-price-details,.vv-price-back .vv-button{transform:translateZ(28px)}.vv-featured-card{border-color:rgba(212,146,10,.5);background:linear-gradient(180deg,rgba(212,146,10,.14),#FFFFFF)}.vv-popular{align-self:flex-start;color:#FFFFFF;background:#D4920A;border:1px solid rgba(255,255,255,.3);padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.vv-price{font-size:42px;line-height:1;letter-spacing:-.05em;font-weight:800;margin:24px 0 9px;transform:translateZ(30px)}.vv-price small{font-size:14px;color:#9E8B55;letter-spacing:0}.vv-credits{color:#B87808;font-weight:700;font-size:14px;transform:translateZ(24px)}.vv-price-copy{color:#9E8B55;font-size:13px;line-height:1.6;min-height:44px;transform:translateZ(20px)}.vv-seconds-meter{margin:22px 0;padding:13px;border-radius:12px;background:#1C1808;border:1px solid rgba(255,255,255,.14);transform:translateZ(22px)}.vv-seconds-top{display:flex;justify-content:space-between;color:#9E8B55;font-size:10px;margin-bottom:8px}.vv-seconds-track{height:5px;background:rgba(255,255,255,.12);border-radius:99px;overflow:hidden}.vv-seconds-track i{display:block;height:100%;background:linear-gradient(90deg,#D4920A,#F0B429);border-radius:inherit}.vv-price-hint{margin-top:auto;color:#9E8B55;font-size:11px;transform:translateZ(18px)}.vv-price-details{display:grid;gap:13px;margin:22px 0 28px;padding:0;list-style:none;color:#9E8B55;font-size:13px}.vv-price-details li{display:flex;gap:9px;align-items:center}.vv-price-details svg{color:#D4920A}.vv-price-card .vv-button{margin-top:auto;width:100%}.vv-payg{text-align:center;color:#9E8B55;font-size:13px;margin-top:28px}
+        .vv-final{padding:126px 0;text-align:center;overflow:hidden;background:#0D0B05}.vv-final-gradient{position:absolute;width:680px;height:680px;border-radius:45%;left:50%;top:50%;background:conic-gradient(from 0deg,transparent,#B87808,transparent,#D4920A,transparent);filter:blur(100px);opacity:.16;transform:translate(-50%,-50%)}.vv-final h2{position:relative;font-size:clamp(40px,6vw,70px);line-height:1;letter-spacing:-.055em;margin:0 auto 30px;max-width:780px}.vv-final-actions{position:relative;display:flex;justify-content:center}
+        .vv-auth-section{padding:110px 0;background:radial-gradient(600px 400px at 50% 50%,rgba(212,146,10,.12),transparent 70%),#0D0B05}.vv-auth-wrap{width:min(500px,calc(100% - 40px));margin:auto}.vv-auth-heading{text-align:center;margin-bottom:25px}.vv-auth-heading h2{font-size:32px;letter-spacing:-.04em;margin:12px 0 8px}.vv-auth-heading p{color:#9E8B55;margin:0;line-height:1.6}.vv-auth-card{padding:26px;border-radius:22px;background:#FFFFFF;border:1px solid rgba(255,255,255,.14);box-shadow:0 28px 80px rgba(0,0,0,.12),0 0 70px rgba(212,146,10,.11);backdrop-filter:blur(16px)}.vv-auth-form{display:grid;gap:13px}.vv-input{width:100%;padding:15px 16px;border-radius:12px;background:#1C1808;border:1px solid rgba(255,255,255,.14);color:#F5E9C8;font:inherit;font-size:15px;outline:0}.vv-input:focus{border-color:#D4920A;box-shadow:0 0 0 3px rgba(212,146,10,.18)}.vv-input::placeholder{color:#9E8B55}.vv-submit{width:100%;padding:15px;border:0;border-radius:12px;background:linear-gradient(135deg,#F0B429,#D4920A,#B87808);color:#FFFFFF;font:inherit;font-weight:750;cursor:pointer;box-shadow:0 12px 32px rgba(212,146,10,.28)}.vv-submit:disabled{opacity:.45;cursor:not-allowed}.vv-error{color:#991B1B;font-size:12px;margin:7px 0 0}.vv-gdpr{font-size:11px;color:#9E8B55;padding:11px;border-radius:10px;background:rgba(255,255,255,.06)}.vv-gdpr a{color:#B87808}.vv-gdpr label{display:flex;gap:8px;margin-top:8px}.vv-auth-proof{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin:16px 0 0;color:#9E8B55;font-size:11px}.vv-auth-proof span{display:flex;gap:5px;align-items:center}.vv-auth-proof svg{color:#D4920A}.vv-divider{display:flex;align-items:center;gap:10px;color:#9E8B55;font-size:10px;margin:18px 0 12px}.vv-divider:before,.vv-divider:after{content:'';height:1px;flex:1;background:rgba(255,255,255,.14)}.vv-social-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.vv-social{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border-radius:11px;border:1px solid rgba(255,255,255,.14);background:#FFFFFF;color:#9E8B55;text-transform:capitalize;cursor:pointer}.vv-google{font-weight:800;background:conic-gradient(from -45deg,#4285F4,#34A853,#FBBC05,#EA4335,#4285F4);background-clip:text;-webkit-background-clip:text;color:transparent}.vv-guest{display:block;margin:15px auto 0;border:0;background:none;color:#9E8B55;cursor:pointer}.vv-footer{padding:34px 20px;border-top:1px solid rgba(255,255,255,.14);text-align:center;color:#9E8B55;font-size:11px}.vv-footer-brand{display:flex;justify-content:center;align-items:center;gap:8px;color:#9E8B55;margin-bottom:9px}
+        @media(max-width:1100px) and (min-width:901px){.vv-pricing-grid{grid-template-columns:repeat(2,1fr)}}
+        @media(max-width:900px){.vv-hero-grid{grid-template-columns:1fr;padding-top:130px}.vv-hero-copy{text-align:center}.vv-hero-copy>p{margin-left:auto;margin-right:auto}.vv-hero-actions{justify-content:center}.vv-hero-visual{height:460px}.vv-concierge-card{grid-template-columns:1fr}.vv-steps,.vv-pricing-grid{grid-template-columns:1fr}.vv-connector{display:none}.vv-price-pop{transform:none}.vv-price-shell{height:390px}.vv-demo-panel{grid-template-columns:1fr}.vv-demo-side{min-height:330px}}
+        @media(max-width:767px){.vv-container{width:min(1160px,calc(100% - 28px))}.vv-work-row{grid-auto-columns:minmax(238px,82vw)}.vv-section{padding:82px 0}.vv-nav-status{display:none}.vv-brand-motion{width:104vmax;height:104vmax;opacity:.12}.vv-lightbeam-field{inset:8% -65% 12%;opacity:.72}.vv-hero h1{font-size:clamp(48px,15vw,70px)}.vv-hero-visual{height:520px;margin:0 -6px}.vv-hero-grid{gap:0;padding-bottom:55px}.vv-hero-reel{padding:10px;border-radius:20px}.vv-reel-grid{height:410px;grid-template-columns:1fr 1fr;grid-template-rows:1.2fr .8fr}.vv-reel-wide{grid-column:1 / 3;grid-row:auto}.vv-concierge-section{padding:22px 0 34px}.vv-concierge-card{gap:22px;padding:26px 20px;border-radius:20px}.vv-concierge-action{padding:18px}.vv-concierge-includes{grid-template-columns:1fr}.vv-feature-grid{grid-template-columns:1fr}.vv-feature-copy{grid-template-columns:1fr 120px}.vv-kicker{margin-bottom:38px}.vv-demo-panel{padding:12px;border-radius:22px}.vv-demo-side{padding:16px}.vv-final{padding:90px 0}.vv-social-grid{grid-template-columns:1fr}}
+        @media(prefers-reduced-motion:reduce){.vv-landing *{scroll-behavior:auto!important}.vv-tilt-card:hover{transform:none}.vv-beam-lines path,.vv-brand-motion,.vv-hero-reel:before,.vv-step-card:before,.vv-feature-card:before,.vv-price-card:before,.vv-demo-panel:before,.vv-auth-card:before,.vv-concierge-card:after{animation:none!important}}
+      `}</style>
+
+      <section ref={heroRef} className="vv-hero">
+        <div className="vv-noise" />
+        <LightBeamField />
+        <img className="vv-brand-motion" src={props.logoUrl || LIGHTBEAM_LOGO} alt="" aria-hidden="true" />
+        <nav className="vv-nav">
+          <div className="vv-container vv-nav-inner">
+            <div className="vv-brand"><BrandMark name={brandName} logoUrl={props.logoUrl} /> {brandName}</div>
+            <span className="vv-nav-status"><i /> Currently in beta testing</span>
+          </div>
+        </nav>
+        <motion.div className="vv-orbit" style={{ y: backY }} />
+        <div className="vv-container vv-hero-grid">
+          <motion.div className="vv-hero-copy" style={{ y: backY }} initial={reducedMotion ? false : { opacity: 0, y: 35 }} animate={{ opacity: 1, y: 0 }} transition={ENTRANCE_SPRING}>
+            <span className="vv-eyebrow"><WandSparkles size={13} /> AI motion direction, end to end</span>
+            <h1><span className="vv-gradient-text">One brief.</span><br />A finished film, shaped in light.</h1>
+            <p>Vidverge turns your product, script, or idea into a directed video — with motion design, consistent scenes, sound, and final delivery flowing through one production system.</p>
+            <div className="vv-hero-actions">
+              <MagneticButton onClick={scrollToAuth}>Try it free <ArrowRight size={17} /></MagneticButton>
+              <span className="vv-trust"><CheckCircle2 size={14} /> Currently in beta · 30 credits free · no card</span>
+            </div>
+          </motion.div>
+          <motion.div className="vv-hero-visual" style={{ y: frontY }} initial={reducedMotion ? false : { opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ ...ENTRANCE_SPRING, delay: 0.08 }}>
+            <div className="vv-hero-canvas"><HeroVideoShowcase name={brandName} logoUrl={props.logoUrl} videos={showcaseVideos} /></div>
+          </motion.div>
+        </div>
+      </section>
+
+      <section className="vv-concierge-section" aria-labelledby="concierge-offer-title">
+        <div className="vv-container">
+          <Reveal>
+            <div className="vv-concierge-card">
+              <div className="vv-concierge-copy">
+                <span className="vv-eyebrow"><Sparkles size={13} /> Concierge launch offer</span>
+                <h2 id="concierge-offer-title">Get Your First Video Done For You</h2>
+                <p className="vv-concierge-subtext">Limited spots available — built for solo creators and small marketers who want a done-for-you first video.</p>
+              </div>
+              <div className="vv-concierge-action">
+                <div className="vv-concierge-price"><strong>$199</strong><span>one-time</span></div>
+                <ul className="vv-concierge-includes" aria-label="Concierge offer includes">
+                  {['1 launch video', '2 ad variations', '1 revision', 'Strategy call'].map(item => <li key={item}><Check size={14} /> {item}</li>)}
+                </ul>
+                <a
+                  href="mailto:hello@getvidverge.com?subject=Book%20my%20Vidverge%20concierge%20spot"
+                  className="vv-concierge-cta"
+                  data-testid="button-book-concierge"
+                >
+                  Book Your Spot <ArrowRight size={16} />
+                </a>
+              </div>
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      <section className="vv-section vv-glow-section">
+        <div className="vv-container">
+          <Reveal><div className="vv-kicker"><span className="vv-eyebrow">How it works</span><h2>One brief. Three moves.<br />A finished video.</h2><p>Script, generate, and keep every character consistent — without jumping between tools.</p></div></Reveal>
+          <div className="vv-steps">
+            {[
+              { icon: MessageCircle, title: 'Brief it', copy: 'Describe the video you want in plain language.', accent: '#F0B429' },
+              { icon: Zap, title: 'Generate it', copy: 'Vidverge scripts and renders every scene with a consistent character.', accent: '#D4920A' },
+              { icon: Download, title: 'Publish it', copy: 'Download your finished, publish-ready MP4.', accent: '#B87808' },
+            ].map((step, index) => (
+              <Reveal key={step.title} delay={index * 0.08}>
+                <TiltCard className="vv-step-card"><div className="vv-card-content"><span className="vv-step-num">0{index + 1}</span><div className="vv-icon"><step.icon size={21} /></div><h3>{step.title}</h3><p>{step.copy}</p><div className="vv-step-render"><MiniRender accent={step.accent} /></div></div></TiltCard>
+              </Reveal>
+            ))}
+            <div className="vv-connector"><GeneratingLine compact /></div>
+          </div>
+        </div>
+      </section>
+
+      <section className="vv-section">
+        <div className="vv-container">
+          <Reveal><div className="vv-kicker"><span className="vv-eyebrow">See it in action</span><h2>Real output, not mockups.</h2><p>Watch the brief become a rendered, timed, ready-to-publish video inside one production surface.</p></div></Reveal>
+          <Reveal delay={0.08}>
+            <TiltCard className="vv-demo-panel">
+              <div className="vv-demo-side"><div className="vv-window-bar"><span>VIDEO BRIEF</span><span className="vv-dots"><i /><i /><i /></span></div><div className="vv-textarea">{typedBrief}<motion.span className="vv-caret" animate={{ opacity: reducedMotion ? 1 : [1, 0.15] }} transition={{ ...MICRO_SPRING, repeat: Infinity, repeatType: 'reverse' }} /></div><div style={{ marginTop: 18 }}><GeneratingLine /></div></div>
+              <div className="vv-demo-side vv-demo-output">{showcaseVideos.length ? <LazyShowcaseVideo video={showcaseVideos[showcaseVideos.length - 1]} label="Latest selected VidVerge database video" /> : null}{!demoReady || !showcaseVideos.length ? <motion.div className="vv-demo-loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><div><div style={{ position: 'relative' }}><div className="vv-loader-orbit" /><div className="vv-loader-core" /></div><strong>{showcaseVideos.length ? 'Building your video' : 'Selecting real work'}</strong><span>{showcaseVideos.length ? 'Scripting · animating · mixing sound' : 'Database · valid media · strongest cut'}</span></div></motion.div> : <motion.div className="vv-video-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={ENTRANCE_SPRING}><motion.div className="vv-play-pulse" animate={reducedMotion ? undefined : { scale: [1, 1.08] }} transition={{ ...ENTRANCE_SPRING, repeat: Infinity, repeatType: 'reverse' }}><Play size={24} fill="currentColor" /></motion.div><span className="vv-eyebrow" style={{ alignSelf: 'flex-start' }}><CheckCircle2 size={12} /> {showcaseVideos[showcaseVideos.length - 1].category}</span><div className="vv-wave">{Array.from({ length: 18 }, (_, index) => <WaveBar key={index} index={index} />)}</div><div className="vv-output-meta"><span>{showcaseVideos[showcaseVideos.length - 1].sceneCount ? `${showcaseVideos[showcaseVideos.length - 1].sceneCount} scenes rendered` : showcaseVideos[showcaseVideos.length - 1].source}</span><span>{formatDuration(showcaseVideos[showcaseVideos.length - 1].durationSeconds) ? `${formatDuration(showcaseVideos[showcaseVideos.length - 1].durationSeconds)} · ` : ''}MP4 ready</span></div></motion.div>}</div>
+            </TiltCard>
+          </Reveal>
+          <p className="vv-payg">Creators are already using Vidverge to produce consistent video series and ad campaigns.</p>
+          <div className="vv-demo-cta"><MagneticButton onClick={scrollToAuth}>Try it free <ArrowRight size={17} /></MagneticButton></div>
+        </div>
+      </section>
+
+      <DatabaseShowcase videos={showcaseVideos} />
+
+      <section className="vv-section vv-glow-section">
+        <div className="vv-container">
+          <Reveal><div className="vv-kicker"><span className="vv-eyebrow">Built for shippable output</span><h2>Same character.<br />Every scene.</h2></div></Reveal>
+          <div className="vv-feature-grid">
+            {features.map((feature, index) => (
+              <Reveal key={feature.title} delay={index * 0.08}><TiltCard className="vv-feature-card"><div className="vv-card-content"><div className="vv-icon"><feature.icon size={21} /></div><div className="vv-feature-copy"><div><h3>{feature.title}</h3><p>{feature.copy}</p></div><MiniRender accent={feature.accent} /></div></div></TiltCard></Reveal>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="vv-section">
+        <div className="vv-container">
+          <Reveal><div className="vv-kicker"><span className="vv-eyebrow">Simple pricing</span><h2>Credits that map<br />to real video.</h2><p>One credit equals one second, so every plan is clear before you press generate.</p></div></Reveal>
+          <div className="vv-pricing-grid">
+            {pricing.map((tier, index) => (
+              <Reveal key={tier.name} delay={index * 0.07}>
+                <div className={tier.featured ? 'vv-price-pop' : ''}>
+                  <div className="vv-price-shell" tabIndex={0} aria-label={`${tier.name} plan; hover or focus for details`}>
+                    <div className="vv-price-card-inner">
+                      <div className={`vv-price-card vv-price-front ${tier.featured ? 'vv-featured-card' : ''}`}>
+                        {tier.featured && <span className="vv-popular">Most popular</span>}
+                        <h3 style={{ marginTop: tier.featured ? 18 : 0 }}>{tier.name}</h3>
+                        <div className="vv-price">{tier.price}<small>{tier.unit}</small></div>
+                        <div className="vv-credits">{tier.credits}</div>
+                        <p className="vv-price-copy">{tier.copy}</p>
+                        <div className="vv-seconds-meter"><div className="vv-seconds-top"><span><Film size={11} style={{ display: 'inline', marginRight: 5 }} />video capacity</span><span>{tier.credits}</span></div><div className="vv-seconds-track"><motion.i initial={{ width: 0 }} whileInView={{ width: tier.fill }} viewport={{ once: true }} transition={{ ...ENTRANCE_SPRING, delay: 0.16 + index * 0.07 }} /></div></div>
+                        <span className="vv-price-hint">Hover or focus to flip →</span>
+                      </div>
+                      <div className={`vv-price-card vv-price-back ${tier.featured ? 'vv-featured-card' : ''}`}>
+                        <h3>{tier.name}, unpacked</h3>
+                        <p className="vv-price-copy">Everything you need to move from an idea to a finished video.</p>
+                        <ul className="vv-price-details">{tier.details.map(detail => <li key={detail}><Check size={14} /> {detail}</li>)}</ul>
+                        <MagneticButton onClick={scrollToAuth} secondary={!tier.featured}>Choose {tier.name} <ArrowRight size={16} /></MagneticButton>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+          <p className="vv-payg">One credit equals one second of generated video. Upgrade or top up whenever you need.</p>
+        </div>
+      </section>
+
+      {/* LIVE AI AGENT — marketing proof of the agentic system: a pulsing
+          gradient orb over an auto-cycling thinking stream. */}
+      <AgentThinkingShowcase />
+
+      <section className="vv-final vv-section">
+        <motion.div className="vv-final-gradient" animate={reducedMotion ? undefined : { rotate: 360 }} transition={{ ...ENTRANCE_SPRING, repeat: Infinity, duration: 18 }} />
+        <div className="vv-container"><Reveal><h2>Your next consistent video starts with a brief.</h2><div style={{ width: 220, margin: '0 auto 24px', position: 'relative' }}><GeneratingLine compact /></div><div className="vv-final-actions"><MagneticButton onClick={scrollToAuth}>Try it free <ArrowRight size={17} /></MagneticButton></div></Reveal></div>
+      </section>
+
+      <section id="vidverge-auth" className="vv-auth-section">
+        <div className="vv-auth-wrap">
+          <Reveal><div className="vv-auth-heading"><BrandMark name={brandName} logoUrl={props.logoUrl} size={48} /><h2>Start your first video free</h2><p>Enter your email. Bring a brief.<br />Vidverge handles the rest.</p></div></Reveal>
+          <Reveal delay={0.08}>
+            <div className="vv-auth-card">
+              <form onSubmit={props.onEmailSubmit} className="vv-auth-form">
+                <div><input type="email" value={props.email} onChange={event => props.onEmailChange(event.target.value)} placeholder="you@work.com" className="vv-input" disabled={props.loading} required data-testid="input-email" />{props.error && <p className="vv-error" data-testid="text-error">{props.error}</p>}</div>
+                {props.gdprEnabled && <div className="vv-gdpr"><p style={{ margin: 0 }}>By entering your email, you agree to our <a href="/privacy">Privacy Policy</a>.</p><label><input type="checkbox" checked={props.marketingConsent} onChange={event => props.onMarketingConsentChange(event.target.checked)} /><span>I want to receive marketing emails and updates (optional)</span></label></div>}
+                <motion.button type="submit" disabled={props.loading || !props.email} className="vv-submit" data-testid="button-continue" whileHover={reducedMotion ? undefined : { scale: 1.018 }} whileTap={{ scale: 0.98 }} transition={MICRO_SPRING}>{props.loading ? 'Just a moment...' : 'Start for free →'}</motion.button>
+              </form>
+              <div className="vv-auth-proof">{['Free first video', 'No credit card', 'Yours to keep'].map(item => <span key={item}><Check size={12} />{item}</span>)}</div>
+              {socialProviders.length > 0 && <><div className="vv-divider">or continue with</div><div className="vv-social-grid">{socialProviders.map(provider => <button key={provider} type="button" onClick={() => props.onSocialLogin(provider)} disabled={props.loading} className="vv-social"><SocialIcon provider={provider} />{provider}</button>)}</div></>}
+              {props.guestModeEnabled && <button type="button" onClick={props.onGuestMode} disabled={props.loading} className="vv-guest">Continue as guest →</button>}
+            </div>
+          </Reveal>
+        </div>
+      </section>
+
+      <footer className="vv-footer"><div className="vv-footer-brand"><BrandMark name={brandName} logoUrl={props.logoUrl} size={24} /> {brandName}</div><div>{tagline} · © 2026</div></footer>
+    </main>
+  );
+}

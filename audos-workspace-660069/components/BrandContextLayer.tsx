@@ -1,0 +1,189 @@
+import { useEffect, useState, type ComponentType } from 'react';
+import { Sparkles, X } from 'lucide-react';
+import { readActiveBrandContext, useBrandContext } from './brandContextStore';
+
+interface BrandStyle { styleKeywords: string[]; toneSentence: string; }
+const STYLE_EVENT = 'vidverge:brand-style-change';
+
+function brandWorkspaceId(): string {
+  if (typeof window === 'undefined') return 'default';
+  return String((window as any).__workspaceDb?.workspaceId || 'default');
+}
+
+const styleKey = () => `vidverge_brand_style_${brandWorkspaceId()}`;
+const useBrandKey = () => `vidverge_use_brand_${brandWorkspaceId()}`;
+function readStyle(): BrandStyle | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(styleKey()) || 'null');
+    if (!value || !Array.isArray(value.styleKeywords)) return null;
+    return {
+      styleKeywords: value.styleKeywords.filter((item: unknown) => typeof item === 'string' && item.trim()).slice(0, 8),
+      toneSentence: typeof value.toneSentence === 'string' ? value.toneSentence : '',
+    };
+  } catch { return null; }
+}
+function saveStyle(value: BrandStyle): void {
+  try {
+    window.localStorage.setItem(styleKey(), JSON.stringify(value));
+    window.dispatchEvent(new CustomEvent(STYLE_EVENT, { detail: value }));
+  } catch { /* optional utility */ }
+}
+function readUseBrand(): boolean {
+  try { return window.localStorage.getItem(useBrandKey()) === '1'; } catch { return false; }
+}
+function setUseBrand(value: boolean): void {
+  try { window.localStorage.setItem(useBrandKey(), value ? '1' : '0'); } catch { /* optional utility */ }
+}
+
+function promptPrefix(): string {
+  const parts: string[] = [];
+  if (readUseBrand()) {
+    parts.push(readActiveBrandContext());
+    const style = readStyle();
+    if (style?.styleKeywords.length) parts.push(`${style.styleKeywords.join(', ')}. ${style.toneSentence}`.trim());
+  }
+  return parts.join(' ');
+}
+
+function addPrefix(value: unknown, prefix: string): { value: unknown; changed: boolean } {
+  if (!value || typeof value !== 'object') return { value, changed: false };
+  if (Array.isArray(value)) {
+    let changed = false;
+    const next = value.map((item) => {
+      const result = addPrefix(item, prefix);
+      changed = changed || result.changed;
+      return result.value;
+    });
+    return { value: next, changed };
+  }
+  const source = value as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...source };
+  let changed = false;
+  const keys = new Set(['prompt', 'textPrompt', 'text_prompt', 'userPrompt', 'user_prompt', 'description', 'visualPrompt', 'visual_prompt', 'motionPrompt', 'motion_prompt']);
+  for (const [key, item] of Object.entries(source)) {
+    if (keys.has(key) && typeof item === 'string' && item.trim() && !item.startsWith(prefix)) {
+      next[key] = `${prefix} ${item}`;
+      changed = true;
+    } else if (key === 'messages' && Array.isArray(item)) {
+      next[key] = item.map((message: any, index) => {
+        if (index !== item.length - 1 || message?.role !== 'user' || typeof message.content !== 'string' || message.content.startsWith(prefix)) return message;
+        changed = true;
+        return { ...message, content: `${prefix} ${message.content}` };
+      });
+    } else if (item && typeof item === 'object') {
+      const nested = addPrefix(item, prefix);
+      if (nested.changed) { next[key] = nested.value; changed = true; }
+    }
+  }
+  return { value: next, changed };
+}
+
+function installPromptBridge(): void {
+  if ((window as any).__vidvergeBrandPromptBridge) return;
+  (window as any).__vidvergeBrandPromptBridge = true;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const prefix = promptPrefix();
+    const extraction = new Headers(init?.headers).get('X-Vidverge-Brand-Extraction') === '1';
+    const generation = /(?:generate|video|image|veo|kling|runway|higgsfield|heygen|remotion|chat\/completions)/i.test(url);
+    if (!prefix || extraction || !generation || typeof init?.body !== 'string') return originalFetch(input, init);
+    try {
+      const enriched = addPrefix(JSON.parse(init.body), prefix);
+      if (enriched.changed) return originalFetch(input, { ...init, body: JSON.stringify(enriched.value) });
+    } catch { /* pass opaque bodies through */ }
+    return originalFetch(input, init);
+  };
+}
+
+async function extractBrandStyle(contextText: string): Promise<BrandStyle | null> {
+  try {
+    const ws = (window as any).__workspaceDb;
+    if (!ws?.token) return null;
+    const response = await fetch('/proxy/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Workspace-DB-Token': ws.token,
+        'X-Vidverge-Brand-Extraction': '1',
+      },
+      body: JSON.stringify({
+        model: 'gpt-6-luna', reasoning_effort: 'none', max_completion_tokens: 200,
+        messages: [
+          { role: 'system', content: 'Extract 5–8 concise visual style keywords and a one-sentence tone description from this brand profile. Output JSON: { "styleKeywords": string[], "toneSentence": string }' },
+          { role: 'user', content: contextText },
+        ],
+      }),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    const content = String(body?.choices?.[0]?.message?.content || '').trim();
+    const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || content);
+    if (!Array.isArray(parsed?.styleKeywords)) return null;
+    return {
+      styleKeywords: parsed.styleKeywords.map((item: unknown) => String(item).trim()).filter(Boolean).slice(0, 8),
+      toneSentence: String(parsed.toneSentence || '').trim(),
+    };
+  } catch { return null; }
+}
+
+export function UseBrandToggle() {
+  const { text: brandContext } = useBrandContext();
+  const [enabled, setEnabled] = useState(() => readUseBrand());
+  const [style, setStyleState] = useState<BrandStyle | null>(() => readStyle());
+  const [loading, setLoading] = useState(false);
+  const toggle = async () => {
+    const next = !enabled;
+    setEnabled(next);
+    setUseBrand(next);
+    if (!next || style) return;
+    setLoading(true);
+    const extracted = await extractBrandStyle(brandContext);
+    setLoading(false);
+    if (!extracted) return;
+    saveStyle(extracted);
+    setStyleState(extracted);
+  };
+  const removeKeyword = (keyword: string) => {
+    if (!style) return;
+    const next = { ...style, styleKeywords: style.styleKeywords.filter((item) => item !== keyword) };
+    setStyleState(next);
+    saveStyle(next);
+  };
+  return (
+    <div className="absolute right-14 top-[118px] z-[78] max-w-[min(360px,calc(100%-2rem))] rounded-xl border p-2.5 shadow-xl backdrop-blur-xl" style={{ background: 'color-mix(in srgb, var(--space-surface-card, #111318) 90%, transparent)', borderColor: 'var(--space-border-default, rgba(255,255,255,.12))', fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <button type="button" onClick={toggle} className="flex items-center gap-2 text-[11px] font-semibold text-[var(--space-text-secondary,#d1d5db)]">
+        <span className="relative h-4 w-7 rounded-full transition-colors" style={{ background: enabled ? 'var(--space-brand-primary-500,#D6AB4A)' : 'var(--space-surface-panel,#282b31)' }}>
+          <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+        </span>
+        <Sparkles className="h-3.5 w-3.5" /> {loading ? 'Reading brand…' : 'Use Brand'}
+      </button>
+      {enabled && style?.styleKeywords.length ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {style.styleKeywords.map((keyword) => (
+            <button key={keyword} type="button" onClick={() => removeKeyword(keyword)} title="Remove this style cue" className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9.5px] text-[var(--space-text-muted,#9ca3af)]" style={{ borderColor: 'color-mix(in srgb, var(--space-brand-primary-500,#D6AB4A) 28%, transparent)' }}>
+              {keyword}<X className="h-2.5 w-2.5" />
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function BrandContextLayer() {
+  useEffect(() => {
+    installPromptBridge();
+    // Retire the one legacy saved-video key once; no feature reads or writes it.
+    try { window.localStorage.removeItem(`vidverge_brand_ref_${brandWorkspaceId()}`); } catch { /* storage may be unavailable */ }
+  }, []);
+  return null;
+}
+
+export function withBrandContext<P extends object>(Component: ComponentType<P>, sourceApp: string, options: { useBrand?: boolean } = {}): ComponentType<P> {
+  function BrandAwareApp(props: P) {
+    return <div className="relative h-full min-h-0 w-full"><Component {...props} /><BrandContextLayer />{options.useBrand ? <UseBrandToggle /> : null}</div>;
+  }
+  BrandAwareApp.displayName = `BrandAware(${Component.displayName || (Component as any).name || sourceApp})`;
+  return BrandAwareApp;
+}
