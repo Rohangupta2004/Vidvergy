@@ -83,7 +83,7 @@ export default function AgentLanes({
         @media (prefers-reduced-motion: reduce) { .verger-aurora,.verger-glow{animation:none!important;transform:none!important} }
       `}</style>
       <summary className="relative isolate cursor-pointer list-none overflow-hidden border-b border-[var(--vg-border)] px-4 py-3 [&::-webkit-details-marker]:hidden">
-        <div className="verger-aurora pointer-events-none absolute -inset-12 -z-10 opacity-60 blur-3xl" style={{ animation: busy ? 'vergerAurora 7s ease-in-out infinite' : 'none', background: 'conic-gradient(from 210deg at 50% 50%, color-mix(in srgb, var(--vg-accent) 32%, transparent), color-mix(in srgb, var(--vg-info) 22%, transparent), color-mix(in srgb, var(--vg-accent-hover) 26%, transparent), color-mix(in srgb, var(--vg-accent) 32%, transparent))' }} />
+        <div className="verger-aurora pointer-events-none absolute -inset-12 -z-10 opacity-60 blur-3xl" style={{ animation: busy ? 'vergerAurora 7s ease-in-out infinite' : 'none', background: 'conic-gradient(from 210deg at 50% 50%, color-mix(in srgb, var(--vg-accent) 32%, transparent), color-mix(in srgb, var(--vg-bronze) 22%, transparent), color-mix(in srgb, var(--vg-accent-hover) 26%, transparent), color-mix(in srgb, var(--vg-accent) 32%, transparent))' }} />
         <div className="flex items-center gap-2">
           <span className="verger-glow grid h-8 w-8 place-items-center rounded-xl border border-[color-mix(in_srgb,var(--vg-accent)_32%,transparent)] bg-[color-mix(in_srgb,var(--vg-accent)_10%,transparent)]" style={{ animation: busy ? 'vergerGlow 2.4s ease-in-out infinite' : 'none' }}><Sparkles className="h-4 w-4 text-[var(--vg-accent)]" /></span>
           <div>

@@ -101,13 +101,13 @@ export default function AiClipsPanel() {
     } finally { setBusy(false); }
   }
 
-  const box: React.CSSProperties = { background: 'var(--space-surface-card)', border: '1px solid var(--space-border-default)', borderRadius: 12, padding: 14 };
+  const box: React.CSSProperties = { background: '#15171a', border: '1px solid #2a2e34', borderRadius: 12, padding: 14 };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="ve-v2-panel" style={{ display: 'flex', flexDirection: 'column', gap: 12, fontFamily: "Manrope, 'Segoe UI', system-ui, sans-serif", color: '#f2f3f5' }}>
       <div style={box}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, fontWeight: 700, color: 'var(--space-text-primary)', marginBottom: 4 }}>
-          <Clapperboard size={15} style={{ color: 'var(--space-text-brand)' }} /> Generate an AI clip
+          <Clapperboard size={15} style={{ color: '#f2b544' }} /> Generate an AI clip
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--space-text-muted)', marginBottom: 10 }}>Cutaways and B-roll from a text prompt. Default engine: Veo 3.1 Fast — the same model this editor has always used for B-roll.</div>
         <EnginePicker label="Engine" value={engine} onChange={setEngine} groupAIds="all" includeKling disabled={busy} />
@@ -117,12 +117,12 @@ export default function AiClipsPanel() {
           rows={3}
           placeholder="Describe the cutaway shot — subject, setting, camera move, lighting… (at least 10 characters)"
           className="ve-input"
-          style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontSize: 12.5, lineHeight: 1.45, background: 'var(--space-surface-panel)', border: '1px solid var(--space-border-default)', borderRadius: 8, padding: '8px 10px', color: 'var(--space-text-primary)', fontFamily: 'inherit', marginTop: 12 }}
+          style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical', fontSize: 12.5, lineHeight: 1.45, background: '#101215', border: '1px solid #2a2e34', borderRadius: 8, padding: '8px 10px', color: '#f2f3f5', fontFamily: 'inherit', marginTop: 12 }}
         />
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
           <div style={{ display: 'flex', gap: 5 }}>
             {(['16:9', '9:16', '1:1'] as const).map((a) => (
-              <button key={a} onClick={() => setAspect(a)} className="ve-btn" style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid var(--space-border-default)', background: aspect === a ? 'var(--space-brand-primary-600)' : 'var(--space-surface-panel)', color: aspect === a ? '#fff' : 'var(--space-text-secondary)' }}>{a}</button>
+              <button key={a} onClick={() => setAspect(a)} className="ve-btn" style={{ fontSize: 11.5, fontWeight: 700, padding: '5px 10px', borderRadius: 7, cursor: 'pointer', border: aspect === a ? '1px solid #2bb3a3' : '1px solid #2a2e34', background: aspect === a ? 'rgba(43,179,163,.14)' : '#101215', color: aspect === a ? '#9fe6dc' : '#b9bec7' }}>{a}</button>
             ))}
           </div>
           <label style={{ fontSize: 11.5, color: 'var(--space-text-secondary)', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -148,7 +148,7 @@ export default function AiClipsPanel() {
           ) : null}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-          <button onClick={() => void generate()} disabled={!ready} className="ve-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 700, padding: '8px 16px', borderRadius: 9, border: 'none', cursor: ready ? 'pointer' : 'not-allowed', background: ready ? 'var(--space-brand-primary-600)' : 'var(--space-surface-panel-strong)', color: ready ? '#fff' : 'var(--space-text-muted)' }}>
+          <button onClick={() => void generate()} disabled={!ready} className="ve-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 800, padding: '8px 16px', borderRadius: 9, border: 'none', cursor: ready ? 'pointer' : 'not-allowed', background: ready ? '#f2b544' : '#24282d', color: ready ? '#21180a' : '#878d97' }}>
             {busy ? <LightBeamLoader height={2} style={{ width: 30 }} /> : <Wand2 size={13} />} Generate clip
           </button>
           {violation && prompt.trim() ? <span style={{ fontSize: 11.5, color: '#B45309' }}>{violation}</span> : null}

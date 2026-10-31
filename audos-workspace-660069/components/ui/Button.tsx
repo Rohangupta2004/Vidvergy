@@ -71,7 +71,7 @@ const Button: React.FC<ButtonProps> = function Button({
       background: hover && !off ? GRADIENT.actionHover : GRADIENT.action,
       color: COLORS.onAccent,
       border: '1px solid transparent',
-      boxShadow: 'none',
+      boxShadow: hover && !off ? '0 10px 34px rgba(212,166,74,0.25)' : '0 8px 28px rgba(212,166,74,0.18)',
       fontWeight: 600,
     };
   } else if (variant === 'secondary') {
@@ -127,7 +127,7 @@ const Button: React.FC<ButtonProps> = function Button({
         borderRadius: dims.radius,
         cursor: off ? 'not-allowed' : 'pointer',
         opacity: off ? 0.55 : 1,
-        transition: 'background 120ms cubic-bezier(.2,0,0,1), border-color 120ms cubic-bezier(.2,0,0,1), transform 120ms cubic-bezier(.2,0,0,1)',
+        transition: 'background 180ms cubic-bezier(.2,0,0,1), border-color 180ms cubic-bezier(.2,0,0,1), color 180ms cubic-bezier(.2,0,0,1), box-shadow 180ms cubic-bezier(.2,0,0,1), transform 180ms cubic-bezier(.2,0,0,1)',
         transform: 'none',
         whiteSpace: 'nowrap',
         ...visual,

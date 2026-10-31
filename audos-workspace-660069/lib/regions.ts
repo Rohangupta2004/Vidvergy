@@ -15,7 +15,7 @@ export interface Region {
   launched: boolean;
 }
 
-export const UGC_RUNWAY_CREDITS_PER_SECOND = 5;
+export const UGC_RUNWAY_CREDITS_PER_SECOND = 1;
 export const CUSTOM_ACTOR_LIMITS = { free: 0, creator: 3, pro: 10, payg: 0 } as const;
 
 export const REGIONS: Region[] = [

@@ -41,7 +41,7 @@ const HOUSE_BRAND = { primaryColor: '#f59e0b', secondaryColor: '#0d1220', fontFa
 
 type Step = 'intake' | 'scripts' | 'mockups';
 
-interface StoredRender { operationId?: string; renderUrl?: string; ts?: number }
+interface StoredRender { operationId?: string; renderUrl?: string; aspect?: '16:9' | '9:16'; ts?: number }
 
 function readStoredRender(): StoredRender | null {
   try {
@@ -126,7 +126,7 @@ export default function BrandReelStudio() {
     setRenderNote('Picking up the render you already started…');
     void (async () => {
       try {
-        const out = await poll(() => pollRender(stored.operationId as string), {
+        const out = await poll(() => pollRender(stored.operationId as string, stored.aspect || aspect), {
           interval: 2_000,
           timeout: 30 * 60 * 1_000,
           tolerateErrors: 1,
@@ -240,18 +240,18 @@ export default function BrandReelStudio() {
         }
       }
 
-      setRenderNote('Rendering your reel…');
+      setRenderNote('Submitting the $0.05 cloud render…');
       const { props, durationInFrames } = buildReelProps(brand, variant, [], {
         captionsEnabled,
         musicUrl: PV_MUSIC_BEDS.find((m) => m.id === musicBedId)?.url || '',
         voiceoverUrl,
       });
 
-      let out = await submitRender(BRAND_REEL_TSX, props as unknown as Record<string, unknown>, durationInFrames);
-      if (out?.operationId) writeStoredRender({ operationId: out.operationId });
+      let out = await submitRender(BRAND_REEL_TSX, props as unknown as Record<string, unknown>, durationInFrames, aspect);
+      if (out?.operationId) writeStoredRender({ operationId: out.operationId, aspect });
       if (out?.status === 'rendering' && out.operationId) {
         const operationId = out.operationId;
-        out = await poll(() => pollRender(operationId), {
+        out = await poll(() => pollRender(operationId, aspect), {
           interval: 2_000,
           timeout: 30 * 60 * 1_000,
           tolerateErrors: 1,

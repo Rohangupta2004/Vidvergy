@@ -24,9 +24,9 @@
  * is never actually accepted. A submit that cannot be afforded never reaches
  * the provider: it raises the plans screen on the credit wall and throws
  * InsufficientCreditsError. Pass the same `creditKey` when retrying ONE clip
- * so the retry is not billed a second time. If the wallet itself cannot be
- * reached the render proceeds unmetered — a ledger outage must never be the
- * reason a paying customer cannot make their video.
+ * so the retry is not billed a second time. If the verified email session or
+ * wallet cannot authorize the charge, the provider is not called; the shared
+ * sign-in recovery notice lets the customer resume with the same key.
  */
 
 import { OMNI_MODEL_ID, RUNWAY_DISABLED_MESSAGE, capPromptText, clampGroupADuration, validateGroupAInputs } from './videoEngines';

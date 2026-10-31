@@ -1,5 +1,5 @@
 /**
- * Vidverge Design System v3.0 — canonical token source.
+ * Vidverge Design System v4.0 — canonical premium token source.
  *
  * All TypeScript UI tokens originate here. config.json mirrors the same values
  * as --space-* variables for the OS shell. Compatibility aliases remain so
@@ -7,43 +7,43 @@
  */
 
 export const COLORS = {
-  bg: '#101214',
-  surface: '#171A1E',
-  raised: '#20242A',
-  hover: '#292E35',
-  border: '#343A43',
-  controlBorder: '#596270',
-  text: '#F4F5F7',
-  secondary: '#C4C9D0',
-  muted: '#9AA3AF',
-  accent: '#D9A441',
-  onAccent: '#17120A',
-  accentHover: '#E5B75A',
-  accentPressed: '#B8832E',
-  accentSoft: '#2B2418',
-  bronze: '#8A5C24',
-  focus: '#F3D58B',
-  success: '#72C99A',
-  successBg: '#15261F',
-  warning: '#E0B96B',
-  warningBg: '#2B2418',
-  danger: '#F28B8B',
-  dangerBg: '#311D22',
-  info: '#8FB5EA',
-  infoBg: '#192538',
+  bg: '#0A0A0B',
+  surface: '#111114',
+  raised: '#17171B',
+  hover: '#1E1E23',
+  border: 'rgba(255,255,255,0.08)',
+  controlBorder: 'rgba(255,255,255,0.16)',
+  text: '#F4F1EA',
+  secondary: '#A8A39A',
+  muted: '#7C776F',
+  accent: '#D4A64A',
+  onAccent: '#0A0A0B',
+  accentHover: '#F6D98B',
+  accentPressed: '#B07D2A',
+  accentSoft: 'rgba(212,166,74,0.12)',
+  bronze: '#B07D2A',
+  focus: '#F6D98B',
+  success: '#7FC59B',
+  successBg: 'rgba(127,197,155,0.12)',
+  warning: '#D7B66B',
+  warningBg: 'rgba(215,182,107,0.12)',
+  danger: '#E98585',
+  dangerBg: 'rgba(233,133,133,0.12)',
+  info: '#94ACC8',
+  infoBg: 'rgba(148,172,200,0.12)',
 
   // Compatibility names used by existing studios.
-  surfaceAlt: '#20242A',
-  input: '#101214',
-  buttonSecondary: '#20242A',
-  borderHover: '#596270',
-  borderInput: '#596270',
-  primary: '#D9A441',
-  primaryGlow: '#E5B75A',
-  accentGlow: '#E5B75A',
-  textMuted: '#C4C9D0',
-  textFaint: '#9AA3AF',
-  error: '#F28B8B',
+  surfaceAlt: '#17171B',
+  input: '#0A0A0B',
+  buttonSecondary: '#17171B',
+  borderHover: 'rgba(246,217,139,0.34)',
+  borderInput: 'rgba(255,255,255,0.16)',
+  primary: '#D4A64A',
+  primaryGlow: '#F6D98B',
+  accentGlow: '#F6D98B',
+  textMuted: '#A8A39A',
+  textFaint: '#7C776F',
+  error: '#E98585',
 } as const;
 
 export const FONT = {
@@ -66,32 +66,32 @@ export const TYPE = {
 export const RADIUS = { badge: 6, sm: 10, md: 10, card: 12, lg: 12, dialog: 16, xl: 16, brand: 24 } as const;
 export const SPACING = { xxs: 4, xs: 8, sm: 12, md: 16, lg: 24, xl: 32, '2xl': 48, '3xl': 64 } as const;
 export const MOTION = {
-  fast: '120ms cubic-bezier(.2,0,0,1)',
+  fast: '160ms cubic-bezier(.2,0,0,1)',
   standard: '180ms cubic-bezier(.2,0,0,1)',
-  overlay: '240ms cubic-bezier(.2,0,0,1)',
+  overlay: '200ms cubic-bezier(.2,0,0,1)',
 } as const;
 
 export const HEADING_TRACKING = '-0.025em';
 export const SHADOW = {
-  glow: 'none',
-  glowCyan: 'none',
-  card: 'none',
-  overlay: '0 18px 48px rgba(0,0,0,0.52)',
+  glow: '0 0 0 1px rgba(246,217,139,0.14), 0 0 28px rgba(212,166,74,0.25)',
+  glowCyan: '0 0 0 1px rgba(246,217,139,0.14), 0 0 28px rgba(212,166,74,0.25)',
+  card: '0 18px 48px rgba(0,0,0,0.34)',
+  overlay: '0 24px 72px rgba(0,0,0,0.58)',
 } as const;
 export const MOBILE_BREAKPOINT = 768;
 export const CONTENT_MAX_WIDTH = 1280;
 
 export const GRADIENT = {
-  brand: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)',
-  action: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)',
-  actionHover: 'linear-gradient(115deg, #D2A044 0%, #E5B75A 58%, #EBC673 100%)',
-  display: 'linear-gradient(110deg, #8A5C24 0%, #B8832E 40%, #D9A441 74%, #E5B75A 100%)',
-  surface: 'linear-gradient(145deg, #20242A 0%, #191C21 56%, #15181C 100%)',
-  selected: 'linear-gradient(100deg, #2B2418 0%, #202126 100%)',
-  ambient: 'radial-gradient(ellipse at 85% 0%, #D9A44118 0%, transparent 55%)',
-  brandSoft: 'linear-gradient(100deg, #2B2418 0%, #202126 100%)',
-  beam: 'linear-gradient(to top, transparent 0%, #8A5C24 58%, #D9A441 100%)',
-  header: 'radial-gradient(ellipse at 85% 0%, #D9A44118 0%, transparent 55%)',
+  brand: 'linear-gradient(115deg, #F6D98B 0%, #D4A64A 52%, #B07D2A 100%)',
+  action: 'linear-gradient(115deg, #F6D98B 0%, #D4A64A 52%, #B07D2A 100%)',
+  actionHover: 'linear-gradient(115deg, #FBE7AE 0%, #E0B85F 52%, #C28D35 100%)',
+  display: 'linear-gradient(110deg, #B07D2A 0%, #D4A64A 46%, #F6D98B 100%)',
+  surface: 'linear-gradient(145deg, #1A1A1F 0%, #141417 54%, #101012 100%)',
+  selected: 'linear-gradient(100deg, rgba(212,166,74,0.16) 0%, rgba(212,166,74,0.04) 100%)',
+  ambient: 'radial-gradient(ellipse at 85% 0%, rgba(212,166,74,0.13) 0%, transparent 56%)',
+  brandSoft: 'linear-gradient(100deg, rgba(212,166,74,0.16) 0%, rgba(212,166,74,0.04) 100%)',
+  beam: 'linear-gradient(to top, transparent 0%, #B07D2A 58%, #F6D98B 100%)',
+  header: 'radial-gradient(ellipse at 85% 0%, rgba(212,166,74,0.13) 0%, transparent 56%)',
 } as const;
 
 export function alpha(hex: string, amount: number): string {
@@ -135,6 +135,7 @@ export const CSS_VARS: Record<string, string> = {
   '--vg-gradient-surface': GRADIENT.surface,
   '--vg-gradient-selected': GRADIENT.selected,
   '--vg-gradient-ambient': GRADIENT.ambient,
+  '--vg-glow': SHADOW.glow,
 };
 
 export type ThemeColor = keyof typeof COLORS;

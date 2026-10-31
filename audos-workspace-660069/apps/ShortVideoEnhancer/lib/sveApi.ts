@@ -24,6 +24,11 @@
 import { type CaptionWord, type EditDoc, type VisionRead, hydrateDoc } from './sveTypes';
 import { SVE_PHASE2_COMPOSITION } from './sveComposition';
 import {
+  finishPortrait,
+  readRender as readCloudRender,
+  submitRender as submitCloudRender,
+} from '../../../lib/render/cloudRender';
+import {
   WORKSPACE_ID,
   callHook as callWorkspaceHook,
   spaceId,
@@ -522,20 +527,36 @@ export interface RenderAnswer {
 }
 
 /**
- * Submit the composition for a 1080x1920 master. The server function owns the
- * submit, the poll and the portrait finish, so closing the tab cannot strand a
- * render — re-call with the returned operationId to keep waiting.
+ * Submit once, persist the returned operation id in the project row, and let
+ * reload/resume continue polling without creating a second $0.05 render.
  */
 export async function submitRender(props: unknown, durationInFrames: number): Promise<RenderAnswer> {
-  return executeHook<RenderAnswer>(RENDER_HOOK, {
+  let queueNote = '';
+  const submitted = await submitCloudRender({
     compositionTsx: SVE_PHASE2_COMPOSITION,
-    props,
+    props: (props || {}) as Record<string, unknown>,
     durationInFrames: Math.max(30, Math.round(durationInFrames)),
+    aspect: '9:16',
+  }, {
+    onStatus: (phase, detail) => { if (phase === 'queued') queueNote = detail || 'Queued behind the active cloud render.'; },
   });
+  return {
+    status: 'rendering',
+    operationId: submitted.operationId,
+    geometry: '1920x1080-cloud-master',
+    note: queueNote || 'Cloud render submitted · $0.05',
+  };
 }
 
 export async function continueRender(operationId: string, geometry: string): Promise<RenderAnswer> {
-  return executeHook<RenderAnswer>(RENDER_HOOK, { operationId, geometry });
+  void geometry;
+  const status = await readCloudRender(operationId);
+  if (status.state === 'failed') return { status: 'failed', operationId, error: status.error || 'The cloud render failed.' };
+  if (status.state !== 'complete' || !status.videoUrl) {
+    return { status: 'rendering', operationId, geometry: '1920x1080-cloud-master', note: status.state === 'pending' ? 'Queued — cloud renders run one at a time.' : 'Rendering in the cloud…' };
+  }
+  const renderUrl = await finishPortrait(status.videoUrl);
+  return { status: 'complete', operationId, renderUrl, geometry: '1080x1920' };
 }
 
 export interface ExportVariant { url: string; bytes: number }

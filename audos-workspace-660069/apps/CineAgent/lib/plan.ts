@@ -427,10 +427,38 @@ export interface RenderChunk {
   index: number;
 }
 
-/** Split a long plan into ≤9.5-minute chunks at segment boundaries. */
+/** Split a long plan into ≤3-minute cloud renders at segment boundaries. */
 export function splitIntoChunks(full: RenderPlan): RenderChunk[] {
   if (full.durationSec <= MAX_RENDER_SEC) return [{ renderPlan: full, durationSec: full.durationSec, index: 0 }];
   const timing = computeTiming(full.plan);
+  // A director may keep one uninterrupted source segment longer than the cloud
+  // ceiling. Split that segment itself before grouping; generated/board
+  // segments are already capped to seconds in normalizePlan.
+  const renderSegments: SegmentTiming[] = timing.segments.flatMap((st) => {
+    if (st.outDuration <= MAX_RENDER_SEC || st.segment.kind !== 'source' || !st.segment.src) return [st];
+    const parts: SegmentTiming[] = [];
+    let consumed = 0;
+    while (consumed < st.outDuration - 0.01) {
+      const duration = Math.min(MAX_RENDER_SEC, st.outDuration - consumed);
+      parts.push({
+        id: `${st.id}-part-${parts.length + 1}`,
+        outStart: round2(st.outStart + consumed),
+        outDuration: round2(duration),
+        segment: {
+          ...st.segment,
+          id: `${st.segment.id}-part-${parts.length + 1}`,
+          src: {
+            ...st.segment.src,
+            start: round2(st.segment.src.start + consumed),
+            end: round2(st.segment.src.start + consumed + duration),
+          },
+          ...(parts.length ? { transitionIn: undefined } : {}),
+        },
+      });
+      consumed += duration;
+    }
+    return parts;
+  });
   const chunks: RenderChunk[] = [];
   let group: SegmentTiming[] = [];
   let groupStart = 0;
@@ -473,7 +501,7 @@ export function splitIntoChunks(full: RenderPlan): RenderChunk[] {
     group = [];
     groupDur = 0;
   };
-  timing.segments.forEach((st) => {
+  renderSegments.forEach((st) => {
     if (groupDur > 0 && groupDur + st.outDuration > MAX_RENDER_SEC) flush();
     if (!group.length) groupStart = st.outStart;
     group.push(st);

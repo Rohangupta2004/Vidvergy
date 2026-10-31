@@ -64,8 +64,8 @@ const PLATFORM_PRESETS: { id: ShortAspect; label: string; blurb: string }[] = [
 const PHASE_LABEL: Record<ExportPhase, string> = {
   idle: '',
   uploading: 'Uploading the source clip…',
-  submitting: 'Submitting the composition…',
-  rendering: 'Rendering frame by frame…',
+  submitting: 'Submitting the $0.05 cloud render…',
+  rendering: 'Queued or rendering in the cloud…',
   sizing: 'Measuring and building the share size…',
   ready: 'Export complete',
   failed: 'Export failed',
@@ -99,7 +99,7 @@ export default function SveProExport(props: SveExportProps) {
             title={props.blockedReason || undefined}
           >
             {busy ? <Loader2 size={14} className="vp-spin" /> : <Play size={14} />}
-            {busy ? 'Exporting…' : 'Export now'}
+            {busy ? 'Exporting…' : (serverSide ? 'Export · $0.05' : 'Export now')}
           </button>
         </>
       )}
@@ -120,8 +120,8 @@ export default function SveProExport(props: SveExportProps) {
           ))}
         </div>
         <p className="vp-note">
-          Every master renders 1080×1920 — the render service accepts no other geometry. TikTok, Reels and Shorts all
-          take that file as-is; Square tells the editor to keep the action inside a centred 1:1 safe frame.
+          Every MP4 uses a $0.05 cloud render, one at a time, then the portrait overlay compositor produces 1080×1920.
+          TikTok, Reels and Shorts take that file as-is; Square keeps the action inside a centred 1:1 safe frame.
         </p>
       </Section>
 

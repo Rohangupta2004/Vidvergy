@@ -204,16 +204,16 @@ export const FULL_ACCESS_TIER: PlanId = 'pro';
 // generate videos without ever seeing a limit screen. `isTrialSpent` below
 // already does this — any future limit logic must do the same.
 //
-// These are the internal founder/team accounts. Every one of them ALSO has a
-// row in `subscriptions` (tier 'pro', video_limit NULL = unlimited), and that
-// row is what actually grants the tier badge and the unlimited allowance. The
-// array is the offline mirror of those rows: when the lookup can't run — the
-// database is unreachable, storage is disabled — these accounts still get
-// unlimited access instead of being dropped onto the free trial. Grant a NEW
-// account access by adding a `subscriptions` row, not by editing this list.
+// These are founder-approved internal/testing accounts. The list unlocks app
+// access and keeps the Pro tier chrome available if the subscriptions lookup
+// cannot run. It does NOT exempt video credits: the registered `vv-credits`
+// function independently meters the platform-validated session email, so a
+// tester on this list still spends their granted balance normally unless that
+// function explicitly identifies them as the founder.
 // ---------------------------------------------------------------------------
 export const ADMIN_EMAILS = [
   'grohan24102004@gmail.com',
+  'sigurdbaek@gmail.com',
   'nicholas@audos.com',
   'andres@audos.com',
 ];

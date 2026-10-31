@@ -2,7 +2,7 @@
  * SceneForge — rebuilt from scratch (Oct 2026, founder's handwritten spec).
  *
  * Long HeyGen avatar videos with ElevenLabs sound, then post-production:
- * Deepgram word timings → a boss agent (Claude Opus 5 → Sonnet 5 fallback)
+ * Deepgram word timings → a boss agent (GPT-6.1 SOL → Claude Opus 5 last-resort fallback)
  * plans a niche-tailored edit and creates assets (images, Veo 3.1 Fast B-roll,
  * ElevenLabs music + SFX) → an expert Remotion coder writes a unique,
  * voice-synced graphics layer → 4 × 5s draft styles, the user stars one →
@@ -15,10 +15,11 @@
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ArrowLeft, ArrowRight, Clapperboard, Film, Loader2, Plus, Rocket, UserRoundPlus } from 'lucide-react';
-import { COLORS, FONT, RADIUS } from '../../components/theme';
+import { COLORS, FONT, GRADIENT, RADIUS } from '../../components/theme';
 import CreditBalance from '../../components/CreditBalance';
 import VideoHistory from '../../components/VideoHistory';
 import { saveVideoToHistory } from '../../lib/videoHistory';
+import { requireVerifiedCreditSession } from '../../lib/credits';
 import {
   cancelProject,
   chooseDraft,
@@ -27,9 +28,13 @@ import {
   applyEdit,
   getProject,
   listProjects,
+  pollAvatarRender,
+  reportAvatarStep,
   reviewStep,
   retryFromStep,
   startProject,
+  submitAvatarRender,
+  type AvatarRenderStatus,
 } from './lib/forgeClient';
 import type { ForgeChoices, ForgeProject } from './lib/forgeTypes';
 import ForgeScriptStep, { type ScriptStepValue } from './components/ForgeScriptStep';
@@ -89,6 +94,95 @@ export default function App() {
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [view]);
 
+  // --- browser-owned avatar step --------------------------------------------
+  // The platform's HeyGen credential proxy only accepts same-origin browser
+  // calls with X-Workspace-DB-Token (a server function gets 401 "Same-origin
+  // request required"), so the durable pipeline pauses at "avatar" and
+  // publishes project.browser_task. This signed-in tab submits + polls the
+  // render, then hands the result back (op complete_avatar_step) and the
+  // server resumes from the next step with every earlier output intact.
+  const projectRef = useRef<ForgeProject | null>(null);
+  useEffect(() => { projectRef.current = project; }, [project]);
+  const avatarTaskKey = view.kind === 'production' && project?.status === 'avatar' && project.browser_task?.step === 'avatar'
+    ? `${project.id}|${project.browser_task.requested_at || 'task'}`
+    : '';
+
+  useEffect(() => {
+    if (!avatarTaskKey) return undefined;
+    const current = projectRef.current;
+    const task = current?.browser_task;
+    if (!current || !task) return undefined;
+    let cancelled = false;
+    const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    const run = async () => {
+      let videoId = String(task.video_id || '');
+      try {
+        if (!videoId) {
+          // Re-read the persisted row first so a second tab (or a reload racing
+          // the 6s refresh) never submits a duplicate paid HeyGen render.
+          const fresh = await getProject(current.id);
+          if (cancelled) return;
+          if (fresh?.browser_task?.video_id) videoId = String(fresh.browser_task.video_id);
+          else if (fresh && fresh.status !== 'avatar') return;
+        }
+        if (!videoId) {
+          if (!task.payload) throw new Error('The avatar render request is missing from the project — use “Retry from this step”.');
+          try {
+            videoId = await submitAvatarRender(task.payload);
+            const saved = await reportAvatarStep(current.id, { state: 'submitted', video_id: videoId });
+            if (!cancelled && saved) setProject(saved);
+          } catch (submitError) {
+            if (!task.transparent_requested || videoId) throw submitError;
+            // Not every avatar supports a transparent background — fall back to
+            // the chosen colour once, exactly like the original pipeline did.
+            const opaque = {
+              ...task.payload,
+              video_inputs: (task.payload.video_inputs || []).map((input: any) => ({ ...input, background: { type: 'color', value: task.bg_color || '#101214' } })),
+            };
+            videoId = await submitAvatarRender(opaque);
+            const saved = await reportAvatarStep(current.id, { state: 'submitted', video_id: videoId, transparent_fallback: true });
+            if (!cancelled && saved) setProject(saved);
+          }
+        }
+        let pollMisses = 0;
+        while (!cancelled) {
+          let status: AvatarRenderStatus;
+          try {
+            status = await pollAvatarRender(videoId);
+            pollMisses = 0;
+          } catch (pollError) {
+            // Tolerate transient poll failures (network blips, token rotation);
+            // only give up after ~6 consecutive misses and surface the exact error.
+            pollMisses += 1;
+            if (pollMisses >= 6) throw pollError;
+            await wait(8000);
+            continue;
+          }
+          if (status.status === 'failed') throw new Error(status.error || 'HeyGen reported that the avatar render failed.');
+          if (status.status === 'completed' && status.url) {
+            const done = await reportAvatarStep(current.id, { state: 'completed', video_id: videoId, video_url: status.url, duration_sec: status.durationSec });
+            if (!cancelled && done) setProject(done);
+            return;
+          }
+          await wait(8000);
+        }
+      } catch (error: any) {
+        if (cancelled) return;
+        const message = String(error?.message || error || 'HeyGen avatar generation failed.');
+        try {
+          const failed = await reportAvatarStep(current.id, { state: 'failed', video_id: videoId || undefined, error: message });
+          if (!cancelled && failed) setProject(failed);
+        } catch (reportError) {
+          console.warn('[SceneForge] the avatar failure could not be saved:', reportError);
+        }
+      }
+    };
+
+    void run();
+    return () => { cancelled = true; };
+  }, [avatarTaskKey]);
+
   // --- save finished videos to the shared cross-app history ----------------
   useEffect(() => {
     if (!project || project.status !== 'done' || savedToHistory.current) return;
@@ -110,6 +204,10 @@ export default function App() {
     setStartBusy(true);
     setStartError('');
     try {
+      // Validate the email-backed wallet before creating the project. This keeps
+      // a guest-owned draft from becoming inaccessible after the sign-in that
+      // paid generation requires.
+      await requireVerifiedCreditSession();
       const fullChoices: ForgeChoices = {
         ...choices,
         voiceId: scriptValue.voiceId,
@@ -161,7 +259,7 @@ export default function App() {
   const header = (
     <header style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 22 }}>
       <div style={{ alignItems: 'center', display: 'flex', gap: 10 }}>
-        <span style={{ alignItems: 'center', background: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', borderRadius: 10, color: COLORS.onAccent, display: 'flex', height: 36, justifyContent: 'center', width: 36 }}>
+        <span style={{ alignItems: 'center', background: GRADIENT.action, borderRadius: 10, color: COLORS.onAccent, display: 'flex', height: 36, justifyContent: 'center', width: 36 }}>
           <Film size={18} />
         </span>
         <div>
@@ -216,7 +314,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setView({ kind: 'wizard', step: 0 })}
-              style={{ alignItems: 'center', background: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', border: 'none', borderRadius: RADIUS.card, color: COLORS.onAccent, cursor: 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 16, fontWeight: 700, gap: 10, justifyContent: 'center', minHeight: 56, padding: '0 22px' }}
+              style={{ alignItems: 'center', background: GRADIENT.action, border: 'none', borderRadius: RADIUS.card, color: COLORS.onAccent, cursor: 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 16, fontWeight: 700, gap: 10, justifyContent: 'center', minHeight: 56, padding: '0 22px' }}
               data-testid="button-new-video"
             >
               <Plus size={18} /> New avatar video
@@ -319,7 +417,7 @@ export default function App() {
               type="button"
               disabled={!stepReady(step)}
               onClick={() => setView({ kind: 'wizard', step: (step + 1) as 0 | 1 | 2 })}
-              style={{ alignItems: 'center', background: stepReady(step) ? 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)' : COLORS.raised, border: 'none', borderRadius: RADIUS.sm, color: stepReady(step) ? COLORS.onAccent : COLORS.muted, cursor: stepReady(step) ? 'pointer' : 'not-allowed', display: 'flex', fontFamily: FONT.heading, fontSize: 15, fontWeight: 700, gap: 8, minHeight: 48, padding: '0 22px' }}
+              style={{ alignItems: 'center', background: stepReady(step) ? GRADIENT.action : COLORS.raised, border: 'none', borderRadius: RADIUS.sm, color: stepReady(step) ? COLORS.onAccent : COLORS.muted, cursor: stepReady(step) ? 'pointer' : 'not-allowed', display: 'flex', fontFamily: FONT.heading, fontSize: 15, fontWeight: 700, gap: 8, minHeight: 48, padding: '0 22px' }}
               data-testid="button-wizard-next"
             >
               Continue <ArrowRight size={16} />
@@ -329,7 +427,7 @@ export default function App() {
               type="button"
               disabled={startBusy || !stepReady(0) || !stepReady(1) || !stepReady(2)}
               onClick={begin}
-              style={{ alignItems: 'center', background: startBusy ? COLORS.raised : 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', border: 'none', borderRadius: RADIUS.sm, color: startBusy ? COLORS.muted : COLORS.onAccent, cursor: startBusy ? 'wait' : 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 15, fontWeight: 700, gap: 8, minHeight: 48, padding: '0 22px' }}
+              style={{ alignItems: 'center', background: startBusy ? COLORS.raised : GRADIENT.action, border: 'none', borderRadius: RADIUS.sm, color: startBusy ? COLORS.muted : COLORS.onAccent, cursor: startBusy ? 'wait' : 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 15, fontWeight: 700, gap: 8, minHeight: 48, padding: '0 22px' }}
               data-testid="button-generate"
             >
               {startBusy ? <Loader2 size={16} className="animate-spin" /> : <Rocket size={16} />}

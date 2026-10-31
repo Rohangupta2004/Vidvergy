@@ -103,6 +103,28 @@ export function getSessionId(): string {
   return id;
 }
 
+/**
+ * A credit-bearing identity must be a canonical workspace session whose saved
+ * record contains the email that the platform verified. Guest sessions are
+ * valid for browsing the workspace, but they are never a billable identity.
+ */
+export function getVerifiedSessionId(): string {
+  if (typeof window === 'undefined') return '';
+  const id = getSessionId();
+  if (!id.startsWith('wses_')) return '';
+  try {
+    const raw = window.localStorage.getItem(scopedSpaceSessionStorageKey(spaceId()));
+    if (!raw) return '';
+    const stored = JSON.parse(raw) as Record<string, unknown>;
+    const storedId = String(stored.workspaceSessionId || stored.sessionId || stored.id || '');
+    const email = typeof stored.email === 'string' ? stored.email.trim().toLowerCase() : '';
+    const verified = stored.verified === true;
+    return storedId === id && verified && email.includes('@') ? id : '';
+  } catch {
+    return '';
+  }
+}
+
 interface StoredEmailSession {
   email?: string;
   metadata?: Record<string, unknown>;
@@ -196,7 +218,7 @@ export async function refreshWorkspaceSession(): Promise<string> {
         if (
           checkResponse.ok
           && accepted.startsWith('wses_')
-          && (!checkedEmail || checkedEmail === email)
+          && checkedEmail === email
           && (verified || legacyAuthorized)
         ) {
           return adopt(
@@ -273,6 +295,11 @@ export interface WorkspaceFetchOptions {
   waitForToken?: boolean;
   /** Refresh the accepted email session and retry one authentication failure. Default true. */
   retryAuth?: boolean;
+  /**
+   * Do not send X-App-Id. The Veo proxy writes that header into a
+   * foreign-keyed column, so the space id is rejected there. Default false.
+   */
+  skipAppId?: boolean;
 }
 
 export interface CallHookOptions {
@@ -338,7 +365,7 @@ export async function workspaceFetch(
   init: RequestInit = {},
   options: WorkspaceFetchOptions = {},
 ): Promise<Response> {
-  const { waitForToken = true, retryAuth = true } = options;
+  const { waitForToken = true, retryAuth = true, skipAppId = false } = options;
   let token = waitForToken ? await getWorkspaceToken() : workspaceTokenNow();
 
   const send = (activeToken: string): Promise<Response> => {
@@ -346,7 +373,8 @@ export async function workspaceFetch(
     if (activeToken) headers.set('X-Workspace-DB-Token', activeToken);
     const sid = getSessionId();
     if (sid) headers.set('X-Session-Id', sid);
-    headers.set('X-App-Id', spaceId());
+    if (skipAppId) headers.delete('X-App-Id');
+    else headers.set('X-App-Id', spaceId());
     return fetch(input, { ...init, credentials: init.credentials || 'include', headers });
   };
 

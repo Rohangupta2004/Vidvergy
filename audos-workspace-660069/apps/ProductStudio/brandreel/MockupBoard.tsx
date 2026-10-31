@@ -164,7 +164,7 @@ export default function MockupBoard(props: MockupBoardProps) {
                 code, so the storyboard is free and instant.
               </div>
               <div style={{ color: theme.textMuted }}>
-                You only pay for one {variant.totalSeconds}-second server-side Remotion render.
+                The final cloud Remotion render costs $0.05 from the workspace wallet and runs one at a time.
               </div>
             </div>
           </div>
@@ -173,10 +173,10 @@ export default function MockupBoard(props: MockupBoardProps) {
             onClick={props.onGenerate}
             busy={props.rendering}
             testId="button-generate-video"
-            title="Render this reel as an MP4"
+            title="Render this reel as an MP4 · $0.05 from the workspace wallet"
             style={{ padding: '13px 26px', fontSize: 14 }}
           >
-            {props.rendering ? (props.renderNote || 'Rendering…') : (<><Wand2 size={16} /> Generate Video</>)}
+            {props.rendering ? (props.renderNote || 'Rendering…') : (<><Wand2 size={16} /> Generate Video · $0.05</>)}
           </PrimaryButton>
         </div>
         {props.rendering && props.renderNote ? (

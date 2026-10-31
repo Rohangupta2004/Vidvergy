@@ -12,7 +12,11 @@
  * service for a geometry it will refuse.
  */
 
-import { GENERATION_TIMEOUT_MS, isAbortError, sleep, STATUS_TIMEOUT_MS, timeoutSignal, WORKSPACE_ID } from './runtime';
+import { GENERATION_TIMEOUT_MS, isAbortError, sleep, STATUS_TIMEOUT_MS, timeoutSignal } from './runtime';
+import {
+  readRender as readCloudRender,
+  submitRender as submitCloudRender,
+} from '../../../lib/render/cloudRender';
 
 /** The service's fixed output. Sent exactly as documented. */
 export const FPS = 30;
@@ -51,48 +55,22 @@ export interface RenderSubmission {
 
 export async function submitRender(submission: RenderSubmission): Promise<string> {
   const durationInFrames = clampFrames(submission.durationInFrames);
-
-  let response: Response;
   try {
-    response = await fetch('/api/render/remotion', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        workspaceId: WORKSPACE_ID,
-        compositionTsx: submission.compositionTsx,
-        props: submission.props,
-        durationInFrames,
-        fps: FPS,
-        width: FRAME_W,
-        height: FRAME_H,
-      }),
+    const submitted = await submitCloudRender({
+      compositionTsx: submission.compositionTsx,
+      props: submission.props,
+      durationInFrames,
+      aspect: '16:9',
+    }, {
       signal: timeoutSignal(GENERATION_TIMEOUT_MS),
+      onStatus: (phase) => console.info('[Vidverge] cloud render:', phase),
     });
+    return submitted.operationId;
   } catch (error: any) {
-    if (isAbortError(error)) {
-      throw new RenderError(
-        'The render service did not accept the job within 2 minutes. Try again.',
-        'timeout',
-      );
-    }
-    throw new RenderError(
-      `The render service could not be reached: ${String(error?.message || error)}`,
-      'network',
-    );
+    if (isAbortError(error)) throw new RenderError('The render service did not accept the job within 2 minutes. Try again.', 'timeout');
+    const message = String(error?.message || error);
+    throw new RenderError(message, /wallet|\$0\.05|402/i.test(message) ? 'insufficient_funds' : 'rejected');
   }
-
-  const payload = await response.json().catch(() => null);
-  if (!response.ok || !payload?.operationId) {
-    if (response.status === 402) {
-      throw new RenderError(
-        'The workspace wallet is too low to render this video. Top it up and run the job again.',
-        'insufficient_funds',
-      );
-    }
-    const detail = payload?.error || payload?.message || `HTTP ${response.status}`;
-    throw new RenderError(`The render was not accepted: ${String(detail).slice(0, 240)}`, 'rejected');
-  }
-  return String(payload.operationId);
 }
 
 export interface RenderProgress {
@@ -102,31 +80,17 @@ export interface RenderProgress {
 }
 
 export async function checkRender(operationId: string): Promise<RenderProgress> {
-  let response: Response;
   try {
-    response = await fetch(`/api/render/remotion/${encodeURIComponent(operationId)}`, {
-      signal: timeoutSignal(STATUS_TIMEOUT_MS),
-    });
+    const status = await Promise.race([
+      readCloudRender(operationId),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('The status check timed out after 30s.')), STATUS_TIMEOUT_MS)),
+    ]);
+    if (status.state === 'complete' && status.videoUrl) return { status: 'complete', videoUrl: status.videoUrl };
+    if (status.state === 'failed') return { status: 'failed', error: status.error || 'The render failed.' };
+    return { status: status.state };
   } catch (error: any) {
-    // A dropped or hung status read must neither hang the poll past its
-    // deadline nor kill it outright — pollRender's miss counter decides.
-    return {
-      status: 'rendering',
-      error: isAbortError(error) ? 'The status check timed out after 30s.' : String(error?.message || error),
-    };
+    return { status: 'rendering', error: String(error?.message || error) };
   }
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    return { status: 'rendering', error: String(payload?.error || `status HTTP ${response.status}`) };
-  }
-  const status = String(payload?.status || 'pending');
-  if (status === 'complete' && payload?.videoUrl) {
-    return { status: 'complete', videoUrl: String(payload.videoUrl) };
-  }
-  if (status === 'failed') {
-    return { status: 'failed', error: String(payload?.error || 'The render failed.') };
-  }
-  return { status: status === 'rendering' ? 'rendering' : 'pending' };
 }
 
 export interface PollOptions {

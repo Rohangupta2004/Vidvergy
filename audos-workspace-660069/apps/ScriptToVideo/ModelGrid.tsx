@@ -71,10 +71,10 @@ export default function ModelGrid(props: {
               gap: 3,
               textAlign: 'left',
               background: active
-                ? 'linear-gradient(160deg, rgba(212,146,10,0.22), rgba(212,146,10,0.06))'
+                ? 'linear-gradient(160deg, color-mix(in srgb, var(--space-brand-primary-500) 20%, var(--space-surface-card)), color-mix(in srgb, var(--space-brand-primary-500) 6%, var(--space-surface-card)))'
                 : T.card,
-              border: `1px solid ${active ? T.live : 'rgba(255,255,255,0.07)'}`,
-              boxShadow: active ? '0 0 0 1px rgba(212,146,10,0.45), 0 4px 24px rgba(0,0,0,0.4)' : 'none',
+              border: `1px solid ${active ? T.live : T.line}`,
+              boxShadow: active ? '0 0 0 1px color-mix(in srgb, var(--space-brand-primary-500) 45%, transparent), 0 4px 24px color-mix(in srgb, var(--space-text-primary) 18%, transparent)' : 'none',
               borderRadius: 12,
               padding: compact ? '10px 12px' : '12px 14px',
               cursor: clickable ? 'pointer' : 'not-allowed',
@@ -85,16 +85,16 @@ export default function ModelGrid(props: {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
-              <span style={{ color: active ? T.live : T.dim, fontSize: 9.5, fontWeight: 800, letterSpacing: 1.1, textTransform: 'uppercase' }}>
+              <span style={{ color: active ? T.live : T.dim, fontSize: 12, fontWeight: 800, letterSpacing: 0.8, textTransform: 'uppercase' }}> 
                 {option.family || 'Model'}
               </span>
               {option.badge && !locked ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: T.muted, fontSize: 9, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', border: `1px solid ${T.line}`, borderRadius: 999, padding: '1px 6px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: T.muted, fontSize: 12, fontWeight: 700, letterSpacing: 0.4, border: `1px solid ${T.line}`, borderRadius: 999, padding: '2px 7px' }}> 
                   {option.badge === 'Fast' ? <Zap size={8} /> : null}{option.badge}
                 </span>
               ) : null}
               {locked ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', color: T.fault, fontSize: 9, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', border: `1px solid ${T.fault}`, borderRadius: 999, padding: '1px 6px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', color: T.fault, fontSize: 12, fontWeight: 800, letterSpacing: 0.4, border: `1px solid ${T.fault}`, borderRadius: 999, padding: '2px 7px' }}> 
                   Unavailable
                 </span>
               ) : null}
@@ -106,15 +106,15 @@ export default function ModelGrid(props: {
               {option.label}
             </div>
             {option.meta ? (
-              <div style={{ color: T.muted, fontSize: 10.5, lineHeight: 1.45 }}>{option.meta}</div>
+              <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45 }}>{option.meta}</div>
             ) : null}
             {!compact && option.blurb && !locked ? (
-              <div style={{ color: T.dim, fontSize: 10.5, lineHeight: 1.5 }}>{option.blurb}</div>
+              <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.5 }}>{option.blurb}</div>
             ) : null}
             {/* The real reason, not a generic stand-in: "not connected yet" and
                 "refused upstream" lead to different next steps. */}
             {locked && option.unavailableReason ? (
-              <div style={{ color: T.dim, fontSize: 10, lineHeight: 1.45 }}>{option.unavailableReason}</div>
+              <div style={{ color: T.fault, fontSize: 12, lineHeight: 1.45 }}>{option.unavailableReason}</div>
             ) : null}
           </button>
         );

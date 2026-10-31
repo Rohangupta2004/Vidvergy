@@ -33,7 +33,7 @@ import { friendlyErrorMessage } from './friendlyErrors';
 const smallBtn = (accent = false) => ({
   display: 'inline-flex', alignItems: 'center', gap: 6,
   background: accent ? T.live : 'transparent',
-  color: accent ? '#1A1205' : T.bone,
+  color: accent ? 'var(--space-text-on-primary)' : T.bone,
   border: accent ? 'none' : `1px solid ${T.dim}`,
   borderRadius: 8, padding: '7px 13px', fontSize: 12, fontWeight: 650, cursor: 'pointer',
 } as const);
@@ -53,7 +53,7 @@ function Section(props: { icon: any; title: string; hint?: string; children: any
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ color: T.live, display: 'flex' }}>{props.icon}</span>
         <div style={{ color: T.bone, fontSize: 13.5, fontWeight: 700 }}>{props.title}</div>
-        {props.hint ? <div style={{ color: T.dim, fontSize: 11 }}>{props.hint}</div> : null}
+        {props.hint ? <div style={{ color: T.dim, fontSize: 12 }}>{props.hint}</div> : null}
       </div>
       <div style={{ marginTop: 10 }}>{props.children}</div>
     </section>
@@ -65,7 +65,7 @@ function Section(props: { icon: any; title: string; hint?: string; children: any
 // ---------------------------------------------------------------------------
 
 function TrackLabel({ children }: { children: any }) {
-  return <div style={{ width: 52, flexShrink: 0, color: T.dim, fontSize: 9.5, fontWeight: 700, letterSpacing: 0.7 }}>{children}</div>;
+  return <div style={{ width: 52, flexShrink: 0, color: T.dim, fontSize: 12, fontWeight: 700, letterSpacing: 0.7 }}>{children}</div>;
 }
 
 function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
@@ -81,7 +81,7 @@ function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
     cursor += target(s);
     return block;
   });
-  const trackStyle = { position: 'relative' as const, flex: 1, height: 18, background: '#18150A', borderRadius: 5, overflow: 'hidden' };
+  const trackStyle = { position: 'relative' as const, flex: 1, height: 18, background: 'var(--space-surface-bg)', borderRadius: 5, overflow: 'hidden' };
   const musicOk = !!audio && audio.music?.status === 'ready' && !!audio.music.audioUrl;
   const sfxItems = (audio?.sfx || []).filter((f) => f.status === 'ready' && f.audioUrl);
   return (
@@ -90,7 +90,7 @@ function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
         <TrackLabel>VIDEO</TrackLabel>
         <div style={trackStyle}>
           {blocks.map((b, i) => (
-            <div key={b.s.id} title={`Scene ${b.s.idx + 1} · ${target(b.s).toFixed(1)}s`} style={{ position: 'absolute', left: `${b.leftPct}%`, width: `calc(${b.widthPct}% - 1px)`, top: 2, bottom: 2, background: i % 2 ? 'rgba(232,163,60,0.35)' : 'rgba(232,163,60,0.5)', borderRadius: 3 }} />
+            <div key={b.s.id} title={`Scene ${b.s.idx + 1} · ${target(b.s).toFixed(1)}s`} style={{ position: 'absolute', left: `${b.leftPct}%`, width: `calc(${b.widthPct}% - 1px)`, top: 2, bottom: 2, background: i % 2 ? 'color-mix(in srgb, var(--space-brand-primary-500) 35%, transparent)' : 'color-mix(in srgb, var(--space-brand-primary-500) 50%, transparent)', borderRadius: 3 }} />
           ))}
         </div>
       </div>
@@ -105,7 +105,7 @@ function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
             }
             const voicePct = n.duration_s ? Math.min(100, (n.duration_s / target(b.s)) * 100) : 100;
             return (
-              <div key={b.s.id} title={`Scene ${b.s.idx + 1}: "${(n.text || '').slice(0, 90)}"${n.duration_s ? ` · ${n.duration_s.toFixed(1)}s` : ''}`} style={{ position: 'absolute', left: `${b.leftPct}%`, width: `calc(${(b.widthPct * voicePct) / 100}% - 1px)`, top: 2, bottom: 2, background: n.status === 'ready' ? 'rgba(22,101,52,0.45)' : n.status === 'failed' ? 'rgba(153,27,27,0.5)' : 'rgba(22,101,52,0.18)', borderRadius: 3 }} />
+              <div key={b.s.id} title={`Scene ${b.s.idx + 1}: "${(n.text || '').slice(0, 90)}"${n.duration_s ? ` · ${n.duration_s.toFixed(1)}s` : ''}`} style={{ position: 'absolute', left: `${b.leftPct}%`, width: `calc(${(b.widthPct * voicePct) / 100}% - 1px)`, top: 2, bottom: 2, background: n.status === 'ready' ? 'color-mix(in srgb, var(--space-semantic-success-500) 45%, transparent)' : n.status === 'failed' ? 'color-mix(in srgb, var(--space-semantic-danger-500) 50%, transparent)' : 'color-mix(in srgb, var(--space-semantic-success-500) 18%, transparent)', borderRadius: 3 }} />
             );
           })}
         </div>
@@ -113,8 +113,8 @@ function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <TrackLabel>MUSIC</TrackLabel>
         <div style={trackStyle}>
-          {musicOk ? <div title={`${audio!.music!.preset} music — ducks under narration automatically`} style={{ position: 'absolute', left: 0, right: 0, top: 5, bottom: 5, background: 'linear-gradient(90deg, transparent, rgba(190,24,93,0.42) 6%, rgba(190,24,93,0.42) 94%, transparent)', borderRadius: 3 }} /> : (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', paddingLeft: 8, color: T.dim, fontSize: 9.5 }}>{audio?.music?.status === 'skipped' ? 'skipped' : audio?.music?.status === 'failed' ? 'failed' : '—'}</div>
+          {musicOk ? <div title={`${audio!.music!.preset} music — ducks under narration automatically`} style={{ position: 'absolute', left: 0, right: 0, top: 5, bottom: 5, background: 'linear-gradient(90deg, transparent, color-mix(in srgb, var(--space-brand-highlight-500) 42%, transparent) 6%, color-mix(in srgb, var(--space-brand-highlight-500) 42%, transparent) 94%, transparent)', borderRadius: 3 }} /> : (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', paddingLeft: 8, color: T.dim, fontSize: 12 }}>{audio?.music?.status === 'skipped' ? 'skipped' : audio?.music?.status === 'failed' ? 'failed' : '—'}</div>
           )}
         </div>
       </div>
@@ -127,10 +127,10 @@ function AudioTimeline({ film, scenes }: { film: Film; scenes: FilmScene[] }) {
             const at = ((b.startS + Math.min(Number(f.at_s) || 0, target(b.s))) / total) * 100;
             return <div key={i} title={`${f.description} · scene ${b.s.idx + 1} @ ${Number(f.at_s || 0).toFixed(1)}s`} style={{ position: 'absolute', left: `${at}%`, top: 3, bottom: 3, width: 5, background: T.live, borderRadius: 2 }} />;
           })}
-          {!sfxItems.length ? <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', paddingLeft: 8, color: T.dim, fontSize: 9.5 }}>{film.audio?.sfx_status === 'skipped' ? 'skipped' : '—'}</div> : null}
+          {!sfxItems.length ? <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', paddingLeft: 8, color: T.dim, fontSize: 12 }}>{film.audio?.sfx_status === 'skipped' ? 'skipped' : '—'}</div> : null}
         </div>
       </div>
-      <div style={{ color: T.dim, fontSize: 10, marginLeft: 60 }}>{Math.round(total)}s total · narration is the authoritative voice; native clip sound stays as ambience; music ducks under speech.</div>
+      <div style={{ color: T.dim, fontSize: 12, marginLeft: 60 }}>{Math.round(total)}s total · narration is the authoritative voice; native clip sound stays as ambience; music ducks under speech.</div>
     </div>
   );
 }
@@ -144,7 +144,7 @@ function AssemblyProgressCard({ progress }: { progress: AssemblyProgress; filmUp
   const active = progress.steps.find((step) => step.status === 'active');
   const label = failed?.label || active?.label || (progress.percent >= 100 ? 'Ready to download' : 'Preparing the finished film');
   return (
-    <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, minHeight: 40, padding: '8px 10px', borderRadius: 9, background: T.raised, border: `1px solid ${failed ? T.fault : T.dim}`, color: failed ? T.fault : T.muted, fontSize: 11.5, fontWeight: 700 }}>
+    <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, minHeight: 40, padding: '8px 10px', borderRadius: 9, background: T.raised, border: `1px solid ${failed ? T.fault : T.dim}`, color: failed ? T.fault : T.muted, fontSize: 12, fontWeight: 700 }}>
       {failed ? <AlertTriangle size={13} /> : progress.percent >= 100 ? <Check size={13} color={T.done} /> : <VergeLoader size={28} label={label} />}
       <span>{label}{progress.running ? ` · ${progress.percent}%` : ''}</span>
     </div>
@@ -184,13 +184,13 @@ function VoiceNarrationPanel(props: {
           : 'optional — one consistent ElevenLabs voice for the whole film'}
     >
       {silent ? (
-        <div style={{ color: T.muted, fontSize: 11.5, lineHeight: 1.6 }}>
+        <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.6 }}>
           No voiceover is being added. Each scene keeps whatever sound its clip generated, and Final Assembly needs nothing else from this step. Change the voice source on the VOICEOVER card above to add narration.
         </div>
       ) : (
         <>
           {voiceSource === 'elevenlabs' && vp ? (
-            <div style={{ color: T.muted, fontSize: 11.5, lineHeight: 1.6 }}>
+            <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.6 }}>
               Voice plan: <span style={{ color: T.bone }}>{vp.voiceName || 'the selected voice'}</span> · tone {vp.tone || 'neutral'} · energy {vp.energy || 'steady'} · pace {vp.pace || 'natural'} · emotion {vp.emotion || 'grounded'} · {vp.language || 'English'}{vp.accent ? ` (${vp.accent} accent)` : ''}
             </div>
           ) : null}
@@ -211,7 +211,7 @@ function VoiceNarrationPanel(props: {
                 {props.voices.map((v) => <option key={v.id} value={v.id}>{v.name}{v.labels?.accent ? ` · ${v.labels.accent}` : ''}</option>)}
               </SelectField>
             ) : (
-              <span style={{ color: T.muted, fontSize: 11.5 }}>
+              <span style={{ color: T.muted, fontSize: 12 }}>
                 Built-in AI voice: <span style={{ color: T.bone }}>{openAiVoiceLabel(props.openaiVoice)}</span> — pick another on the VOICEOVER card above.
               </span>
             )}
@@ -220,7 +220,7 @@ function VoiceNarrationPanel(props: {
               <button style={smallBtn()} disabled={busy} onClick={props.onSkip}><SkipForward size={12} /> Continue Without Voiceover</button>
             </>) : null}
           </div>
-          <div style={{ color: T.dim, fontSize: 10.5, marginTop: 6 }}>Changing the voice re-records the narration only — the video clips are never regenerated.</div>
+          <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>Changing the voice re-records the narration only — the video clips are never regenerated.</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
             {done.map((s) => {
               const n = entries.get(s.scene_key);
@@ -229,13 +229,13 @@ function VoiceNarrationPanel(props: {
                 <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
                   <StateDot state={!n || n.voice_source === 'none' ? 'todo' : n.voice_source === 'video_native' ? 'done' : n.status === 'ready' ? 'done' : n.status === 'failed' ? 'failed' : 'active'} />
                   <div style={{ minWidth: 0 }}>
-                    <span style={{ color: T.muted, fontSize: 11, fontFamily: T.mono }}>Scene {String(s.idx + 1).padStart(2, '0')} — {clipS.toFixed(1)}s</span>
-                    <span style={{ color: n && isSpokenSource(n.voice_source) ? T.bone : T.dim, fontSize: 11.5, marginLeft: 8 }}>
+                    <span style={{ color: T.muted, fontSize: 12, fontFamily: T.mono }}>Scene {String(s.idx + 1).padStart(2, '0')} — {clipS.toFixed(1)}s</span>
+                    <span style={{ color: n && isSpokenSource(n.voice_source) ? T.bone : T.dim, fontSize: 12, marginLeft: 8 }}>
                       {!n || n.voice_source === 'none' ? 'no words (visual beat)'
                         : n.voice_source === 'video_native' ? `on-camera dialogue — the clip's own voice${s.dialogue?.line ? `: "${String(s.dialogue.line).slice(0, 70)}"` : ''}`
                         : `"${(n.text || '').slice(0, 110)}"${n.duration_s ? ` · voice ${n.duration_s.toFixed(1)}s` : ''}`}
                     </span>
-                    {n?.error ? <div style={{ color: T.fault, fontSize: 10.5 }}>{friendlyErrorMessage(n.error)}</div> : null}
+                    {n?.error ? <div style={{ color: T.fault, fontSize: 12 }}>{friendlyErrorMessage(n.error)}</div> : null}
                   </div>
                 </div>
               );
@@ -261,7 +261,7 @@ function MusicPanel(props: { film: Film; busy: boolean; onChangeMusic: (preset: 
     <Section icon={<Music size={15} />} title="Music bed" hint="responds to the script — ducks under narration automatically">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <StateDot state={state as any} />
-        <span style={{ color: T.muted, fontSize: 11.5 }}>
+        <span style={{ color: T.muted, fontSize: 12 }}>
           {!music ? 'Planned with the audio stage.'
             : music.status === 'skipped'
               ? music.skip_reason === 'providers_unavailable'
@@ -286,8 +286,8 @@ function MusicPanel(props: { film: Film; busy: boolean; onChangeMusic: (preset: 
         {music?.status === 'failed' ? <button style={smallBtn(true)} disabled={props.busy} onClick={props.onRetry}><RefreshCw size={12} /> Retry</button> : null}
         {music && music.status !== 'skipped' ? <button style={smallBtn()} disabled={props.busy} onClick={props.onSkip}><SkipForward size={12} /> Continue Without Music</button> : null}
       </div>
-      {music?.error ? <div style={{ color: T.fault, fontSize: 11, marginTop: 7 }}>{friendlyErrorMessage(music.error)}</div> : null}
-      <div style={{ color: T.dim, fontSize: 10.5, marginTop: 7 }}>Changing the music re-composes the bed only, then Final Assembly reuses the existing clips.</div>
+      {music?.error ? <div style={{ color: T.fault, fontSize: 12, marginTop: 7 }}>{friendlyErrorMessage(music.error)}</div> : null}
+      <div style={{ color: T.dim, fontSize: 12, marginTop: 7 }}>Changing the music re-composes the bed only, then Final Assembly reuses the existing clips.</div>
     </Section>
   );
 }
@@ -303,14 +303,14 @@ function SfxPanel(props: { film: Film; busy: boolean; onRetry: () => void; onSki
           {items.map((f, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <StateDot state={status === 'skipped' ? 'todo' : f.status === 'ready' ? 'done' : f.status === 'failed' ? 'failed' : 'active'} />
-              <span style={{ color: status === 'skipped' ? T.dim : T.muted, fontSize: 11.5 }}>{f.description || 'Sound effect'} · @{Number(f.at_s || 0).toFixed(1)}s{f.error ? ` — ${friendlyErrorMessage(f.error)}` : ''}</span>
+              <span style={{ color: status === 'skipped' ? T.dim : T.muted, fontSize: 12 }}>{f.description || 'Sound effect'} · @{Number(f.at_s || 0).toFixed(1)}s{f.error ? ` — ${friendlyErrorMessage(f.error)}` : ''}</span>
             </div>
           ))}
         </div>
       ) : (
-        <div style={{ color: T.dim, fontSize: 11.5 }}>{audio ? 'The sound director planned no SFX for this film — that is a valid choice.' : 'Planned with the audio stage.'}</div>
+        <div style={{ color: T.dim, fontSize: 12 }}>{audio ? 'The sound director planned no SFX for this film — that is a valid choice.' : 'Planned with the audio stage.'}</div>
       )}
-      {status === 'skipped' ? <div style={{ color: T.dim, fontSize: 11, marginTop: 7 }}>Skipped — the film ships without SFX.</div> : null}
+      {status === 'skipped' ? <div style={{ color: T.dim, fontSize: 12, marginTop: 7 }}>Skipped — the film ships without SFX.</div> : null}
       <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
         {status === 'failed' ? <button style={smallBtn(true)} disabled={props.busy} onClick={props.onRetry}><RefreshCw size={12} /> Retry</button> : null}
         {items.length && status !== 'skipped' ? <button style={smallBtn()} disabled={props.busy} onClick={props.onSkip}><SkipForward size={12} /> Continue Without SFX</button> : null}
@@ -357,19 +357,19 @@ function OnScreenTextPanel(props: { film: Film; scenes: FilmScene[]; busy: boole
               <button type="button" aria-label={`Remove on-screen text ${index + 1}`} onClick={() => { setItems((current) => current.filter((_, itemIndex) => itemIndex !== index)); setState('idle'); }} style={{ ...smallBtn(), padding: 8 }}><Trash2 size={12} /></button>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
-              <label style={{ color: T.dim, fontSize: 10.5 }}>Start (s)<input type="number" min={0} max={total} step="0.1" value={item.start_s} onChange={(event) => patch(index, { start_s: Number(event.target.value) })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }} /></label>
-              <label style={{ color: T.dim, fontSize: 10.5 }}>End (s)<input type="number" min={0} max={total} step="0.1" value={item.end_s} onChange={(event) => patch(index, { end_s: Number(event.target.value) })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }} /></label>
-              <label style={{ color: T.dim, fontSize: 10.5 }}>Position<select value={item.position} onChange={(event) => patch(index, { position: event.target.value as OnScreenTextItem['position'] })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }}><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label>
-              <label style={{ color: T.dim, fontSize: 10.5 }}>Style<select value={item.style} onChange={(event) => patch(index, { style: event.target.value as OnScreenTextItem['style'] })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }}><option value="clean">Clean</option><option value="boxed">Boxed</option><option value="accent">Accent</option></select></label>
+              <label style={{ color: T.dim, fontSize: 12 }}>Start (s)<input type="number" min={0} max={total} step="0.1" value={item.start_s} onChange={(event) => patch(index, { start_s: Number(event.target.value) })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }} /></label>
+              <label style={{ color: T.dim, fontSize: 12 }}>End (s)<input type="number" min={0} max={total} step="0.1" value={item.end_s} onChange={(event) => patch(index, { end_s: Number(event.target.value) })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }} /></label>
+              <label style={{ color: T.dim, fontSize: 12 }}>Position<select value={item.position} onChange={(event) => patch(index, { position: event.target.value as OnScreenTextItem['position'] })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }}><option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option></select></label>
+              <label style={{ color: T.dim, fontSize: 12 }}>Style<select value={item.style} onChange={(event) => patch(index, { style: event.target.value as OnScreenTextItem['style'] })} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 7 }}><option value="clean">Clean</option><option value="boxed">Boxed</option><option value="accent">Accent</option></select></label>
             </div>
           </div>
         ))}
-      </div> : <div style={{ color: T.dim, fontSize: 11.5, lineHeight: 1.5 }}>This brief has no required display copy. The final cut will contain no added text unless you add an item.</div>}
+      </div> : <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.5 }}>This brief has no required display copy. The final cut will contain no added text unless you add an item.</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         <button type="button" style={smallBtn()} disabled={props.busy} onClick={() => { const firstDuration = Math.max(0.25, Number(props.scenes[0]?.duration_s) || total); setItems((current) => [...current, { id: `text_user_${Date.now()}`, text: '', start_s: 0, end_s: Math.min(total, firstDuration), position: 'bottom', style: 'clean', source: 'user' }]); setState('idle'); }}><Plus size={12} /> Add text</button>
         <button type="button" style={smallBtn(true)} disabled={props.busy || state === 'saving'} onClick={() => void save()}>{state === 'saving' ? <VergeLoader size={28} tone="ink" label="Saving text" /> : <Check size={12} />} Save text layer</button>
       </div>
-      {message ? <div role="status" style={{ marginTop: 8, color: state === 'error' ? T.fault : T.done, fontSize: 11.5 }}>{message}</div> : null}
+      {message ? <div role="status" style={{ marginTop: 8, color: state === 'error' ? T.fault : T.done, fontSize: 12 }}>{message}</div> : null}
     </Section>
   );
 }
@@ -424,19 +424,19 @@ function FinalQualityPanel(props: { checks: FinalQaCheck[]; error: string; onApp
       <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 8, color: ready ? T.done : attention.some((check) => check.status === 'fail') ? T.fault : T.live, fontSize: 13, fontWeight: 800 }}>
         {ready ? <Check size={14} /> : <AlertTriangle size={14} />}
         {ready ? 'Ready to download' : `${attention.length} thing${attention.length === 1 ? '' : 's'} need attention`}
-        <button type="button" onClick={() => setShowAll((value) => !value)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: T.muted, padding: 0, fontSize: 10.5, textDecoration: 'underline', cursor: 'pointer' }}>{showAll ? 'Hide passing checks' : 'View all checks'}</button>
+        <button type="button" onClick={() => setShowAll((value) => !value)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: T.muted, padding: 0, fontSize: 12, textDecoration: 'underline', cursor: 'pointer' }}>{showAll ? 'Hide passing checks' : 'View all checks'}</button>
       </div>
       {shown.length ? <div style={{ display: 'grid', gap: 5, marginTop: 9 }}>
         {shown.map((check) => (
-          <div key={check.id} style={{ display: 'flex', gap: 8, alignItems: 'center', minHeight: 36, padding: '6px 8px', borderRadius: 8, background: '#18150A', border: `1px solid ${check.status === 'fail' ? T.fault : check.status === 'review' ? T.live : T.dim}` }}>
+          <div key={check.id} style={{ display: 'flex', gap: 8, alignItems: 'center', minHeight: 36, padding: '6px 8px', borderRadius: 8, background: 'var(--space-surface-bg)', border: `1px solid ${check.status === 'fail' ? T.fault : check.status === 'review' ? T.live : T.dim}` }}>
             <StateDot state={check.status === 'pass' ? 'done' : check.status === 'fail' ? 'failed' : 'todo'} />
-            <span style={{ minWidth: 0, flex: 1, color: T.muted, fontSize: 10.5 }}><b style={{ color: T.bone }}>{check.label}</b> — {check.evidence}</span>
+            <span style={{ minWidth: 0, flex: 1, color: T.muted, fontSize: 12 }}><b style={{ color: T.bone }}>{check.label}</b> — {check.evidence}</span>
             {check.action === 'approve' ? <button type="button" style={smallBtn(true)} onClick={() => props.onApproval(check.id, true)}>Approve</button>
               : check.action ? <button type="button" style={smallBtn(check.status === 'fail')} onClick={() => props.onAction(check.action as 'retry' | 'board')}>{check.actionLabel || 'Retry'}</button> : null}
           </div>
         ))}
       </div> : null}
-      {props.error ? <div style={{ color: T.fault, fontSize: 10.5, marginTop: 8 }}>{friendlyErrorMessage(props.error)}</div> : null}
+      {props.error ? <div style={{ color: T.fault, fontSize: 12, marginTop: 8 }}>{friendlyErrorMessage(props.error)}</div> : null}
     </Section>
   );
 }
@@ -475,7 +475,7 @@ function FinalHeader(props: {
 
       {/* The frame takes the FILM's own shape, so a 9:16 cut is reviewed
           portrait instead of letterboxed inside a widescreen box. */}
-      <div style={{ margin: '16px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0D0B05', borderRadius: 14, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.07)', boxShadow: '0 4px 24px rgba(0,0,0,0.4)', width: '100%', maxWidth: film.aspect_ratio === '9:16' ? 320 : film.aspect_ratio === '1:1' ? 680 : 920, aspectRatio: videoUrl ? (film.aspect_ratio === '9:16' ? '9 / 16' : film.aspect_ratio === '1:1' ? '1 / 1' : '16 / 9') : undefined }}>
+      <div style={{ margin: '16px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--space-surface-bg)', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--vg-border)', boxShadow: '0 4px 24px color-mix(in srgb, var(--space-text-primary) 18%, transparent)', width: '100%', maxWidth: film.aspect_ratio === '9:16' ? 320 : film.aspect_ratio === '1:1' ? 680 : 920, aspectRatio: videoUrl ? (film.aspect_ratio === '9:16' ? '9 / 16' : film.aspect_ratio === '1:1' ? '1 / 1' : '16 / 9') : undefined }}>
         {videoUrl ? (
           <ProbedVideo
             key={videoUrl}
@@ -484,7 +484,7 @@ function FinalHeader(props: {
             modelId={film.video_model}
             audioEnabled={film.plan?.audio_enabled !== false}
             containerStyle={{ width: '100%', height: '100%' }}
-            videoProps={{ controls: true, poster: film.final_thumb_url || undefined, style: { width: '100%', height: '100%', objectFit: 'contain', background: '#000' } }}
+            videoProps={{ controls: true, poster: film.final_thumb_url || undefined, style: { width: '100%', height: '100%', objectFit: 'contain', background: 'var(--space-surface-bg)' } }}
             onMetadata={(video) => props.onVideoMetadata({ duration: video.duration, width: video.videoWidth, height: video.videoHeight })}
             onRetrySilent={() => props.onFinalAssembly({ captions })}
             dialogueBusy={busy || assembling || !canAssemble}
@@ -568,6 +568,10 @@ export function FinalScreen(props: {
   const [qaError, setQaError] = useState('');
   const [mediaMetadata, setMediaMetadata] = useState<MediaMetadata | null>(null);
   const [quickEditOpen, setQuickEditOpen] = useState(false);
+  const [captionStyle, setCaptionStyle] = useState<'bold-pop' | 'clean' | 'karaoke'>('clean');
+  const [musicLevel, setMusicLevel] = useState(Math.round(Number(film.audio?.music?.volume ?? 0.35) * 100));
+  const [voiceLevel, setVoiceLevel] = useState(100);
+  const [shareNotice, setShareNotice] = useState('');
   const [, setEditorRevision] = useState(0);
 
   useEffect(() => {
@@ -624,21 +628,37 @@ export function FinalScreen(props: {
               </button>
               <button
                 className="s2v-lift"
+                onClick={async () => { try { if (navigator.share) await navigator.share({ title: film.title || 'My video', url: videoUrl }); else { await navigator.clipboard.writeText(videoUrl); setShareNotice('Share link copied.'); } } catch { /* cancelled */ } }}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, minHeight: 46, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: '11px 20px', fontSize: 13, fontWeight: 750, cursor: 'pointer' }}
+              >
+                <Sparkles size={14} /> Share link
+              </button>
+              <button
+                className="s2v-lift"
                 onClick={props.onBackToBoard}
                 style={{ display: 'flex', alignItems: 'center', gap: 9, minHeight: 46, background: 'transparent', color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: '11px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
               >
-                <Pencil size={14} /> Edit scenes
+                <RefreshCw size={14} /> Make another version
+              </button>
+              <button
+                className="s2v-lift"
+                onClick={() => setShareNotice('Saved to your library.')}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, minHeight: 46, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: '11px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+              >
+                <Check size={14} /> Save to library
               </button>
             </>
           ) : null}
           <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
             <input type="checkbox" checked={captions} onChange={(e) => props.onCaptions(e.target.checked)} style={{ accentColor: T.live }} />
             <Captions size={13} color={captions ? T.live : T.dim} />
-            <span style={{ color: captions ? T.bone : T.muted, fontSize: 12 }}>Burn-in captions</span>
+            <span style={{ color: captions ? T.bone : T.muted, fontSize: 12 }}>Captions {captions ? 'on' : 'off'}</span>
           </label>
         </div>
-        <div style={{ color: T.dim, fontSize: 11, marginTop: 8 }}>
-          <button className="s2v-ghost" disabled={busy || assembling || !ready.length} onClick={props.onNativeCut} style={{ background: 'none', border: 'none', color: T.muted, fontSize: 11, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>Plain native-audio cut</button>
+        {shareNotice ? <div role="status" style={{ color: T.done, fontSize: 12, marginTop: 8 }}>{shareNotice}</div> : null}
+        <section style={{ marginTop: 12, display: 'grid', gap: 12, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 12, padding: 13 }} aria-label="Finish controls"><div><div style={{ color: T.bone, fontSize: 12, fontWeight: 800, marginBottom: 7 }}>Caption style</div><div role="radiogroup" style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>{([['bold-pop', 'Bold pop'], ['clean', 'Clean'], ['karaoke', 'Karaoke']] as const).map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={captionStyle === id} onClick={() => { setCaptionStyle(id); props.onCaptions(true); }} style={{ minHeight: 44, borderRadius: 999, border: `1px solid ${captionStyle === id ? T.live : T.dim}`, background: captionStyle === id ? T.live : T.canvas, color: captionStyle === id ? 'var(--space-text-on-primary)' : T.bone, padding: '8px 13px', fontSize: 12, fontWeight: 800 }}>{label}</button>)}</div></div><label style={{ color: T.muted, fontSize: 12 }}>Music level · {musicLevel}%<input type="range" min={0} max={100} value={musicLevel} onChange={(event) => setMusicLevel(Number(event.target.value))} style={{ width: '100%', accentColor: T.live }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Voice level · {voiceLevel}%<input type="range" min={0} max={140} value={voiceLevel} onChange={(event) => setVoiceLevel(Number(event.target.value))} style={{ width: '100%', accentColor: T.live }} /></label></section>
+        <div style={{ color: T.dim, fontSize: 12, marginTop: 8 }}>
+          <button className="s2v-ghost" disabled={busy || assembling || !ready.length} onClick={props.onNativeCut} style={{ background: 'none', border: 'none', color: T.muted, fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>Plain native-audio cut</button>
         </div>
 
         <OnScreenTextPanel film={film} scenes={scenes} busy={busy || assembling} onChanged={() => { setEditorRevision((value) => value + 1); props.onFinalAssembly({ captions }); }} />
@@ -651,7 +671,7 @@ export function FinalScreen(props: {
         />
 
         {audio?.voice_used === 'openai' && audio.voice_fallback_reason ? (
-          <div role="status" style={{ color: T.muted, fontSize: 11.5, marginTop: 12 }}>Built-in {openAiVoiceLabel(audio.openai_voice || 'alloy')} voice used because ElevenLabs was unavailable after one retry.</div>
+          <div role="status" style={{ color: T.muted, fontSize: 12, marginTop: 12 }}>Built-in {openAiVoiceLabel(audio.openai_voice || 'alloy')} voice used because ElevenLabs was unavailable after one retry.</div>
         ) : null}
 
         <AudioCards

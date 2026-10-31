@@ -1,6 +1,6 @@
 // CineAgent — render execution.
 //
-// One deterministic server-side Remotion pass per ≤9.5-minute chunk; longer
+// One deterministic cloud Remotion pass per ≤3-minute chunk; longer
 // cuts render as multiple chunks that are concatenated with the platform's
 // ffmpeg stitch endpoint. durationInFrames always comes from the SAME frame
 // math the composition itself uses, so the submitted length and the rendered
@@ -31,7 +31,9 @@ export async function renderCut(
     let url = '';
     for (let attempt = 0; attempt < 2; attempt += 1) {
       onProgress({ chunk: chunk.index + 1, chunks: chunks.length, status: attempt ? 'resubmitting' : 'submitting' });
-      const operationId = await submitRender(MOTION_RUNTIME_TSX, chunk.renderPlan, frames);
+      const operationId = await submitRender(MOTION_RUNTIME_TSX, chunk.renderPlan, frames, (status) => {
+        onProgress({ chunk: chunk.index + 1, chunks: chunks.length, status: status === 'submitting' ? 'submitting · $0.05 cloud render' : status });
+      });
       try {
         url = await pollRender(operationId, (status) => {
           onProgress({ chunk: chunk.index + 1, chunks: chunks.length, status });

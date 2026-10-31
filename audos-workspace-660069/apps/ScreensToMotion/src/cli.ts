@@ -15,7 +15,7 @@
  *   runFixtureRender({ urlA, urlB, token })         — T1: fixture plan → mp4
  */
 import { poll } from '../../../lib/poll';
-import { readRender, submitRender as submitRemotionRender } from '../../../lib/render/remotion';
+import { readRender, submitRender as submitRemotionRender } from '../../../lib/render/cloudRender';
 import { buildCompositionSource } from './render/composition';
 import { FIXTURE_PLAN, FIXTURE_ANALYSES, fixtureImages } from './render/fixturePlan';
 import { buildMixFixture, verifyMixFixture, type MixFixtureInput, type MixVerification } from './render/mixFixture';

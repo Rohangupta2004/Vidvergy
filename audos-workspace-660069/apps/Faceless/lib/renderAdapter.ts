@@ -32,7 +32,7 @@ import {
   type ResolvedAsset,
   type TransitionType,
 } from '../types/editorial';
-import { poll, PollTimeoutError } from '../../../lib/poll';
+import { renderToMp4 } from '../../../lib/render/cloudRender';
 import { callHook } from './platform';
 
 /**
@@ -505,12 +505,9 @@ export const HYPERFRAMES_SERVICE = 'platform-render-service';
 export class HyperFramesAdapter implements RenderAdapter {
   readonly id = 'hyperframes';
 
-  private pollMs: number;
-
   private maxWaitMs: number;
 
-  constructor(options: { pollMs?: number; maxWaitMs?: number } = {}) {
-    this.pollMs = options.pollMs ?? 6000;
+  constructor(options: { maxWaitMs?: number } = {}) {
     this.maxWaitMs = options.maxWaitMs ?? 14 * 60 * 1000;
   }
 
@@ -521,84 +518,35 @@ export class HyperFramesAdapter implements RenderAdapter {
     onProgress?: (note: string) => void,
     onNotice?: (message: string, tone?: 'info' | 'warn') => void,
   ): Promise<{ mp4Url: string; frames: FrameRef[] }> {
+    void onNotice;
     if (!motionPlan.shots.length) {
       throw new FacelessError('The motion plan has no shots to render.', 'render', 'empty_plan');
     }
 
-    const submitted = await callHook<{ operationId?: string; status?: string; error?: string }>(
-      'faceless-render',
-      {
-        op: 'submit',
+    const portrait = Boolean(motionPlan.canvas && motionPlan.canvas.height > motionPlan.canvas.width);
+    let mp4Url = '';
+    try {
+      const result = await renderToMp4({
         compositionTsx: FACELESS_COMPOSITION_TSX,
         props: buildCompositionProps(motionPlan, narrationUrl),
         durationInFrames: Math.max(30, Math.round(motionPlan.durationInFrames)),
-      },
-      'render',
-    );
-
-    const operationId = String(submitted.operationId || '');
-    if (!operationId) {
-      throw new FacelessError(
-        'The render service accepted the request but returned no operation id.',
-        'render',
-        'no_operation',
-      );
-    }
-    onProgress?.('Render queued on the HyperFrames service…');
-
-    type RenderStatus = { status?: string; videoUrl?: string; error?: string; progress?: number };
-    let status: RenderStatus;
-    try {
-      status = await poll(
-        () => callHook<RenderStatus>('faceless-render', { op: 'status', operationId }, 'render'),
-        {
-          interval: this.pollMs,
-          timeout: this.maxWaitMs,
-          tolerateErrors: 6,
-          until: (value) => ['complete', 'completed', 'failed'].includes(String(value.status || '').toLowerCase()),
-          onTick: (value) => {
-            if (typeof value.progress === 'number') onProgress?.(`Rendering — ${Math.round(value.progress)}%`);
-          },
+        aspect: portrait ? '9:16' : '16:9',
+      }, {
+        queueTimeoutMs: this.maxWaitMs,
+        onStatus: (phase, detail) => {
+          if (phase === 'queued') onProgress?.(detail || 'Queued behind the active cloud render…');
+          else if (phase === 'submitting') onProgress?.('Submitting the $0.05 cloud render…');
+          else if (phase === 'rendering') onProgress?.('Rendering on the cloud service…');
+          else if (phase === 'finishing') onProgress?.('Preparing the 1080×1920 portrait master…');
         },
-      );
+      });
+      mp4Url = result.videoUrl;
     } catch (error) {
-      if (error instanceof FacelessError) throw error;
       throw new FacelessError(
-        error instanceof PollTimeoutError
-          ? 'The render did not finish inside the adapter\u2019s wait window.'
-          : 'The render status endpoint stopped answering.',
-        'render',
-        error instanceof PollTimeoutError ? 'render_timeout' : 'status_lost',
-      );
-    }
-
-    const terminalStatus = String(status.status || '').toLowerCase();
-    if (terminalStatus === 'failed') {
-      throw new FacelessError(
-        `The render failed: ${status.error || 'no reason given by the render service'}`,
+        error instanceof Error ? error.message : 'The cloud render failed.',
         'render',
         'render_failed',
       );
-    }
-    if (!status.videoUrl) {
-      throw new FacelessError('The render completed without a video URL.', 'render', 'no_output');
-    }
-
-    const reviewUrl = String(status.videoUrl);
-    let mp4Url = reviewUrl;
-    if (motionPlan.canvas && motionPlan.canvas.height > motionPlan.canvas.width) {
-      onProgress?.('Render complete — preparing the 1080×1920 portrait master…');
-      try {
-        const cropped = await callHook<{ videoUrl?: string }>(
-          'faceless-portrait-export',
-          { videoUrl: reviewUrl },
-          'render',
-        );
-        if (!cropped.videoUrl) throw new Error('The portrait crop returned no video URL.');
-        mp4Url = String(cropped.videoUrl);
-      } catch {
-        onNotice?.('Portrait export unavailable — using the 1920×1080 review file instead.', 'warn');
-      }
     }
 
     onProgress?.('Render complete — extracting QA frames…');

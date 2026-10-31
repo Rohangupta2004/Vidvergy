@@ -182,6 +182,7 @@ export async function appendRunSnapshot(
     task: string;
     status: 'running' | 'done' | 'failed';
     resultText?: string;
+    meta?: Record<string, unknown>;
   },
 ): Promise<boolean> {
   try {
@@ -196,7 +197,7 @@ export async function appendRunSnapshot(
       status: run.status,
       result_text: run.resultText || null,
       sequence: nextSeq(),
-      run_data: { status: run.status },
+      run_data: { status: run.status, ...(run.meta || {}) },
     });
     return result?.ok === true;
   } catch (error) {

@@ -1,4 +1,4 @@
-import { COLORS, FONT, GRADIENT, RADIUS, TYPE as TYPOGRAPHY } from '../../components/theme';
+import { COLORS, FONT, GRADIENT, RADIUS, SHADOW, TYPE as TYPOGRAPHY } from '../../components/theme';
 
 /** Compatibility adapter for existing app imports; values originate in components/theme.ts. */
 export const BRAND = {
@@ -42,11 +42,11 @@ export const textareaStyle: Record<string, string | number> = {
 };
 export type ButtonKind = 'primary' | 'secondary' | 'ghost' | 'destructive';
 export function buttonStyle(kind: ButtonKind = 'primary'): Record<string, string | number> {
-  const base = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, padding: '0 16px', borderRadius: RADIUS.sm, fontSize: 14, fontWeight: 600, fontFamily: FONT.body, cursor: 'pointer', transition: 'background 120ms cubic-bezier(.2,0,0,1)', whiteSpace: 'nowrap' } as const;
+  const base = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, padding: '0 16px', borderRadius: RADIUS.sm, fontSize: 14, fontWeight: 600, fontFamily: FONT.body, cursor: 'pointer', transition: 'background 180ms cubic-bezier(.2,0,0,1), border-color 180ms cubic-bezier(.2,0,0,1), color 180ms cubic-bezier(.2,0,0,1), box-shadow 180ms cubic-bezier(.2,0,0,1), transform 180ms cubic-bezier(.2,0,0,1)', whiteSpace: 'nowrap' } as const;
   if (kind === 'secondary') return { ...base, background: COLORS.surface, border: `1px solid ${COLORS.controlBorder}`, color: COLORS.text };
   if (kind === 'ghost') return { ...base, background: 'transparent', border: '1px solid transparent', color: COLORS.secondary };
   if (kind === 'destructive') return { ...base, background: COLORS.dangerBg, border: `1px solid ${COLORS.danger}`, color: COLORS.danger };
-  return { ...base, background: GRADIENT.action, border: '1px solid transparent', color: COLORS.onAccent };
+  return { ...base, background: GRADIENT.action, border: '1px solid transparent', color: COLORS.onAccent, boxShadow: SHADOW.glow };
 }
 export const cardStyle: Record<string, string | number> = { background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADIUS.card, padding: 24 };
 export const shimmerStyle: Record<string, string | number> = { background: `linear-gradient(90deg, ${COLORS.surface} 25%, ${COLORS.hover} 50%, ${COLORS.surface} 75%)`, backgroundSize: '200% 100%', animation: 'shimmer 1.4s linear infinite', borderRadius: RADIUS.badge };

@@ -134,6 +134,8 @@ export interface FilmCharacter extends FilmCharacterProfile {
   source_reference_id?: number | null;
   image_error?: string;
   image_model?: string;
+  image_review_by_eye?: boolean;
+  sheet_required?: boolean;
 }
 
 // ---- Audio layer (narration / music / SFX — Sep 2026 audio completion) ----
@@ -347,6 +349,10 @@ export interface ParsedScript { scenes: ParsedScene[]; globalStyle: string }
 export interface VideoClipSpec {
   /** Only continuous blocks receive the immediately previous final frame. */
   cut_type?: 'continuous' | 'new_shot';
+  /** Non-blocking timing issue shown in amber on the plan card. */
+  speech_warning?: string;
+  prompt_source?: 'opus' | 'plan';
+  storyboard_source?: 'cast-sheets' | 'platform-fallback';
   summary?: string;              // what happens in this clip (director's one-liner)
   visual_goal?: string;          // the visual outcome this clip must land
   negative?: string;             // negative prompt sent with the generation
@@ -1054,17 +1060,17 @@ export function frameSize(aspect: Aspect): { W: number; H: number } {
 // ---------------------------------------------------------------------------
 
 export const T = {
-  canvas: 'var(--vg-bg, #101214)',
-  raised: 'var(--vg-raised, #20242A)',
-  card: 'var(--vg-surface, #171A1E)',
-  input: 'var(--vg-bg, #101214)',
-  line: 'var(--vg-border, #343A43)',
-  bone: 'var(--vg-text, #F4F5F7)',
-  muted: 'var(--vg-secondary, #C4C9D0)',
-  dim: 'var(--vg-muted, #9AA3AF)',
-  live: 'var(--vg-accent, #D9A441)',
-  done: 'var(--vg-success, #72C99A)',
-  fault: 'var(--vg-danger, #F28B8B)',
+  canvas: 'var(--vg-bg)',
+  raised: 'var(--vg-raised)',
+  card: 'var(--vg-surface)',
+  input: 'var(--vg-bg)',
+  line: 'var(--vg-control-border)',
+  bone: 'var(--vg-text)',
+  muted: 'var(--vg-secondary)',
+  dim: 'var(--vg-muted)',
+  live: 'var(--vg-accent)',
+  done: 'var(--vg-success)',
+  fault: 'var(--vg-danger)',
   mono: "ui-monospace, 'SFMono-Regular', Consolas, monospace",
   sans: "'Manrope', 'Segoe UI', sans-serif",
 } as const;

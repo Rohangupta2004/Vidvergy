@@ -27,6 +27,12 @@ import {
   getWorkspaceToken,
   workspaceTokenNow,
 } from '../../../lib/workspace';
+import {
+  finishPortrait,
+  readRender as readCloudRender,
+  submitRender as submitCloudRender,
+  type Aspect,
+} from '../../../lib/render/cloudRender';
 
 // ---------------------------------------------------------------------------
 // Platform plumbing
@@ -495,20 +501,23 @@ export async function submitRender(
   compositionTsx: string,
   props: Record<string, unknown>,
   durationInFrames: number,
+  aspect: Aspect = '16:9',
 ): Promise<RenderProgress> {
-  return callHook('pv-render-composition', {
-    compositionTsx,
-    props,
-    durationInFrames,
-    fps: REEL_FPS,
-    width: REEL_WIDTH,
-    height: REEL_HEIGHT,
-    // A short first budget lands the operation id fast so it can be persisted
-    // before anything else has a chance to go wrong.
-    budgetMs: 20000,
+  const submitted = await submitCloudRender({ compositionTsx, props, durationInFrames, aspect }, {
+    onStatus: (phase, detail) => console.info('[ProductStudio] cloud render:', phase, detail || ''),
   });
+  return { status: 'rendering', operationId: submitted.operationId };
 }
 
-export async function pollRender(operationId: string): Promise<RenderProgress> {
-  return callHook('pv-render-composition', { operationId });
+const portraitResults = new Map<string, string>();
+
+export async function pollRender(operationId: string, aspect: Aspect = '16:9'): Promise<RenderProgress> {
+  const cached = portraitResults.get(operationId);
+  if (cached) return { status: 'complete', operationId, renderUrl: cached };
+  const status = await readCloudRender(operationId);
+  if (status.state === 'failed') return { status: 'failed', operationId, error: status.error || 'The cloud render failed.' };
+  if (status.state !== 'complete' || !status.videoUrl) return { status: 'rendering', operationId };
+  const renderUrl = aspect === '16:9' ? status.videoUrl : await finishPortrait(status.videoUrl);
+  if (aspect !== '16:9') portraitResults.set(operationId, renderUrl);
+  return { status: 'complete', operationId, renderUrl };
 }

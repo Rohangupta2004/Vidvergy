@@ -144,12 +144,12 @@ export const EMPTY_PROJECT: EditorProject = {
 };
 
 export const TRACKS: { id: EditorTrack; label: string; color: string }[] = [
-  { id: 'video', label: 'Video', color: '#4F7DDE' },
-  { id: 'broll', label: 'B-roll', color: '#4FA87A' },
-  { id: 'caption', label: 'Captions', color: '#E5A93A' },
-  { id: 'text', label: 'Text / overlay', color: '#BB83E6' },
-  { id: 'music', label: 'Music', color: '#D9799B' },
-  { id: 'voice', label: 'Voice / SFX', color: '#72B7D6' },
+  { id: 'video', label: 'Video', color: '#4C8DFF' },
+  { id: 'broll', label: 'B-roll', color: '#2BB3A3' },
+  { id: 'caption', label: 'Captions', color: '#F2B544' },
+  { id: 'text', label: 'Text', color: '#E8845C' },
+  { id: 'music', label: 'Music', color: '#6CC17A' },
+  { id: 'voice', label: 'Voice', color: '#9AA6B8' },
 ];
 
 export const BUILTIN_PRESETS: EditorPreset[] = [

@@ -24,9 +24,18 @@ export interface ChatTurn {
   content: string;
 }
 
+export interface VergerQuestionOption {
+  /** Friendly human phrase the user sees and taps. Never a technical identifier. */
+  label: string;
+  /** Internal value mapped behind the label (app id, slug, number). Never shown. */
+  value: string;
+}
+
 export interface VergerQuestion {
+  /** Short title naming what is being decided (e.g. "Video style", "Length"). */
+  label: string;
   prompt: string;
-  options: string[];
+  options: VergerQuestionOption[];
   allowOwn: boolean;
 }
 
@@ -60,6 +69,7 @@ export interface VergerMotionJob {
 }
 
 export interface VergerPlan {
+  thinking: string;
   say: string;
   askQuestion: VergerQuestion | null;
   dispatch: VergerDispatch[];
@@ -99,7 +109,7 @@ async function proxyChat(body: Record<string, unknown>, signal?: AbortSignal): P
 // ------------------------------------------------------------- planner ----
 
 const PLAN_SHAPE =
-  '{"say": string, "askQuestion": {"prompt": string, "options": string[2..4], "allowOwn": true} | null, ' +
+  '{"thinking": string, "say": string, "askQuestion": {"label": string (2-4 word title), "prompt": string, "options": [{"label": string, "value": string}] (0..4), "allowOwn": true} | null, ' +
   '"dispatch": [{"agentType": string, "task": string}], "openStudio": {"appId": string, "brief": string, "estimatedSeconds": number} | null, ' +
   '"visualEdit": {"sceneReference": string, "timestampSec": number | null, "request": string} | null, ' +
   '"motionJob": {"operation":"create"|"analyze"|"plan"|"generate"|"revise"|"render"|"export","projectId":number|null,"brief":string,"mode":"footage-overlay"|"saas-launch"|"explainer"|"brand-film"|"agentic-motion","aspectRatio":"16:9"|"9:16"|"1:1","durationSeconds":number,"estimatedPaidSeconds":number,"sourceUrl":string|null} | null, "done": boolean}';
@@ -110,7 +120,9 @@ function plannerSystemPrompt(queueSummary: string): string {
     '',
     'You are the ORCHESTRATOR of every Vidverge app. You act for the user: analyse their request, infer a strong direction, operate the studios (fill briefs, choose models, plan steps), and execute. The user describes what they want in plain natural language — any mix of English, Hindi or Hinglish — and you do everything you can with the apps. Reply in the user\u2019s own language mix.',
     '',
-    'METHOD, every turn: PLAN → DELEGATE independent specialist work in parallel → EXECUTE the next registered tool → VERIFY its result → REPORT. Delegation is private implementation detail: never name, enumerate or expose specialists, lanes, handoffs, internal reports or agent identities in say, questions or customer-facing briefs. Speak only as Verger, optionally saying “I’m working on it” while work runs. Ask at most ONE question for the entire request, and only when execution is impossible without its answer. Never ask for a fact already present in the conversation, pinned facts, Brand Kit, Library, URL or brief. Never re-ask or paraphrase an earlier question. Diagnose failures from exact errors, classify them, and attempt at most one safe targeted repair; never automatically retry a paid submit.',
+    'METHOD, every turn: PLAN → DELEGATE independent specialist work in parallel → EXECUTE the next registered tool → VERIFY its result → REPORT. Delegation is private implementation detail: never name, enumerate or expose specialists, lanes, handoffs, internal reports or agent identities in say, questions or customer-facing briefs. Speak only as Verger, optionally saying “I’m working on it” while work runs. Before any production, ask one concise grouped intake containing 2–4 questions that cover purpose, length, presenter versus no presenter, UGC preference, and spoken language/accent. Explain each relevant route in one line with its benefit, typical duration, and credit impact. Never ask for a fact already present in the conversation, pinned facts, Brand Kit, Library, URL or brief, and never repeat the intake after it is answered. Diagnose failures from exact errors; never automatically retry a paid submit.',
+    '',
+    'QUESTIONS (hard): a question is plain conversation with a non-technical creator. Every askQuestion carries a short label naming what is being decided (e.g. "Video style", "Length") and, when a choice fits, 2\u20134 tappable options whose label is a friendly human phrase ("Product demo", "Explainer", "Ad / promo") and whose value is the internal id \u2014 the label NEVER contains app ids, slugs, tool or model names, JSON, or internal jargon. The first production turn must group 2–4 concise questions into one intake card. Explain relevant choices plainly: Seedance short clip is one scene up to 30s; Script-to-Video adds cast, continuity and shot-one review for scripts, stories, ads, multi-scene, or >30s; SceneForge is a HeyGen presenter; UGC is a regional ad-ready product demo (15s default); Faceless is narration-first; Motion is SaaS/UI. Include likely credit impact. NEVER ask the user to perform a technical step \u2014 opening an app or full screen, retrying, signing in, checking a console \u2014 you perform every step yourself.',
     '',
     'YOUR CAPABILITY MANIFEST — you know these apps and respect their limits. Never promise anything outside this manifest:',
     capabilityManifestText(),
@@ -123,19 +135,19 @@ function plannerSystemPrompt(queueSummary: string): string {
     '',
     'CREDITS RULE (hard): 1 credit = 1 second of finished video; only generation spends credits. BEFORE any step that will spend credits, state the cost (e.g. "30s · 30 credits") and ask for an explicit yes. In openStudio, estimatedSeconds MUST carry the seconds that step will generate (0 when the step is free, e.g. editing footage, brand setup, drafting).',
     '',
-    `ROUTING: when a new production plan is ready, set openStudio with one registered app id [${openableAppIds().join(', ')}]. For routable ids [${routableAppIds().join(', ')}], provide a complete self-contained brief (goal, audience, script/direction, seconds, ratio, voice/music and model). Treat that existing studio and its durable worker as a Verger tool, not as a tutorial for the user.`,
+    `ROUTING: one-scene 4–30s basic clips use Seedance 2.5; scripts, stories, ads, any multi-scene request, and >30s use Script-to-Video; presenter/talking-head uses SceneForge; SaaS/UI uses Motion; UGC uses UGC Studio; narration-first uses Faceless; existing footage uses Video Enhancer; research uses Ads Studio. When ready, set openStudio with one registered app id [${openableAppIds().join(', ')}]. For routable ids [${routableAppIds().join(', ')}], provide a self-contained brief with goal, audience, verbatim script/dialogue, seconds, ratio, voice/music, one language/accent, and model.`, 
     'SCRIPT-TO-VIDEO HANDOFF: when openStudio.appId is script-to-video, set estimatedSeconds to 0 because the server hook saves a planning-only intake and spends no credits. Include the requested total duration in the brief. Script-to-Video itself shows the exact credit authorization before Start; never ask for generation approval merely to open its review flow.',
     'MODEL PRESERVATION: if the customer names a Script-to-Video picker model, carry that exact model in the self-contained brief. Do not declare it unavailable, substitute another model, or ask approval for a substitute. The studio owns live capability validation and compatible override UI.',
-    'HANDOFF CONTENT: openStudio.brief must contain only clean creative input the studio can show or format: story/idea or verbatim script, duration, aspect, style, model and audio choices. Never include meta-instructions such as planning only, do not spend credits, model unavailable, ask approval, inspect manually, or do not substitute.',
+    'HANDOFF CONTENT: openStudio.brief must contain only clean creative input the studio can show or format: story/idea or verbatim script, duration, aspect, style, model, audio, and one language/accent. Add this identical sentence to every scene direction: “LANGUAGE LOCK: Spoken language: [language]; accent: [accent]; no subtitles or on-screen text in any other language.” Dialogue stays verbatim in quotes. Validate one language across all scenes before handoff. Never include operational meta-instructions.',
     'MOTION ENGINE: for SaaS launch films, speech-aware graphics over existing avatar/footage, coded explainers, cinematic typography, diagrams, or motion-only revisions, set motionJob instead of opening a removed Video Engine app. Start new work with operation create; use plan when the customer asks only for a plan. Set estimatedPaidSeconds to 0 for analysis/planning/coded motion over existing media, and to the actual generated-media seconds when the plan requires paid B-roll. Keep projectId when revising an existing canonical motion project. Never promise native 1:1 export.',
-    'URL-TO-VIDEO (hard): when the request contains an http(s) URL and saved Brand Kit context exists, DO NOT ask a requirements question. Infer defaults: 30 seconds unless specified, 9:16 for social/short-form or 16:9 for site/product launch, and tone/visual identity from Brand Kit. State those assumptions briefly in say and set motionJob in the SAME turn with operation create, mode saas-launch, sourceUrl equal to the supplied URL, and a complete brief combining the URL, objective, duration, ratio and Brand Kit evidence. If another registered studio is clearly superior, open it with the same complete brief instead. Preserve the normal explicit credit confirmation before any paid generation.',
+    'URL-TO-VIDEO (hard): when the request contains an http(s) URL and saved Brand Kit context exists, still complete the one grouped production intake before routing; do not repeat it afterward. Infer defaults: 30 seconds unless specified, 9:16 for social/short-form or 16:9 for site/product launch, and tone/visual identity from Brand Kit. State those assumptions briefly in say and set motionJob in the SAME turn with operation create, mode saas-launch, sourceUrl equal to the supplied URL, and a complete brief combining the URL, objective, duration, ratio and Brand Kit evidence. If another registered studio is clearly superior, open it with the same complete brief instead. Preserve the normal explicit credit confirmation before any paid generation.',
     'TARGETED EDITS: if the user asks to change a saved video, scene or timestamp, set visualEdit (and do NOT open a studio). Copy only the requested change into request, identify the affected scene, and include timestampSec when stated. Verger opens the shared Library editor, where manual and agent edits call the same versioned verger-edit-video hook with autosave, undo and expected-version locking. For an existing canonical motion project, use motionJob revise instead.',
     '',
     `LIVE QUEUE (what is currently running for this user): ${queueSummary || 'nothing right now'}.`,
     '',
     'OUTPUT CONTRACT (hard): reply with EXACTLY ONE JSON object, no markdown fences, no text outside it, matching:',
     PLAN_SHAPE,
-    '"say" is what you tell the user this turn (short, warm, director-like — not salesy). "dispatch" is [] when no sub-agents are needed. "done" is true only when the work for this request is fully handed off or finished.',
+    '"thinking" is 2–4 short plain sentences explaining the route and known inputs. "say" is what you tell the user this turn (short, warm, director-like — not salesy). "dispatch" is [] when no sub-agents are needed. "done" is true only when the work for this request is fully handed off or finished.',
   ].join('\n');
 }
 
@@ -148,13 +160,21 @@ function extractJson(text: string): any {
 }
 
 function normalizePlan(raw: any): VergerPlan {
+  const thinking = typeof raw?.thinking === 'string' ? raw.thinking.trim() : '';
   const say = typeof raw?.say === 'string' ? raw.say.trim() : '';
   let askQuestion: VergerQuestion | null = null;
   if (raw?.askQuestion && typeof raw.askQuestion === 'object' && typeof raw.askQuestion.prompt === 'string') {
-    const options = Array.isArray(raw.askQuestion.options)
-      ? raw.askQuestion.options.filter((o: unknown) => typeof o === 'string' && o.trim()).slice(0, 4)
-      : [];
-    askQuestion = { prompt: raw.askQuestion.prompt.trim(), options, allowOwn: true };
+    const options = (Array.isArray(raw.askQuestion.options) ? raw.askQuestion.options : [])
+      .map((o: unknown): VergerQuestionOption | null => {
+        if (typeof o === 'string' && o.trim()) return { label: o.trim(), value: o.trim() };
+        if (o && typeof o === 'object' && typeof (o as any).label === 'string' && (o as any).label.trim()) {
+          return { label: String((o as any).label).trim(), value: String((o as any).value ?? (o as any).label).trim() };
+        }
+        return null;
+      })
+      .filter((o: VergerQuestionOption | null): o is VergerQuestionOption => o !== null)
+      .slice(0, 4);
+    askQuestion = { label: typeof raw.askQuestion.label === 'string' ? raw.askQuestion.label.trim() : '', prompt: raw.askQuestion.prompt.trim(), options, allowOwn: true };
   }
   const dispatch: VergerDispatch[] = Array.isArray(raw?.dispatch)
     ? raw.dispatch
@@ -207,7 +227,7 @@ function normalizePlan(raw: any): VergerPlan {
   if (!say && !askQuestion && !dispatch.length && !openStudio && !visualEdit && !motionJob) {
     throw new PlannerError('The model returned an empty plan.');
   }
-  return { say, askQuestion, dispatch, openStudio, visualEdit, motionJob, done: raw?.done === true };
+  return { thinking, say, askQuestion, dispatch, openStudio, visualEdit, motionJob, done: raw?.done === true };
 }
 
 /**

@@ -14,7 +14,7 @@
  * ones. State persists to WorkspaceDB after every step — reopening a film
  * resumes in-flight renders. Screens: Library · Create · Board · Final · Legacy.
  */
-import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Component, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AlertCircle, ArrowLeft, Download } from 'lucide-react';
 import { Film, FilmCharacter, FilmScene, StoredReference, T, db, generateBackdropImage, newSceneKey, referenceSlug, uploadDataUrl } from './api';
@@ -22,14 +22,14 @@ import {
   AssemblyProgress, allScenesDone, assembleReadyFilm,
   autoPostProduce, autoProduce, changeMusicDirection, changeNarrationVoice,
   changeVoiceSource, continueWithoutContinuityFrame, createAndSegmentFilm, createManualScriptFilm,
-  generateAllReadyScenes, generateScene, prepareFilmAudioStage, prepareScene,
+  generateAllReadyScenes, generateCharacterSheet, generateScene, prepareFilmAudioStage, prepareScene,
   readyToAutoAssemble, regenerateNarration, regenerateScenePrompt, retryFinalFrame,
   regenerateSfx, retryAudioLayer, retryScene, runAudioLayerStep,
   runFinalAssembly, setStyleLock, skipAudioLayer, skipScene, stopFinalAssembly,
 } from './pipeline/orchestrator';
-import { audioReady, generateCharacterDialogueFallback } from './pipeline/audio';
+import { audioReady, generateCharacterDialogueFallback, narrationReady } from './pipeline/audio';
 import { SEEDANCE_2_5, VideoModelService, resolveVideoModel } from './pipeline/videoModelService';
-import { askOpusJson, characterPortraitBrief } from './pipeline/opus';
+import { askOpusJson } from './pipeline/opus';
 import {
   DEFAULT_OPENAI_VOICE, elevenLabsOffered, loadOpenAiVoicePref, loadVoiceSourcePref,
   saveOpenAiVoicePref, saveVoiceSourcePref, subscribeElevenLabs,
@@ -63,8 +63,17 @@ import CampaignSetLauncher from './CampaignSetLauncher';
 import { STUDIO_CHROME_CSS, StudioStepper, StudioToast } from './StudioChrome';
 import { saveVideoToHistory } from '../../lib/videoHistory';
 import { workspaceFetch } from '../../lib/workspace';
+import { checkPickerAvailability, pickerDisplayModels } from './modelPicker';
+import { bridgeRequest, createControllerBus, useAppController, type AppController, type FieldSpec } from '../../lib/appBridge';
 
 type Screen = 'library' | 'create' | 'board' | 'final' | 'legacy';
+
+let storyboardPlanWrite: Promise<void> = Promise.resolve();
+function serializeStoryboardPlanWrite(task: () => Promise<void>): Promise<void> {
+  const next = storyboardPlanWrite.then(task, task);
+  storyboardPlanWrite = next.catch(() => undefined);
+  return next;
+}
 
 function friendlyAppError(value: unknown): string {
   return friendlyErrorMessage(value);
@@ -178,7 +187,11 @@ const APP_CSS = `
     .s2v-board-panel { overflow: visible !important; padding: 16px 16px 112px !important; }
     .s2v-cast-grid { grid-template-columns: minmax(0, 1fr) !important; }
     .s2v-app textarea { font-size: 16px !important; }
+    .s2v-v4-script, .s2v-v4-script section, .s2v-v4-script article, .s2v-v4-script details { min-width: 0; max-width: 100%; }
+    .s2v-v4-script input, .s2v-v4-script textarea, .s2v-v4-script select, .s2v-v4-script button { max-width: 100%; }
   }
+  .s2v-app { overflow-x: hidden; }
+  .s2v-app button:focus-visible, .s2v-app input:focus-visible, .s2v-app textarea:focus-visible, .s2v-app select:focus-visible, .s2v-app summary:focus-visible { outline: 2px solid var(--space-focus-ring); outline-offset: 3px; }
   @media (prefers-reduced-motion: reduce) {
     .s2v-app *, .s2v-app *::before, .s2v-app *::after { transition-duration: 0.01ms !important; }
     .s2v-app .animate-spin, .s2v-app .lb-shimmer { animation: none !important; }
@@ -193,7 +206,7 @@ const CANVAS_GRADIENT = 'radial-gradient(ellipse 72% 48% at 50% -10%, color-mix(
 const CTA_GRADIENT = 'var(--vg-gradient-action)';
 
 /** Text that sits on CTA_GRADIENT and on the solid accent. */
-const ON_ACCENT = 'var(--vg-on-accent, #1B1308)';
+const ON_ACCENT = 'var(--vg-on-accent, var(--space-text-on-primary))';
 
 function ScriptToVideoApp() {
   const [screen, setScreen] = useState<Screen>('library');
@@ -229,6 +242,9 @@ function ScriptToVideoApp() {
   const [dialogueAudioSceneId, setDialogueAudioSceneId] = useState<number | null>(null);
   const [jobsOpen, setJobsOpen] = useState(false);
   const [adminDiagnoses, setAdminDiagnoses] = useState<any[]>([]);
+  const [manualMode, setManualMode] = useState(false);
+  const bridgeBus = useRef(createControllerBus()).current;
+  const bridgeValues = useRef<Record<string, unknown>>({ length: 30, shape: '16:9', model: 'auto' });
 
   // The orchestrator works on MUTABLE engine objects (the state machine folds
   // continuity from clip to clip); React state mirrors them through the hooks.
@@ -580,38 +596,57 @@ function ScriptToVideoApp() {
   // ------- flow handlers -------
 
   async function startUnattendedProduction(targetFilm: Film, targetScenes: FilmScene[], reviewBeforeAssembly: boolean, includeCaptions: boolean) {
-    const access = await callHook<{ approved?: boolean; founderExempt?: boolean; error?: string }>('stv-scene-generate', { op: 'access-check' });
+    const access = await callHook<{ approved?: boolean; workspacePays?: boolean; founderExempt?: boolean; error?: string }>('stv-scene-generate', { op: 'access-check' });
     if (!access?.approved) throw new Error(access?.error || 'This account is not approved for founder-funded video generation.');
     const styleLock = String(targetFilm.plan?.custom_visual_direction || targetFilm.plan?.visual_style || targetFilm.plan?.style_direction || 'cinematic');
-    for (const scene of [...targetScenes].sort((a, b) => a.idx - b.idx)) {
-      if (String(scene.prompt || '').trim()) continue;
+    const preparePrompt = async (scene: FilmScene) => {
+      if (String(scene.prompt || '').trim()) return;
       const spec = { ...(scene.spec as any) };
       const duration = Math.round(Number(scene.duration_s) || 8);
       const beats = Array.isArray(spec.timed_beats) && spec.timed_beats.length ? spec.timed_beats : [{ start_s: 0, end_s: duration, action: spec.visual_goal || spec.summary || scene.script_segment }];
       const dialogue = scene.dialogue?.line ? String(scene.dialogue.line) : '';
-      const written = await askOpusJson<{ prompt: string }>({
-        system: `You are Claude Opus 5 writing one saved Gemini Omni block prompt. Reply only with {"prompt":string}. Preserve every supplied timecode. Put the exact dialogue line once inside its own beat and nowhere else; do not paraphrase or split it. Include concrete action, camera and sound. Later blocks must repeat the supplied STYLE LOCK. Do not add a separate Dialogue/Narration block; the browser appends that deterministically.`,
-        user: `BLOCK ${scene.idx + 1}, ${duration}s, ${spec.cut_type || (scene.idx ? 'continuous' : 'new_shot')}\nSTYLE LOCK: ${styleLock}\nSCRIPT: ${scene.script_segment}\nBEATS: ${JSON.stringify(beats)}\nEXACT SPOKEN LINE: ${dialogue || 'none'}\nCAST: ${JSON.stringify((targetFilm.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => ({ name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
-        maxTokens: 6000,
-        effort: 'medium',
-      });
-      let prompt = String(written?.prompt || '').trim();
-      const exactBlock = dialogue ? `${scene.dialogue?.kind === 'narrator' ? 'Narration' : 'Dialogue'} — exact words: "${dialogue}"` : '';
-      const count = dialogue ? prompt.split(dialogue).length - 1 : 0;
-      if (dialogue && count !== 1) {
-        prompt = beats.map((beat: any, index: number) => `${beat.start_s}-${beat.end_s}s: ${beat.action || ''}${beat.camera ? ` Camera: ${beat.camera}.` : ''}${beat.dialogue ? ` Exact speech: "${beat.dialogue}"` : index === 0 && dialogue ? ` Exact speech: "${dialogue}"` : ''}`).join('\n');
+      const dialogueBeat = Math.max(0, beats.findIndex((beat: any) => beat.dialogue && dialogue && String(beat.dialogue).includes(dialogue)));
+      const skeleton = beats.map((beat: any, index: number) => `${beat.start_s}-${beat.end_s}s: ${beat.action || spec.visual_goal || spec.summary || scene.script_segment}${beat.camera ? ` Camera: ${beat.camera}.` : ''}${dialogue && index === dialogueBeat ? ` Exact speech: "${dialogue}"` : ''}`).join('\n');
+      let creative = '';
+      let promptSource: 'opus' | 'plan' = 'opus';
+      try {
+        const written = await askOpusJson<{ prompt: string }>({
+          system: `You are Claude Opus 5 writing one saved video-block prompt. Reply only with {"prompt":string}. Add concrete visual and camera detail without repeating timecodes or dialogue. Do not add a Dialogue/Narration block.`,
+          user: `BLOCK ${scene.idx + 1}, ${duration}s, ${spec.cut_type || (scene.idx ? 'continuous' : 'new_shot')}\nSTYLE LOCK: ${styleLock}\nSCRIPT: ${scene.script_segment}\nBEATS: ${JSON.stringify(beats)}\nCAST: ${JSON.stringify((targetFilm.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => ({ name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+          maxTokens: 6000, effort: 'medium',
+        });
+        creative = String(written?.prompt || '').trim();
+      } catch (error: any) {
+        promptSource = 'plan';
+        creative = `Use the approved plan exactly. ${spec.visual_goal || spec.summary || scene.script_segment}`;
       }
-      if (exactBlock) prompt = `${prompt}\n${exactBlock}`;
-      if (scene.idx > 0 && !prompt.includes('STYLE LOCK:')) prompt = `STYLE LOCK: ${styleLock}\n${prompt}`;
-      await db.updateScene(scene.id, { prompt, spec: { ...spec, prompt_version: Number(spec.prompt_version || 0) + 1 } });
-      scene.prompt = prompt;
-      scene.spec = { ...spec, prompt_version: Number(spec.prompt_version || 0) + 1 };
-    }
+      if (dialogue) creative = creative.split(dialogue).join('').replace(/\s{2,}/g, ' ').trim();
+      const exactBlock = dialogue ? `${scene.dialogue?.kind === 'narrator' ? 'Narration' : 'Dialogue'} — exact words: "${dialogue}"` : '';
+      let prompt = `${skeleton}\nCREATIVE DIRECTION: ${creative}`.trim();
+      if (exactBlock) prompt += `\n${exactBlock}`;
+      if (scene.idx > 0) prompt = `STYLE LOCK: ${styleLock}\n${prompt}`;
+      const nextSpec = { ...spec, prompt_source: promptSource, prompt_version: Number(spec.prompt_version || 0) + 1 };
+      await db.updateScene(scene.id, { prompt, spec: nextSpec });
+      scene.prompt = prompt; scene.spec = nextSpec;
+    };
+    const promptScenes = [...targetScenes].sort((a, b) => a.idx - b.idx);
+    for (let index = 0; index < promptScenes.length; index += 3) await Promise.all(promptScenes.slice(index, index + 3).map(preparePrompt));
     if (!audioReady(targetFilm.audio)) {
-      setNote('Preparing every narration line and music bed in this signed-in browser before Start…');
-      await prepareFilmAudioStage(targetFilm, targetScenes, hooks, { voiceSource, openaiVoice });
+      setNote('Preparing narration and optional sound before Start…');
+      try {
+        await prepareFilmAudioStage(targetFilm, targetScenes, hooks, { voiceSource, openaiVoice });
+        const audioPrepared = { status: 'plan_ready' as const, machine_state: 'PREPARING_SCENE' as const, error: null, stage_note: 'Prompts and required audio are ready. Starting video production…' };
+        await db.updateFilm(targetFilm.id, audioPrepared);
+        Object.assign(targetFilm, audioPrepared);
+      } catch (audioError: any) {
+        if (targetFilm.plan?.narration_enabled === true && !narrationReady(targetFilm.audio)) throw audioError;
+        const plan = { ...targetFilm.plan!, audio_warning: String(audioError?.message || audioError), audio_optional_retry: true } as any;
+        const recovery = { plan, status: 'plan_ready' as const, machine_state: 'PREPARING_SCENE' as const, error: null, stage_note: 'Optional music or sound effects need Retry, but video production can start.' };
+        await db.updateFilm(targetFilm.id, recovery);
+        Object.assign(targetFilm, recovery);
+      }
     }
-    const newlyCharged = await preauthorizeBackgroundScenes(targetFilm, targetScenes);
+    const newlyCharged = access?.workspacePays === true ? [] : await preauthorizeBackgroundScenes(targetFilm, targetScenes);
     try {
       const result = await callHook<{ success?: boolean; status?: string; error?: string }>('stv-scene-generate', {
         op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: targetFilm.plan?.execution_mode !== 'automatic',
@@ -648,11 +683,13 @@ function ScriptToVideoApp() {
         const storyboardPlan = { ...createdFilm.plan, storyboard_requested: true } as typeof createdFilm.plan;
         await db.updateFilm(createdFilm.id, { plan: storyboardPlan });
         createdFilm = { ...createdFilm, plan: storyboardPlan };
-        for (const plannedScene of res.scenes) await generateStoryboardFrame(createdFilm, plannedScene);
+        const orderedStoryboards = [...res.scenes].sort((a, b) => a.idx - b.idx);
+        if (orderedStoryboards[0]) await generateStoryboardFrame(createdFilm, orderedStoryboards[0]);
+        for (let index = 1; index < orderedStoryboards.length; index += 3) await Promise.all(orderedStoryboards.slice(index, index + 3).map((scene) => generateStoryboardFrame(createdFilm, scene)));
       }
       if (params.executionMode === 'automatic' && createdFilm.plan) {
-        const cast = (createdFilm.character_refs || []).map((character) => ({ ...character, approved: Boolean(character.url) }));
-        const missing = cast.filter((character) => !character.url);
+        const cast = (createdFilm.character_refs || []).map((character) => ({ ...character, approved: character.sheet_required === false || Boolean(character.url) }));
+        const missing = cast.filter((character) => character.sheet_required !== false && !character.url);
         const plan = {
           ...createdFilm.plan,
           cast_reviewed: missing.length === 0,
@@ -696,7 +733,7 @@ function ScriptToVideoApp() {
     }
   }
 
-  async function persistCast(next: FilmCharacter[], reviewed = next.length > 0 && next.every((character) => character.approved && character.url)) {
+  async function persistCast(next: FilmCharacter[], reviewed = next.length > 0 && next.every((character) => character.sheet_required === false || (character.approved && character.url))) {
     const f = engineFilm.current;
     if (!f?.plan) return;
     const characters = next.map(({ url: _url, approved: _approved, source: _source, source_reference_id: _sourceReferenceId, image_error: _imageError, image_model: _imageModel, ...profile }) => profile);
@@ -749,8 +786,9 @@ function ScriptToVideoApp() {
     if (!f || !character) return;
     await run(async () => {
       try {
-        const url = await generateBackdropImage(characterPortraitBrief(character, String(f.plan?.visual_style || f.plan?.style_direction || '')), '1:1', quality);
-        const next = (f.character_refs || []).map((item) => item.id === id ? { ...item, url, approved: false, source: 'generated' as const, image_error: undefined, image_model: quality === 'premium' ? 'premium image route' : 'gemini-3.1-flash-image' } : item);
+        const generated = await generateCharacterSheet(character, String(f.plan?.visual_style || f.plan?.style_direction || ''));
+        const url = generated.url;
+        const next = (f.character_refs || []).map((item) => item.id === id ? { ...item, url, approved: false, source: 'generated' as const, image_error: generated.issues.join('; ') || undefined, image_review_by_eye: generated.reviewByEye, image_model: generated.imageModel } : item);
         await db.addAsset({ film_id: f.id, kind: 'character', name: `${character.name} character sheet`, description: character.appearance.slice(0, 200), url, tags: [quality, 'cast-sheet'] });
         await persistCast(next, false);
       } catch (caught: any) {
@@ -764,15 +802,16 @@ function ScriptToVideoApp() {
 
   async function handleGenerateMissingCast() {
     const f = engineFilm.current;
-    const missing = (f?.character_refs || []).filter((character) => !character.url);
+    const missing = (f?.character_refs || []).filter((character) => character.sheet_required !== false && !character.url);
     if (!f || !missing.length) return;
     await run(async () => {
       let current = [...(f.character_refs || [])];
       const failures: string[] = [];
       for (const character of missing) {
         try {
-          const url = await generateBackdropImage(characterPortraitBrief(character, String(f.plan?.visual_style || f.plan?.style_direction || '')), '1:1', 'draft');
-          current = current.map((item) => item.id === character.id ? { ...item, url, approved: false, source: 'generated' as const, image_error: undefined, image_model: 'gemini-3.1-flash-image' } : item);
+          const generated = await generateCharacterSheet(character, String(f.plan?.visual_style || f.plan?.style_direction || ''));
+          const url = generated.url;
+          current = current.map((item) => item.id === character.id ? { ...item, url, approved: false, source: 'generated' as const, image_error: generated.issues.join('; ') || undefined, image_review_by_eye: generated.reviewByEye, image_model: generated.imageModel } : item);
           await db.addAsset({ film_id: f.id, kind: 'character', name: `${character.name} character sheet`, description: character.appearance.slice(0, 200), url, tags: ['draft', 'cast-sheet'] });
         } catch (caught: any) {
           const message = friendlyAppError(caught?.message || caught);
@@ -885,7 +924,7 @@ function ScriptToVideoApp() {
     const scale = Math.max(targetW / image.naturalWidth, targetH / image.naturalHeight);
     const drawW = image.naturalWidth * scale; const drawH = image.naturalHeight * scale;
     context.drawImage(image, (targetW - drawW) / 2, (targetH - drawH) / 2, drawW, drawH);
-    return uploadDataUrl(canvas.toDataURL('image/png'), fileName);
+    return uploadDataUrl(canvas.toDataURL('image/jpeg', 0.86), fileName.replace(/\.png$/i, '.jpg'));
   }
 
   async function generateStoryboardFrame(f: Film, target: FilmScene) {
@@ -895,44 +934,49 @@ function ScriptToVideoApp() {
     Object.assign(target, { spec });
     try {
       const visibleSheets = (f.character_refs || []).filter((character) => (spec.characters || []).includes(character.id) && character.url);
-      const written = await askOpusJson<{ caption: string; prompt: string }>({
-        system: `You write one production keyframe prompt. Reply only with JSON: {"caption":string,"prompt":string}. The image prompt states every visible character's locked identity and frame position, one physical action, camera/lens, motivated light, setting and end pose. Preserve the approved visual style. No text, captions, logos, interfaces, watermarks or extra people.`,
-        user: `FILM: ${f.title || 'Untitled film'}\nSTYLE: ${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}\nBLOCK ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify(visibleSheets.map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
-        maxTokens: 6000,
-        effort: 'medium',
-      });
-      let storyboardUrl = '';
-      if (visibleSheets.length) {
-        const response = await workspaceFetch('/api/generate/image-to-image', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'gpt-image-1.5', prompt: written.prompt,
-            images: visibleSheets.slice(0, 10).map((character) => ({ data: character.url, label: `PERSON IDENTITY: ${character.name}; face, hair and wardrobe likeness only` })),
-            referenceLimit: Math.min(10, visibleSheets.length), inputFidelity: 'high', quality: 'medium',
-            size: f.aspect_ratio === '9:16' ? '1024x1536' : f.aspect_ratio === '1:1' ? '1024x1024' : '1536x1024',
-            fallbackPolicy: 'none', returnBase64: true,
-          }),
+      const fallbackPrompt = `${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}; ${spec.visual_goal || spec.summary || target.script_segment}; exact ${f.aspect_ratio || '16:9'} composition; no text, captions, logos, interfaces, watermarks or extra people.`;
+      let written: { caption: string; prompt: string };
+      try {
+        written = await askOpusJson<{ caption: string; prompt: string }>({
+          system: `You write one production keyframe prompt. Reply only with JSON: {"caption":string,"prompt":string}. State every visible character's locked identity and frame position, one physical action, camera/lens, motivated light, setting and end pose. Preserve the approved visual style. No text, captions, logos, interfaces, watermarks or extra people.`,
+          user: `FILM: ${f.title || 'Untitled film'}\nSTYLE: ${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}\nBLOCK ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify(visibleSheets.map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+          maxTokens: 6000, effort: 'medium',
         });
-        const data = await response.json().catch(() => null);
-        if (!response.ok || !data?.imageBase64) throw new Error(String(data?.error?.message || data?.error || `Storyboard image edit failed (HTTP ${response.status}).`));
-        storyboardUrl = await cropStoryboardToAspect(String(data.imageBase64), String(data.mimeType || 'image/png'), String(f.aspect_ratio || '16:9'), `s2v-storyboard-${f.id}-${target.idx + 1}.png`);
-      } else {
-        storyboardUrl = await generateBackdropImage(written.prompt, (f.aspect_ratio || '16:9') as any, 'draft');
+      } catch (promptError: any) {
+        written = { caption: String(spec.summary || spec.visual_goal || `Block ${target.idx + 1}`).slice(0, 180), prompt: fallbackPrompt };
       }
-      const nextSpec = { ...spec, storyboard_url: storyboardUrl, storyboard_caption: written.caption, storyboard_only: true, storyboard_status: 'ready', storyboard_error: null, storyboard_approved: false };
+      let storyboardUrl = '';
+      let storyboardSource: 'cast-sheets' | 'platform-fallback' = 'platform-fallback';
+      if (visibleSheets.length) {
+        try {
+          const response = await workspaceFetch('/api/generate/image-to-image', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'gpt-image-1.5', prompt: written.prompt, images: visibleSheets.slice(0, 10).map((character) => ({ data: character.url, label: `PERSON IDENTITY: ${character.name}; face, hair and wardrobe likeness only` })), referenceLimit: Math.min(10, visibleSheets.length), inputFidelity: 'high', quality: 'medium', size: f.aspect_ratio === '9:16' ? '1024x1536' : f.aspect_ratio === '1:1' ? '1024x1024' : '1536x1024', fallbackPolicy: 'none', returnBase64: true }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok || !data?.imageBase64) throw new Error(String(data?.error?.message || data?.error || `Storyboard image edit failed (HTTP ${response.status}).`));
+          storyboardUrl = await cropStoryboardToAspect(String(data.imageBase64), String(data.mimeType || 'image/jpeg'), String(f.aspect_ratio || '16:9'), `s2v-storyboard-${f.id}-${target.idx + 1}.jpg`);
+          storyboardSource = 'cast-sheets';
+        } catch {
+          storyboardUrl = await generateBackdropImage(fallbackPrompt, (f.aspect_ratio || '16:9') as any, 'draft');
+        }
+      } else storyboardUrl = await generateBackdropImage(written.prompt || fallbackPrompt, (f.aspect_ratio || '16:9') as any, 'draft');
+      const nextSpec = { ...spec, storyboard_url: storyboardUrl, storyboard_caption: written.caption, storyboard_only: false, storyboard_source: storyboardSource, storyboard_status: 'ready', storyboard_error: storyboardSource === 'platform-fallback' && visibleSheets.length ? 'Cast-sheet edit failed; this frame used the platform image fallback. Review identity before approval.' : null, storyboard_approved: false };
       await Promise.all([
         db.updateScene(target.id, { spec: nextSpec }),
-        db.addAsset({ film_id: f.id, kind: 'storyboard', name: `Scene ${target.idx + 1} storyboard`, description: String(spec.visual_goal || spec.summary || '').slice(0, 200), url: storyboardUrl, tags: ['storyboard-only', 'human-review'] }),
+        db.addAsset({ film_id: f.id, kind: 'storyboard', name: `Block ${target.idx + 1} storyboard`, description: String(spec.visual_goal || spec.summary || '').slice(0, 200), url: storyboardUrl, tags: ['storyboard', 'shot-keyframe', storyboardSource] }),
       ]);
       Object.assign(target, { spec: nextSpec });
-      const plan = { ...f.plan, scenes: (f.plan.scenes || []).map((item) => item.scene_key === target.scene_key ? { ...item, spec: nextSpec } : item), storyboard_requested: true, storyboard_only_asset_ids: Array.from(new Set([...(f.plan.storyboard_only_asset_ids || []), storyboardUrl])) } as typeof f.plan;
-      await db.updateFilm(f.id, { plan });
-      Object.assign(f, { plan });
+      await serializeStoryboardPlanWrite(async () => {
+        const plan = { ...f.plan!, scenes: (f.plan!.scenes || []).map((item) => item.scene_key === target.scene_key ? { ...item, spec: nextSpec } : item), storyboard_requested: true, storyboard_only_asset_ids: Array.from(new Set([...(f.plan!.storyboard_only_asset_ids || []), storyboardUrl])) } as typeof f.plan;
+        await db.updateFilm(f.id, { plan });
+        Object.assign(f, { plan });
+      });
     } catch (caught: any) {
       const failedSpec = { ...spec, storyboard_status: 'error', storyboard_error: String(caught?.message || caught), storyboard_approved: false };
       await db.updateScene(target.id, { spec: failedSpec });
       Object.assign(target, { spec: failedSpec });
-      throw new Error(`Storyboard scene ${target.idx + 1} failed: ${String(caught?.message || caught)} Retry that frame before production.`);
+      setNote(`Block ${target.idx + 1} storyboard needs Retry, but the plan can still start.`);
     }
   }
 
@@ -1097,11 +1141,13 @@ function ScriptToVideoApp() {
         reuseCharacterRefs: original.character_refs || [],
       }, hooks);
       const omniTitle = `${original.title || result.film.title || 'Untitled film'} — Omni version`;
-      const castReviewed = (result.film.character_refs || []).every((character) => character.approved && character.url);
+      const castReviewed = (result.film.character_refs || []).every((character) => character.sheet_required === false || (character.approved && character.url));
       const omniPlan = { ...result.film.plan!, title: omniTitle, cast_reviewed: castReviewed };
       await db.updateFilm(result.film.id, { title: omniTitle, plan: omniPlan, status: 'plan_ready', stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' });
       const omniFilm = { ...result.film, title: omniTitle, plan: omniPlan, status: 'plan_ready' as const, stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' };
-      for (const scene of result.scenes) await generateStoryboardFrame(omniFilm, scene);
+      const omniStoryboards = [...result.scenes].sort((a, b) => a.idx - b.idx);
+      if (omniStoryboards[0]) await generateStoryboardFrame(omniFilm, omniStoryboards[0]);
+      for (let index = 1; index < omniStoryboards.length; index += 3) await Promise.all(omniStoryboards.slice(index, index + 3).map((scene) => generateStoryboardFrame(omniFilm, scene)));
       const freshScenes = await db.listScenes(omniFilm.id);
       adopt(omniFilm, freshScenes);
       setScreen('board');
@@ -1114,7 +1160,7 @@ function ScriptToVideoApp() {
     if (!f || running.current) return;
     await run(async () => {
       const cast = Array.isArray(f.character_refs) ? f.character_refs : [];
-      if (f.plan?.cast_reviewed !== true || cast.some((character) => !character.approved || !character.url)) {
+      if (f.plan?.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && (!character.approved || !character.url))) {
         throw new Error(cast.length
           ? 'Approve every retained character sheet before Start. Regenerate or upload any missing sheet first.'
           : 'Confirm that this script needs no cast, or add a character, before Start.');
@@ -1567,7 +1613,7 @@ function ScriptToVideoApp() {
 
       if (proposal.tool === 'start_render') {
         const cast = Array.isArray(f.character_refs) ? f.character_refs : [];
-        if (f.plan.cast_reviewed !== true || cast.some((character) => !character.approved || !character.url)) throw new Error(cast.length ? 'Approve every retained character sheet before Start.' : 'Confirm that this script needs no cast before Start.');
+        if (f.plan.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && (!character.approved || !character.url))) throw new Error(cast.length ? 'Approve every retained character sheet before Start.' : 'Confirm that this script needs no cast before Start.');
         if (requiresSignedInVideoTab(f, list)) {
           setNote('Starting signed-in production — keep this tab open while the selected provider submits and polls…');
           armAuto(f.id, true); writeAutoPref(f.id, true);
@@ -1727,6 +1773,84 @@ function ScriptToVideoApp() {
     }
   }
 
+  const bridgeController = useMemo<AppController>(() => {
+    const fields: FieldSpec[] = [
+      { key: 'mode', label: 'Start', type: 'choice', required: true, options: async () => [{ value: 'idea', label: 'I have an idea' }, { value: 'script', label: 'I have my script' }] },
+      { key: 'idea', label: 'Idea', type: 'longtext', required: false, defaultFrom: 'request' },
+      { key: 'script', label: 'Script', type: 'longtext', required: false, defaultFrom: 'request' },
+      { key: 'keepWords', label: 'Keep my words', type: 'toggle', required: false },
+      { key: 'language', label: 'Language', type: 'choice', required: false },
+      { key: 'length', label: 'Length', type: 'number', required: true, defaultFrom: 'request' },
+      { key: 'shape', label: 'Shape', type: 'choice', required: true, options: async () => [{ value: '9:16', label: '9:16' }, { value: '16:9', label: '16:9' }, { value: '1:1', label: '1:1' }] },
+      { key: 'sound', label: 'Sound', type: 'choice', required: true },
+      { key: 'look', label: 'Look', type: 'text', required: false, defaultFrom: 'brandKit' },
+      { key: 'model', label: 'Model', type: 'model', required: true, options: async () => { const availability = await checkPickerAvailability(); return pickerDisplayModels().filter((model) => availability[model.id]?.ready === true).map((model) => ({ value: model.id, label: model.label })); } },
+      { key: 'cast', label: 'Cast', type: 'actor', required: false },
+      { key: 'voices', label: 'Voices', type: 'voice', required: false },
+      { key: 'references', label: 'References', type: 'file', required: false },
+    ];
+    const actions = [
+      { key: 'writeScript', label: 'Write script', paid: false }, { key: 'pickApproach', label: 'Pick approach', paid: false }, { key: 'useScript', label: 'Use script', paid: false },
+      { key: 'makePlan', label: 'Make plan', paid: false }, { key: 'approveCast', label: 'Approve cast', paid: false }, { key: 'editShot', label: 'Edit shot', paid: false },
+      { key: 'continueAfterLookCheck', label: 'Continue', paid: false }, { key: 'changeLook', label: 'Change look', paid: false }, { key: 'pauseAfterShot', label: 'Pause after this shot', paid: false },
+      { key: 'start', label: 'Start', paid: true, estimate: async () => ({ credits: Math.max(1, Math.round(Number(engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30))) }) },
+      { key: 'rerenderShot', label: 'Re-render this shot', paid: true, estimate: async () => ({ credits: Math.max(1, Math.round(Number(engineScenes.current.find((scene) => scene.status === 'failed' || scene.status === 'completed')?.duration_s || 8))) }) },
+    ];
+    return {
+      appId: 'script-to-video',
+      schema: () => ({ fields, actions }),
+      getState: () => ({ values: { ...bridgeValues.current, length: engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30, shape: engineFilm.current?.aspect_ratio || bridgeValues.current.shape || '16:9', model: engineFilm.current?.video_model || bridgeValues.current.model || 'auto' }, screen, busy: running.current || busy, can: { makePlan: { ok: screen === 'create' }, approveCast: { ok: screen === 'board' }, start: { ok: screen === 'board' && Boolean(engineFilm.current) }, rerenderShot: { ok: Boolean(engineScenes.current.some((scene) => scene.status === 'failed' || scene.status === 'completed')) } } }),
+      fill: async (values, opts) => {
+        bridgeValues.current = { ...bridgeValues.current, ...values };
+        if (screen !== 'create') {
+          await new Promise<void>((resolve, reject) => {
+            const timer = window.setTimeout(() => { window.removeEventListener('verger:s2v-create-ready', ready); reject(new Error('The creation screen did not become ready.')); }, 15_000);
+            const ready = () => { window.clearTimeout(timer); window.removeEventListener('verger:s2v-create-ready', ready); resolve(); };
+            window.addEventListener('verger:s2v-create-ready', ready);
+            setScreen('create');
+          });
+        }
+        return bridgeRequest('script-to-video', 'fill', { values, animate: opts?.animate !== false });
+      },
+      run: async (action, opts) => {
+        try {
+          if (action === 'makePlan' || action === 'writeScript' || action === 'pickApproach' || action === 'useScript') { const result = await bridgeRequest('script-to-video', action === 'makePlan' ? 'makePlan' : 'state'); return { ok: true, result }; }
+          if (action === 'approveCast') { const f = engineFilm.current; if (!f) throw new Error('Make the plan first.'); const cast = Array.isArray(f.character_refs) ? f.character_refs : []; if (!cast.length) await handleConfirmEmptyCast(); else for (const character of cast) { if (character.url && !character.image_error) await handleUpdateCharacter(character.id, { approved: true }); } return { ok: true }; }
+          if (action === 'start') { const estimate = Math.max(1, Math.round(Number(engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30))); if (opts?.approvedCredits !== estimate) return { ok: false, error: `Start requires approval for exactly ${estimate} credits.` }; await handleStartBackground(); return { ok: true }; }
+          if (action === 'rerenderShot') { const target = engineScenes.current.find((scene) => scene.status === 'failed' || scene.status === 'completed'); if (!target) throw new Error('No shot is available to re-render.'); const estimate = Math.max(1, Math.round(Number(target.duration_s || 8))); if (opts?.approvedCredits !== estimate) return { ok: false, error: `Re-render requires approval for exactly ${estimate} credits.` }; await handleRedo(target); return { ok: true }; }
+          if (action === 'pauseAfterShot') { await handlePauseBackground(true); return { ok: true }; }
+          if (action === 'continueAfterLookCheck') { await handlePauseBackground(false); return { ok: true }; }
+          if (action === 'changeLook') { setManualMode(true); return { ok: true }; }
+          return { ok: false, error: `${action} is not available on this screen.` };
+        } catch (caught: any) { const message = friendlyAppError(caught); bridgeBus.emit({ type: 'error', message }); return { ok: false, error: message }; }
+      },
+      subscribe: bridgeBus.subscribe,
+    };
+  }, [screen, busy, bridgeBus]);
+  useAppController(bridgeController);
+
+  useEffect(() => { bridgeBus.emit({ type: 'screen', screen }); }, [screen, bridgeBus]);
+  useEffect(() => {
+    const onField = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      bridgeValues.current = { ...bridgeValues.current, [String(detail.key || '')]: detail.value };
+      bridgeBus.emit({ type: 'field_changed', key: String(detail.key || ''), value: detail.value, by: detail.by === 'verger' ? 'verger' : 'user' });
+    };
+    window.addEventListener('verger:s2v-field-change', onField);
+    return () => window.removeEventListener('verger:s2v-field-change', onField);
+  }, [bridgeBus]);
+  useEffect(() => {
+    const ordered = [...scenes].sort((a, b) => a.idx - b.idx);
+    ordered.forEach((scene) => bridgeBus.emit({ type: 'shot', index: scene.idx, status: scene.status === 'completed' ? 'done' : scene.status === 'failed' ? 'failed' : scene.status === 'generating' ? 'rendering' : 'waiting', videoUrl: scene.asset_url || undefined, error: scene.error || undefined }));
+    if (ordered.length) bridgeBus.emit({ type: 'progress', label: film?.stage_note || 'Making your video', done: ordered.filter((scene) => scene.status === 'completed' || scene.status === 'skipped').length, total: ordered.length });
+    const first = ordered[0];
+    if (first?.status === 'completed' && first.asset_url && film?.plan?.orchestration?.paused) bridgeBus.emit({ type: 'gate', kind: 'look_check', videoUrl: first.asset_url });
+  }, [scenes, film?.stage_note, film?.plan?.orchestration?.paused, bridgeBus]);
+  useEffect(() => {
+    if (!film?.final_video_url) return;
+    bridgeBus.emit({ type: 'finished', videoId: String(film.id), url: film.final_video_url, width: film.aspect_ratio === '9:16' ? 1080 : 1920, height: film.aspect_ratio === '9:16' ? 1920 : 1080, durationS: Math.round(Number(film.duration_s || film.plan?.target_duration_sec || 0)) });
+  }, [film?.id, film?.final_video_url, bridgeBus]);
+
   // ------- render -------
 
   const showBack = screen !== 'library';
@@ -1759,7 +1883,8 @@ function ScriptToVideoApp() {
           showIcon={false}
           actions={(
             <>
-              {scenes.length ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Jobs · {scenes.length}</button> : null}
+              <div role="group" aria-label="Script-to-Video detail level" style={{ display: 'inline-flex', padding: 3, borderRadius: 999, border: `1px solid ${T.dim}`, background: T.canvas }}><button type="button" aria-pressed={!manualMode} onClick={() => setManualMode(false)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: !manualMode ? T.live : 'transparent', color: !manualMode ? 'var(--space-text-on-primary)' : T.muted, fontSize: 12, fontWeight: 800 }}>Simple</button><button type="button" aria-pressed={manualMode} onClick={() => setManualMode(true)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: manualMode ? T.live : 'transparent', color: manualMode ? 'var(--space-text-on-primary)' : T.muted, fontSize: 12, fontWeight: 800 }}>More detail</button></div>
+              {scenes.length ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Blocks · {scenes.length}</button> : null}
               {showBack ? (
                 <button className="s2v-ghost" onClick={() => { setScreen('library'); setLegacyOpen(null); setAuto(false); autoRef.current = false; setJobsOpen(false); loadLibrary(); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${T.dim}`, color: T.muted, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', padding: '7px 11px', borderRadius: 9 }}>
                   <ArrowLeft size={14} /> Library
@@ -1772,7 +1897,7 @@ function ScriptToVideoApp() {
 
       <StudioStepper screen={screen} film={film} scenes={scenes} />
 
-      {jobsOpen && scenes.length ? <section aria-label="Film jobs" style={{ flexShrink: 0, maxHeight: 320, overflowY: 'auto', background: T.raised, borderBottom: `1px solid ${T.line}`, padding: '10px 20px' }}><div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 6 }}>{[...scenes].sort((a, b) => a.idx - b.idx).map((scene) => <div key={scene.id} style={{ minHeight: 44, display: 'grid', gridTemplateColumns: '72px 110px minmax(0,1fr)', gap: 8, alignItems: 'center', color: T.muted, fontSize: 11.5 }}><span style={{ color: T.bone, fontFamily: T.mono }}>Scene {scene.idx + 1}</span><span style={{ color: scene.status === 'failed' ? T.fault : scene.status === 'completed' ? T.done : T.live, textTransform: 'capitalize' }}>{String(scene.status || 'waiting').replace(/_/g, ' ')}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{scene.error ? friendlyAppError(scene.error) : scene.asset_url ? 'Clip saved.' : scene.prompt ? 'Prompt ready.' : 'Waiting for its turn.'}</span></div>)}{adminDiagnoses.length ? <details style={{ marginTop: 6, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', color: T.live, cursor: 'pointer', fontSize: 11.5, fontWeight: 800 }}>Founder diagnostics across users · {adminDiagnoses.length}</summary><div style={{ display: 'grid', gap: 7 }}>{adminDiagnoses.map((item) => <div key={item.id} style={{ background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 8, padding: 9, color: T.muted, fontSize: 10.5, lineHeight: 1.5, overflowWrap: 'anywhere' }}><b style={{ color: T.bone }}>{item.diagnosis?.category || 'unknown'} · {item.provider_model || 'unknown model'}</b><br />User/job: {item.user_session_id || 'unknown'} / {item.operation_id || item.id}<br />Raw provider error: {item.diagnosis?.raw_provider_error || 'not recorded'}<br />Next debug step: {item.diagnosis?.next_debug_step || 'Inspect provider request evidence.'}</div>)}</div></details> : null}</div></section> : null}
+      {jobsOpen && scenes.length ? <section aria-label="Film jobs" style={{ flexShrink: 0, maxHeight: 320, overflowY: 'auto', background: T.raised, borderBottom: `1px solid ${T.line}`, padding: '10px 20px' }}><div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 6 }}>{[...scenes].sort((a, b) => a.idx - b.idx).map((scene) => <div key={scene.id} style={{ minHeight: 44, display: 'grid', gridTemplateColumns: '72px 110px minmax(0,1fr)', gap: 8, alignItems: 'center', color: T.muted, fontSize: 12 }}><span style={{ color: T.bone, fontFamily: T.mono }}>Scene {scene.idx + 1}</span><span style={{ color: scene.status === 'failed' ? T.fault : scene.status === 'completed' ? T.done : T.live, textTransform: 'capitalize' }}>{String(scene.status || 'waiting').replace(/_/g, ' ')}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{scene.error ? friendlyAppError(scene.error) : scene.asset_url ? 'Clip saved.' : scene.prompt ? 'Prompt ready.' : 'Waiting for its turn.'}</span></div>)}{adminDiagnoses.length ? <details style={{ marginTop: 6, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', color: T.live, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>Founder diagnostics across users · {adminDiagnoses.length}</summary><div style={{ display: 'grid', gap: 7 }}>{adminDiagnoses.map((item) => <div key={item.id} style={{ background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 8, padding: 9, color: T.muted, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}><b style={{ color: T.bone }}>{item.diagnosis?.category || 'unknown'} · {item.provider_model || 'unknown model'}</b><br />User/job: {item.user_session_id || 'unknown'} / {item.operation_id || item.id}<br />Raw provider error: {item.diagnosis?.raw_provider_error || 'not recorded'}<br />Next debug step: {item.diagnosis?.next_debug_step || 'Inspect provider request evidence.'}</div>)}</div></details> : null}</div></section> : null}
 
       {error ? (
         <div className="s2v-error-banner" role="alert">
@@ -1798,7 +1923,7 @@ function ScriptToVideoApp() {
         />
       ) : null}
 
-      {screen === 'create' ? <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}><CreateScreen initialText={quickText} initialIntake={handoffIntake || undefined} initialShotUrl={handoffAttachment?.type.startsWith('image/') ? handoffAttachment.url : (typeof handoffIntake?.brandKit?.logoUrl === 'string' ? handoffIntake.brandKit.logoUrl : undefined)} initialShotName={handoffAttachment?.name || (handoffIntake ? `${String(handoffIntake.brandKit?.name || 'Brand')} logo` : undefined)} busy={busy} onSubmit={handleCreate} /></Suspense> : null}
+      {screen === 'create' ? <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}><CreateScreen initialText={quickText} initialIntake={handoffIntake || undefined} initialShotUrl={handoffAttachment?.type.startsWith('image/') ? handoffAttachment.url : (typeof handoffIntake?.brandKit?.logoUrl === 'string' ? handoffIntake.brandKit.logoUrl : undefined)} initialShotName={handoffAttachment?.name || (handoffIntake ? `${String(handoffIntake.brandKit?.name || 'Brand')} logo` : undefined)} busy={busy} manualMode={manualMode} onSubmit={handleCreate} /></Suspense> : null}
 
       {screen === 'board' && film ? (
         <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the production board"><span /></div>}><RenderRoom
@@ -1846,6 +1971,7 @@ function ScriptToVideoApp() {
           onAddPlanScene={handleAddPlanScene}
           onDeletePlanScene={handleDeletePlanScene}
           onAudioProbe={handleAudioProbe}
+          manualMode={manualMode}
         /></Suspense>
       ) : null}
 
@@ -1923,7 +2049,7 @@ function LegacyViewer({ legacy: item }: { legacy: LegacyFilm }) {
         <div style={{ color: T.muted, fontSize: 12.5, marginTop: 4 }}>A project from the previous Script-to-Video pipeline — still fully accessible.</div>
         {finalUrl ? (
           <div style={{ marginTop: 16 }}>
-            <ProbedVideo src={finalUrl} capabilityKnown={false} videoProps={{ controls: true, style: { maxWidth: '100%', maxHeight: 440, borderRadius: 12, background: '#000' } }} />
+            <ProbedVideo src={finalUrl} capabilityKnown={false} videoProps={{ controls: true, style: { maxWidth: '100%', maxHeight: 440, borderRadius: 12, background: 'var(--space-surface-bg)' } }} />
             <div style={{ marginTop: 12 }}>
               <a className="s2v-lift" href={finalUrl} download target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: CTA_GRADIENT, color: ON_ACCENT, borderRadius: 10, padding: '11px 22px', fontSize: 13.5, fontWeight: 700, textDecoration: 'none', boxShadow: '0 0 24px color-mix(in srgb, var(--space-brand-primary-500) 28%, transparent)', transition: 'transform 0.18s ease, box-shadow 0.18s ease' }}>
                 <Download size={14} /> Download MP4
@@ -1950,8 +2076,8 @@ class S2VBoundary extends Component<{ children?: ReactNode }, { error: Error | n
     if (this.state.error) {
       return (
         <div style={{ width: '100%', height: '100%', minHeight: 480, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: CANVAS_GRADIENT, fontFamily: T.sans }}>
-          <div style={{ maxWidth: 460, textAlign: 'center', background: T.raised, border: `1px solid ${T.dim}`, borderRadius: 16, padding: '32px 28px', boxShadow: '0 24px 60px rgba(0,0,0,0.48)' }}>
-            <div style={{ width: 52, height: 52, borderRadius: 14, background: 'rgba(153,27,27,0.1)', border: '1px solid rgba(153,27,27,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+          <div style={{ maxWidth: 460, textAlign: 'center', background: T.raised, border: `1px solid ${T.dim}`, borderRadius: 16, padding: '32px 28px', boxShadow: '0 24px 60px color-mix(in srgb, var(--vg-text) 24%, transparent)' }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, background: 'var(--vg-danger-bg)', border: '1px solid var(--vg-danger)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
               <AlertCircle size={24} color={T.fault} />
             </div>
             <div style={{ color: T.bone, fontSize: 16.5, fontWeight: 700, letterSpacing: -0.2, marginBottom: 8 }}>This screen hit a snag</div>

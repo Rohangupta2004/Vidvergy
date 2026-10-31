@@ -23,6 +23,24 @@ export type ForgeStatus =
   | 'done'
   | 'failed';
 
+/**
+ * Browser-owned avatar render handoff. The platform's HeyGen credential proxy
+ * only accepts same-origin browser calls with X-Workspace-DB-Token (a server
+ * function gets 401 "Same-origin request required"), so the durable pipeline
+ * pauses at the avatar step and publishes this task; the signed-in tab submits
+ * and polls the render, then reports back via op `complete_avatar_step`.
+ * It never contains any credential.
+ */
+export interface ForgeBrowserTask {
+  step: 'avatar';
+  video_id: string | null;
+  expected_duration_sec: number | null;
+  transparent_requested: boolean;
+  bg_color: string;
+  requested_at: string | null;
+  payload: { video_inputs: any[]; dimension: { width: number; height: number } } | null;
+}
+
 export interface ForgeChunk {
   i: number;
   has_audio: boolean;
@@ -87,6 +105,7 @@ export interface ForgeProject {
   charged_seconds: number | null;
   failed_step?: string | null;
   review_step?: string | null;
+  browser_task?: ForgeBrowserTask | null;
   approved_steps?: Record<string, { approved_at: string }>;
   portrait_preview_url?: string | null;
   created_at: string;

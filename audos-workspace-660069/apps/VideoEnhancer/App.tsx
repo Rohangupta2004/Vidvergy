@@ -21,12 +21,12 @@ class EditorBoundary extends Component<{ children?: ReactNode }, { error: Error 
   render() {
     if (this.state.error) {
       return (
-        <div style={{ minHeight: 520, display: 'grid', placeItems: 'center', padding: 24, background: '#0D0E10', color: '#F6F2E9' }}>
-          <div style={{ width: 'min(440px,100%)', padding: 24, border: '1px solid #393E47', borderRadius: 16, background: '#17191D', textAlign: 'center' }}>
+        <div style={{ minHeight: 520, display: 'grid', placeItems: 'center', padding: 24, background: '#0e0f11', color: '#f2f3f5', fontFamily: "Manrope, 'Segoe UI', system-ui, sans-serif" }}> 
+          <div style={{ width: 'min(440px,100%)', padding: 24, border: '1px solid #2a2e34', borderRadius: 16, background: '#15171a', textAlign: 'center' }}> 
             <AlertCircle size={30} color="#FF9A9A" />
-            <h2 style={{ fontFamily: 'Space Grotesk, sans-serif' }}>The editor needs to restart</h2>
+            <h2>The editor needs to restart</h2>
             <p style={{ color: '#B7BBC4', lineHeight: 1.6 }}>Your autosaved project and server jobs are safe.</p>
-            <button type="button" onClick={this.reset} style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 10, background: 'linear-gradient(115deg,#E69A24,#F8C85C,#FFDF8F)', color: '#1B1308', fontWeight: 800, cursor: 'pointer' }}>
+            <button type="button" onClick={this.reset} style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 10, background: '#f2b544', color: '#21180a', fontWeight: 800, cursor: 'pointer' }}>
               <RefreshCw size={15} style={{ marginRight: 7, verticalAlign: 'middle' }} /> Reopen editor
             </button>
           </div>

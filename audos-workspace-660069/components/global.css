@@ -1,7 +1,25 @@
-/* Vidverge Design System v3.0 reference stylesheet.
- * Runtime injection lives in components/ui/GlobalStyles.tsx; all values come
- * from components/theme.ts and are exposed as --vg-* variables.
+/* Vidverge Design System v4.0 reference stylesheet.
+ * Runtime injection lives in components/ui/GlobalStyles.tsx; this token block
+ * documents the same canonical premium palette for every app and shell state.
  */
+:root,.vv-dark,.vv-app-shell{
+  --vg-bg:#0A0A0B;--vg-surface:#111114;--vg-raised:#17171B;--vg-hover:#1E1E23;
+  --vg-border:rgba(255,255,255,.08);--vg-control-border:rgba(255,255,255,.16);
+  --vg-text:#F4F1EA;--vg-secondary:#A8A39A;--vg-muted:#7C776F;
+  --vg-accent:#D4A64A;--vg-accent-hover:#F6D98B;--vg-accent-pressed:#B07D2A;
+  --vg-accent-soft:rgba(212,166,74,.12);--vg-on-accent:#0A0A0B;--vg-focus:#F6D98B;
+  --vg-success:#7FC59B;--vg-success-bg:rgba(127,197,155,.12);
+  --vg-warning:#D7B66B;--vg-warning-bg:rgba(215,182,107,.12);
+  --vg-danger:#E98585;--vg-danger-bg:rgba(233,133,133,.12);
+  --vg-info:#94ACC8;--vg-info-bg:rgba(148,172,200,.12);
+  --vg-gradient-brand:linear-gradient(110deg,#B07D2A 0%,#D4A64A 46%,#F6D98B 100%);
+  --vg-gradient-action:linear-gradient(115deg,#F6D98B 0%,#D4A64A 52%,#B07D2A 100%);
+  --vg-gradient-action-hover:linear-gradient(115deg,#FBE7AE 0%,#E0B85F 52%,#C28D35 100%);
+  --vg-gradient-surface:linear-gradient(145deg,#1A1A1F 0%,#141417 54%,#101012 100%);
+  --vg-gradient-selected:linear-gradient(100deg,rgba(212,166,74,.16),rgba(212,166,74,.04));
+  --vg-gradient-ambient:radial-gradient(ellipse at 85% 0%,rgba(212,166,74,.13),transparent 56%);
+  --vg-glow:0 0 0 1px rgba(246,217,139,.14),0 0 28px rgba(212,166,74,.25);
+}
 .vv-app-shell,.vv-app-shell *{box-sizing:border-box}
 .vv-dark,.vv-app-shell{background:var(--vg-bg);color:var(--vg-text);font-family:'Manrope','Segoe UI',sans-serif;font-synthesis:none;color-scheme:dark}
 .vv-dark h1,.vv-dark h2,.vv-dark h3,.vv-dark h4,.vv-app-shell h1,.vv-app-shell h2,.vv-app-shell h3,.vv-app-shell h4{font-family:'Space Grotesk','Segoe UI',sans-serif;font-synthesis:none}
@@ -12,10 +30,11 @@
 .vv-dark input,.vv-dark select{min-height:44px;border-radius:10px}
 .vv-app-shell textarea{min-height:120px;border-radius:10px}
 .vv-dark input::placeholder,.vv-dark textarea::placeholder{color:var(--vg-muted)}
-.vv-dark :where(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--vg-focus);outline-offset:3px;box-shadow:none}
-.vg-primary-action{min-height:44px;border:0;border-radius:10px;background:var(--vg-gradient-action);color:var(--vg-on-accent);font-weight:600}
-.vg-primary-action:hover:not(:disabled){background:var(--vg-gradient-action-hover)}
-.vg-primary-action:active:not(:disabled){background:var(--vg-accent-pressed);transform:translateY(1px)}
+.vv-dark :where(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--vg-focus);outline-offset:3px;box-shadow:0 0 0 4px rgba(212,166,74,.16),0 0 24px rgba(212,166,74,.2)}
+.vv-dark button,.vv-dark a[role=button]{transition:background-color 180ms cubic-bezier(.2,0,0,1),background-image 180ms cubic-bezier(.2,0,0,1),border-color 180ms cubic-bezier(.2,0,0,1),color 180ms cubic-bezier(.2,0,0,1),box-shadow 180ms cubic-bezier(.2,0,0,1),transform 180ms cubic-bezier(.2,0,0,1)}
+.vg-primary-action{min-height:44px;border:0;border-radius:10px;background:var(--vg-gradient-action);color:var(--vg-on-accent);font-weight:600;box-shadow:0 8px 28px rgba(212,166,74,.18)}
+.vg-primary-action:hover:not(:disabled){background:var(--vg-gradient-action-hover);box-shadow:0 10px 34px rgba(212,166,74,.25)}
+.vg-primary-action:active:not(:disabled){background:var(--vg-accent-pressed);box-shadow:0 4px 16px rgba(212,166,74,.16);transform:translateY(1px)}
 .vg-primary-action:disabled{background:var(--vg-raised);color:var(--vg-muted)}
 .vg-panel{background:var(--vg-surface);border:1px solid var(--vg-border);border-radius:12px;padding:24px}
 .vg-featured-panel{background:var(--vg-gradient-surface);border:1px solid var(--vg-border);border-radius:12px;padding:24px}

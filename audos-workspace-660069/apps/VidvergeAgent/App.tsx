@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { withBrandContext } from '../../components/BrandContextLayer';
 import VergerChat from './components/VergerChat';
-import { openVidvergeStudio, saveVidvergeHandoff, type VidvergeAttachment } from '../../lib/vidvergeHandoff';
+import AppBridgeHost from './components/AppBridgeHost';
+import { saveVidvergeHandoff, type VidvergeAttachment } from '../../lib/vidvergeHandoff';
+import { friendlyAppName, mountEmbeddedApp, openApp as openBridgedApp, resolveAppId, type AppController, type AppView } from '../../lib/appBridge';
 import { listVideoHistory } from '../../lib/videoHistory';
 import { callHook, workspaceFetch, WORKSPACE_ID } from '../../lib/workspace';
 import { TARGET_APPS, type QueueJob } from './types';
@@ -10,14 +12,6 @@ import { motionEngine } from '../../lib/motionEngineSdk';
 
 const ROUTED_JOBS_KEY = 'verger_routed_jobs_v2';
 const MAX_ROUTED = 8;
-
-const VERGER_FEATURES = [
-  { title: 'Website → video', detail: 'Paste a URL; Verger uses Brand Kit context and routes the production.' },
-  { title: 'Script & concept', detail: 'Turn an idea or script into the right scene plan and studio handoff.' },
-  { title: 'Presenter & faceless', detail: 'Coordinate SceneForge or Faceless from one conversation.' },
-  { title: 'Edit saved videos', detail: 'Plan targeted, versioned edits without overwriting active work.' },
-  { title: 'Visible execution', detail: 'Follow planning, specialist steps, approvals and verified results.' },
-] as const;
 
 interface RoutedJob {
   id: string;
@@ -45,7 +39,7 @@ function saveRoutedJobs(jobs: RoutedJob[]): void {
 }
 
 function appName(appId: string): string {
-  return TARGET_APPS.find((app) => app.id === appId)?.name || appCapability(appId)?.name || appId;
+  return TARGET_APPS.find((app) => app.id === appId)?.name || appCapability(appId)?.name || friendlyAppName(appId);
 }
 
 /** Hidden operational context for Verger. It is never rendered as an agent or specialist surface. */
@@ -143,32 +137,28 @@ function VergerApp() {
     };
   }, [refreshJobs]);
 
-  const handleRouteStudio = useCallback(async (route: { appId: string; brief: string }, attachment: VidvergeAttachment | null) => {
-    let actionMessage = '';
-    if (route.appId === 'script-to-video') {
-      const suppliedScript = /(?:^|\n)\s*(?:scene\s+\d+|script\s*:|screenplay\s*:)/i.test(route.brief);
-      const result = await callHook<any>('s2v-agent-handoff', {
-        op: 'create_handoff',
-        brief: route.brief,
-        script: suppliedScript ? route.brief : '',
-        entry_type: suppliedScript ? 'script' : 'idea',
-        duration_seconds: Math.max(2, Math.min(600, Number(route.brief.match(/\b(\d{1,3})\s*(?:seconds?|secs?|s)\b/i)?.[1]) || 30)),
-        aspect_ratio: /\b9:16\b|\bvertical\b|\bportrait\b/i.test(route.brief) ? '9:16' : /\b1:1\b|\bsquare\b/i.test(route.brief) ? '1:1' : '16:9',
-        model: 'auto',
-        audio_policy: /\bsilent\b|\bno audio\b/i.test(route.brief) ? 'fully-silent' : /\bnarrat/i.test(route.brief) ? 'narration-voiceover' : 'no-narration',
-        storyboard_requested: /\bstoryboard\b/i.test(route.brief),
-        source: 'verger',
-      });
-      actionMessage = String(result?.message || 'Your Script-to-Video brief is saved.');
-    } else {
-      saveVidvergeHandoff({ appId: route.appId, prompt: route.brief, attachment });
-      actionMessage = `Your brief is ready in ${appName(route.appId)}.`;
+  /**
+   * Open a studio ATTACHED to the chat — docked beside it (or hidden for
+   * Autopilot), never a separate popup and never a full-screen requirement.
+   * When the studio exposes no live controller, the brief still reaches it
+   * through the shared handoff and a fresh inline mount; the customer is
+   * never asked to do anything.
+   */
+  const handleRouteStudio = useCallback(async (route: { appId: string; brief: string; view?: AppView }, attachment: VidvergeAttachment | null): Promise<{ message: string; controller: AppController | null }> => {
+    const appId = resolveAppId(route.appId) || 'script-to-video';
+    const view: 'side' | 'hidden' = route.view === 'hidden' ? 'hidden' : 'side';
+    let controller: AppController | null = null;
+    try {
+      controller = await openBridgedApp(appId, view);
+    } catch {
+      saveVidvergeHandoff({ appId, prompt: route.brief, attachment });
+      mountEmbeddedApp(appId, view, true);
+      controller = null;
     }
-
     const entry: RoutedJob = {
       id: `route-${Date.now()}`,
-      appId: route.appId,
-      name: route.brief.replace(/\s+/g, ' ').slice(0, 64) || `Brief for ${appName(route.appId)}`,
+      appId,
+      name: route.brief.replace(/\s+/g, ' ').slice(0, 64) || `Brief for ${appName(appId)}`,
       at: Date.now(),
     };
     setRouted((previous) => {
@@ -176,9 +166,13 @@ function VergerApp() {
       saveRoutedJobs(next);
       return next;
     });
-    openVidvergeStudio(route.appId);
     window.setTimeout(() => void refreshJobs().catch(() => undefined), 400);
-    return { message: actionMessage };
+    return {
+      message: controller
+        ? `${appName(appId)} is connected to this chat.`
+        : `${appName(appId)} is open beside this chat with your brief already handed over.`,
+      controller,
+    };
   }, [refreshJobs]);
 
   const handleUploadAttachment = useCallback(async (file: File): Promise<VidvergeAttachment> => {
@@ -202,50 +196,11 @@ function VergerApp() {
         <div className="absolute bottom-[-46%] right-[-18%] h-[64%] w-[58%] rounded-full bg-[color-mix(in_srgb,var(--vg-bronze)_10%,transparent)] blur-[120px]" />
       </div>
       <main className="relative z-10 flex min-h-0 flex-1 justify-center overflow-hidden px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:pb-6 sm:pt-5">
-        <div className="flex h-full min-h-0 w-full max-w-[1240px] gap-4">
-          <aside className="hidden w-[248px] shrink-0 flex-col overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--vg-accent)_18%,var(--vg-border))] bg-[color-mix(in_srgb,var(--vg-surface)_90%,transparent)] p-4 backdrop-blur-xl lg:flex">
-            <div className="border-b border-[var(--vg-border)] pb-4">
-              <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[var(--vg-accent)]">Agent features</p>
-              <h2 className="mt-1 text-[17px] font-semibold tracking-tight text-[var(--vg-text)]" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>One brief, coordinated end to end</h2>
-              <p className="mt-2 text-[11px] leading-relaxed text-[var(--vg-muted)]">Verger is the single assistant operating every production workflow.</p>
-            </div>
-            <ul className="mt-3 space-y-2 overflow-y-auto">
-              {VERGER_FEATURES.map((feature, index) => (
-                <li key={feature.title} className="rounded-xl border border-[var(--vg-border)] bg-[var(--vg-raised)] p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[color-mix(in_srgb,var(--vg-accent)_14%,transparent)] text-[10px] font-bold text-[var(--vg-accent)]">{index + 1}</span>
-                    <span className="text-[12px] font-semibold text-[var(--vg-text)]">{feature.title}</span>
-                  </div>
-                  <p className="mt-1.5 text-[10px] leading-relaxed text-[var(--vg-secondary)]">{feature.detail}</p>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-4 border-t border-[var(--vg-border)] pt-3">
-              <p className="text-[10px] font-bold uppercase tracking-[.16em] text-[var(--vg-muted)]">Saved videos</p>
-              <div className="mt-2 space-y-1.5">
-                {jobs.filter((job) => job.state === 'completed').slice(0, 3).map((job) => (
-                  <button
-                    key={job.id}
-                    type="button"
-                    onClick={() => { window.location.hash = 'library'; }}
-                    className="block w-full truncate rounded-lg border border-[var(--vg-border)] bg-[var(--vg-raised)] px-2.5 py-2 text-left text-[10px] text-[var(--vg-secondary)] transition-colors hover:border-[var(--vg-control-border)] hover:text-[var(--vg-text)]"
-                    title={job.name}
-                  >
-                    {job.name}
-                  </button>
-                ))}
-                {!jobs.some((job) => job.state === 'completed') && (
-                  <p className="text-[10px] leading-relaxed text-[var(--vg-muted)]">Finished videos will stay here and in Videos.</p>
-                )}
-              </div>
-            </div>
-            <p className="mt-auto border-t border-[var(--vg-border)] pt-3 text-[10px] leading-relaxed text-[var(--vg-muted)]">Generation starts only after the exact seconds and credits are approved.</p>
-          </aside>
-          <div className="min-w-0 flex-1">
-            <VergerChat jobs={jobs} onRouteStudio={handleRouteStudio} onUploadAttachment={handleUploadAttachment} />
-          </div>
+        <div className="flex h-full min-h-0 w-full max-w-[980px] flex-col justify-center">
+          <VergerChat jobs={jobs} onRouteStudio={handleRouteStudio} onUploadAttachment={handleUploadAttachment} />
         </div>
       </main>
+      <AppBridgeHost />
     </div>
   );
 }

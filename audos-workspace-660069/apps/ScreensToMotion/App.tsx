@@ -287,7 +287,7 @@ export default function App() {
     }
     setPlan(builtPlan);
 
-    setProgress({ step: 4, total, label: 'Rendering', detail: 'One deterministic Remotion composition, rendered server-side.' });
+    setProgress({ step: 4, total, label: 'Rendering', detail: 'Queued for one $0.05 cloud Remotion render.' });
     const handle = await submitRender({ plan: builtPlan, images: screens.map((s) => s.screen), analyses }, token, workspaceIdValue);
     const finished = await pollRender(handle, token, (state, pct) => {
       setProgress({ step: 4, total, label: 'Rendering', detail: `Render ${state}${pct ? ` — ${Math.round(pct * 100)}%` : '…'}` });
@@ -394,7 +394,7 @@ export default function App() {
     if (dips.applied.length) notes.push(`Exposure dips inserted at ${dips.applied.length} cut(s) where luminance differed by more than 12%.`);
     setPlan(builtPlan);
 
-    setProgress({ step: 7, total, label: 'Rendering', detail: 'One deterministic Remotion composition — OffthreadVideo clips, ffmpeg-extracted frames.' });
+    setProgress({ step: 7, total, label: 'Rendering', detail: 'Queued for one $0.05 cloud Remotion render — OffthreadVideo clips and extracted frames.' });
     const handle = await submitRender({ plan: builtPlan, images: screens.map((s) => s.screen), analyses, clips }, token, workspaceIdValue);
     const finished = await pollRender(handle, token, (state, pct) => {
       setProgress({ step: 7, total, label: 'Rendering', detail: `Render ${state}${pct ? ` — ${Math.round(pct * 100)}%` : '…'}` });

@@ -5,7 +5,7 @@
  */
 import { chargeCredits, newChargeKey, refundCredits } from '../../lib/credits';
 import { poll } from '../../lib/poll';
-import { finishPortrait, readRender, submitRender } from '../../lib/render/remotion';
+import { finishPortrait, readRender, submitRender } from '../../lib/render/cloudRender';
 import {
   WORKSPACE_ID as CANONICAL_WORKSPACE_ID,
   callHook as callWorkspaceHook,
@@ -708,7 +708,7 @@ export async function runPipeline(state: RunState, cb: RunCallbacks): Promise<Ru
   }
 
   if (!state.finalUrl) {
-    emit('composing', 'Rendering exact typography, deterministic graphics, transitions and audio…');
+    emit('composing', 'Queued for the $0.05 cloud render — exact typography, deterministic graphics, transitions and audio…');
     const composed = await composeFilm(state, cb.signal);
     state.finalUrl = composed.url;
     state.geometry = composed.geometry;

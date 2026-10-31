@@ -45,7 +45,7 @@ interface AgentChatViewProps {
  * "how can I help".
  */
 const VIDVERGE_HOME_WELCOME =
-  'What do you want to make? Verger’s Orchestrator will read your Brand Kit and Library, run the right specialists in parallel, show every real step, and ask only when it needs your input or approval.';
+  'What should we make today? Say it once. In Copilot, Verger opens the app and fills it with you. In Autopilot, it makes the whole video and shows it here when it’s done.';
 
 /**
  * The one-line promise under the logo. The full welcome above is also the
@@ -53,7 +53,7 @@ const VIDVERGE_HOME_WELCOME =
  * composer turned the first screen into a wall of prose.
  */
 const VIDVERGE_HOME_LEAD =
-  'Bring me an idea and leave with a finished video — a product URL, a script, footage you already shot, or just a topic.';
+  'Bring a product URL, script, footage, or just an idea. Verger uses the real studios, asks only for essential input, and keeps every paid step explicit.';
 
 
 /** First sentence of `text`, or `fallback` when that is missing or too long. */

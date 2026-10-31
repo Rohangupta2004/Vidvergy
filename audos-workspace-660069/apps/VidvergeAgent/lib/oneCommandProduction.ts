@@ -26,6 +26,8 @@ export interface OneCommandProduction {
   voiceName: string;
   voiceDirection: string;
   musicPrompt: string;
+  language: string;
+  accent: string;
   scenes: ProductionScene[];
   chargeKey: string;
 }
@@ -69,6 +71,15 @@ function aspectFrom(command: string): '16:9' | '9:16' {
 
 function sourceUrlFrom(command: string): string | null {
   return command.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0]?.replace(/[.,!?]+$/, '') || null;
+}
+
+function languageFrom(command: string): { language: string; accent: string } {
+  const text = String(command || '');
+  if (/\p{Script=Devanagari}/u.test(text)) return { language: 'Hindi', accent: 'natural Indian Hindi' };
+  if (/\b(?:hinglish|yaar|aap|hai|hain|karo|karna|chahiye|nahi|bahut|kaise|kyun)\b/i.test(text)) return { language: 'Hinglish', accent: 'natural Indian Hinglish' };
+  const named = text.match(/\b(?:language|spoken in|in)\s*[:=-]?\s*(English|Hindi|Hinglish|Spanish|French|German|Italian|Portuguese|Arabic|Japanese|Korean|Mandarin|Tamil|Telugu|Bengali|Marathi)\b/i)?.[1];
+  const language = named ? named.charAt(0).toUpperCase() + named.slice(1).toLowerCase() : 'English';
+  return { language, accent: language === 'English' ? 'neutral natural English' : `natural ${language}` };
 }
 
 async function listVoices(): Promise<VoiceChoice[]> {
@@ -120,6 +131,7 @@ export async function planOneCommandProduction(
   const durationSeconds = durationFrom(command);
   const aspectRatio = aspectFrom(command);
   const sourceUrl = sourceUrlFrom(command);
+  const languageLock = languageFrom(command);
   const voices = await listVoices();
   const voiceCatalog = voices.map((voice) => ({ id: voice.id, name: voice.name, labels: voice.labels })).slice(0, 24);
   const response = await workspaceFetch(OPENAI_URL, {
@@ -135,7 +147,7 @@ export async function planOneCommandProduction(
       messages: [
         {
           role: 'system',
-          content: 'You are Verger’s production planner. Turn one user command into a complete, truthful video plan. Use supplied URL/Brand Kit evidence; never invent claims. Choose exactly one available voice id. A character may be a presenter, recurring product hero, visual mascot, or “no on-camera character” when faceless is stronger. Return one JSON object: {title,script,characterChoice,voiceId,voiceName,voiceDirection,musicPrompt,scenes:[{purpose,narration,visual}]}. Write a concise voiceover script that fits the exact duration. Create enough scenes for 4–8 seconds each. Music is mandatory and must sit under narration. Do not mention internal models, hooks, or approval.',
+          content: 'You are Verger’s production planner. Turn one clarified user command into a complete, truthful video plan. Use supplied URL/Brand Kit evidence; never invent claims. Choose exactly one available voice id. Preserve the supplied language and accent across every scene. A character may be a presenter, recurring product hero, visual mascot, or “no on-camera character” when faceless is stronger. Return one JSON object: {title,script,characterChoice,voiceId,voiceName,voiceDirection,musicPrompt,scenes:[{purpose,narration,visual}]}. Write a concise voiceover script that fits the exact duration. Create enough scenes for 4–8 seconds each. Music is mandatory and must sit under narration. Do not mention internal models, hooks, or approval.',
         },
         {
           role: 'user',
@@ -145,6 +157,8 @@ export async function planOneCommandProduction(
             aspectRatio,
             sourceUrl,
             attachment: attachment ? { name: attachment.name, type: attachment.type, url: attachment.url } : null,
+            language: languageLock.language,
+            accent: languageLock.accent,
             voiceCatalog,
             latestBrandAndLibraryContext: liveContext.slice(0, 16000),
           }),
@@ -174,6 +188,8 @@ export async function planOneCommandProduction(
     voiceName: chosen.name,
     voiceDirection: String(raw?.voiceDirection || 'Warm, clear and confident.').trim().slice(0, 500),
     musicPrompt: String(raw?.musicPrompt || 'Modern cinematic instrumental, confident build, clear space for narration.').trim().slice(0, 1800),
+    language: languageLock.language,
+    accent: languageLock.accent,
     scenes: normalizeScenes(raw, durationSeconds, script),
     chargeKey: `verger:${id}`,
   };
@@ -196,9 +212,11 @@ export async function executeOneCommandProduction(
   onProgress({ id: 'scenes', name: 'Scene production', status: 'running', detail: `${plan.scenes.length} grounded scenes are being submitted with native dialogue, effects and music.` });
 
   const referenceUrls = attachment?.url ? [attachment.url] : [];
+  const languageLine = `LANGUAGE LOCK: Spoken language: ${plan.language}; accent: ${plan.accent}; no subtitles or on-screen text in any other language.`;
   const scenes = plan.scenes.map((scene) => ({
-    scene_description: `${scene.purpose}. ${scene.visual} Character continuity: ${plan.characterChoice}. Voice direction: ${plan.voiceDirection}. Native spoken line: ${scene.narration || plan.script}. Soundtrack: ${plan.musicPrompt}. Keep dialogue intelligible over the music; no generated captions or watermarks.`,
+    scene_description: `${languageLine} ${scene.purpose}. ${scene.visual} Character continuity: ${plan.characterChoice}. Voice direction: ${plan.voiceDirection}. Native spoken line: "${scene.narration || plan.script}". Soundtrack: ${plan.musicPrompt}. Keep dialogue intelligible over the music; no generated captions or watermarks.`,
     dialogue: scene.narration || undefined,
+    language: plan.language,
     start_pose: `Continue naturally from the prior scene while preserving ${plan.characterChoice}.`,
     end_pose: 'End on a stable composition that can cut cleanly into the next scene.',
   }));
@@ -206,6 +224,8 @@ export async function executeOneCommandProduction(
     script: JSON.stringify(scenes),
     character_description: plan.characterChoice,
     tone: `${plan.voiceDirection}; ${plan.musicPrompt}`,
+    language: plan.language,
+    accent: plan.accent,
     duration_seconds: plan.durationSeconds,
     title: plan.title,
     aspect_ratio: '9:16',

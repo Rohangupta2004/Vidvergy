@@ -8,6 +8,7 @@ import Settings from './components/Settings';
 import VideoLibrary from './components/VideoLibrary';
 import PricingScreen from './components/PricingScreen';
 import CreditBalance from './components/CreditBalance';
+import CreditAuthNotice from './components/CreditAuthNotice';
 import {
   getPlanId,
   isPaidTier,
@@ -1415,6 +1416,8 @@ export default function SpaceDesktop({
           here was the previous single nav — keeping both would have put two
           navigation surfaces on screen at once. Credits, Jobs and Plans moved
           into ShellHeader, so nothing it carried was dropped. */}
+
+      <CreditAuthNotice />
 
       {pricingRequest && (
         <PricingScreen

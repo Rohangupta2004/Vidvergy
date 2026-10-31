@@ -13,7 +13,7 @@
  */
 
 import { VEO_31_FAST_MODEL } from '../../lib/appIds';
-import { readRender, submitRender as submitCanonicalRender } from '../../lib/render/remotion';
+import { readRender, submitRender as submitCanonicalRender } from '../../lib/render/cloudRender';
 import { callHook, spaceId, workspaceTokenNow, WORKSPACE_ID } from '../../lib/workspace';
 
 export const WORKSPACE_UUID = WORKSPACE_ID;

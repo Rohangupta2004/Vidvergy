@@ -63,6 +63,7 @@ import { capabilityFor, rankReferences } from '../v2Contracts';
 import { scrubProviderPrompt } from './promptDirector';
 import { WORKSPACE_ID, workspaceFetch } from '../../../lib/workspace';
 import { TAB_REQUIRED_MESSAGE, callS2vHook as callHook } from '../friendlyErrors';
+import { assembleFilm } from './assemble';
 export { S2V_CAPABILITY_REGISTRY_VERSION, S2V_VIDEO_CAPABILITIES } from '../v2Contracts';
 export {
   VERGEYE_CAPABILITY_REGISTRY_VERSION, VERGEYE_VIDEO_CAPABILITIES,
@@ -165,8 +166,8 @@ export const VIDEO_MODEL: VideoModelConfig = {
   provider: 'google',
   model: 'omni-1.1-flash',
   apiModel: 'gemini-omni-1.1-flash',
-  supportedDurations: [2, 3, 4, 5, 6, 7, 8],
-  minDuration: 2,
+  supportedDurations: [4, 5, 6, 7, 8],
+  minDuration: 4,
   safeMaxDuration: 8,
   maxReferenceImages: 10,
   audioSupported: registryNativeAudio('gemini-omni-1.1-flash'),
@@ -476,7 +477,7 @@ export const VEO_31_LITE = openRouterVeo('openrouter/google/veo-3.1-lite', 'Veo 
 
 /** Selectable models, ordered by the guided studio's recommendations.
  * Retired preview aliases are excluded. */
-export const VIDEO_MODELS: VideoModelConfig[] = [VIDEO_MODEL];
+export const VIDEO_MODELS: VideoModelConfig[] = [VIDEO_MODEL, SEEDANCE_2_5, KLING_3_0_OMNI, KLING_3_0, KLING_2_6, KLING_2_5_TURBO];
 
 /** Default for a new film when Auto has no stronger capability match.
  * Gemini Omni can use the durable server runner. Kling, Seedance and Runway
@@ -1329,12 +1330,21 @@ export const VideoModelService = {
     if (!remainderUrl) {
       return { videoUrl: editedUrl, operationId: attempt.jobId, model: VIDEO_MODEL.apiModel, editedWindowSec: editWindow, preservedRemainderSec: 0, assembledFromWindow: false, boundaryEvidence: 'The entire source fit the verified edit window.' };
     }
-    const stitch = await fetch(`/api/workspaces/${WORKSPACE_ID}/videos/stitch`, {
-      method: 'POST', headers, body: JSON.stringify({ videoUrls: [editedUrl, remainderUrl] }),
-    });
-    const stitched = await stitch.json().catch(() => null);
-    const videoUrl = String(stitched?.stitchedUrl || '');
-    if (!stitch.ok || stitched?.success === false || !/^https:\/\//.test(videoUrl)) throw new Error(String(stitched?.error || 'The edited window completed, but it could not be spliced to the untouched remainder. The original is still unchanged.'));
+    let videoUrl = '';
+    if (params.aspect === '16:9') {
+      const stitch = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/videos/stitch`, {
+        method: 'POST', headers, body: JSON.stringify({ videoUrls: [editedUrl, remainderUrl] }),
+      });
+      const stitched = await stitch.json().catch(() => null);
+      videoUrl = String(stitched?.stitchedUrl || '');
+      if (!stitch.ok || stitched?.success === false || !/^https:\/\//.test(videoUrl)) throw new Error(String(stitched?.error || 'The edited window completed, but it could not be spliced to the untouched remainder. The original is still unchanged.'));
+    } else {
+      const assembled = await assembleFilm([
+        { sceneKey: 'edited-window', url: editedUrl, durationS: editWindow },
+        { sceneKey: 'preserved-remainder', url: remainderUrl, durationS: Math.max(0.1, sourceDuration - editWindow) },
+      ], params.aspect);
+      videoUrl = assembled.url;
+    }
     let boundaryEvidence = 'Splice completed; review audio and visual continuity at the edit boundary.';
     try {
       const probe = await fetch('/api/video/frames', {

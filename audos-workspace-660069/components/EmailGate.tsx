@@ -156,18 +156,18 @@ type GateStep = 'loading' | 'email' | 'otp' | 'complete';
 // layered dark-gold studio light, mirroring components/theme.ts so the gate and
 // the shell behind it read as one product. No rainbow gradients, no pastels,
 // no white surfaces anywhere.
-const BG = '#101214';
-const BG_DEEP = '#101214';
-const CARD = '#171A1E';
-const LINE = '#343A43';
-const BRAND = '#D9A441';
-const BRAND_HI = '#E5B75A';
+const BG = '#0A0A0B';
+const BG_DEEP = '#0A0A0B';
+const CARD = '#111114';
+const LINE = 'rgba(255,255,255,.08)';
+const BRAND = '#D4A64A';
+const BRAND_HI = '#F6D98B';
 /** Text sitting on a BRAND-filled surface. */
-const INK = '#17120A';
-const TEXT = '#F4F5F7';
-const MUTED = '#C4C9D0';
-const DIM = '#9AA3AF';
-const BRAND_GLOW = 'none';
+const INK = '#0A0A0B';
+const TEXT = '#F4F1EA';
+const MUTED = '#A8A39A';
+const DIM = '#7C776F';
+const BRAND_GLOW = '0 0 0 1px rgba(246,217,139,.14), 0 0 28px rgba(212,166,74,.25)';
 const MONO = "ui-monospace, 'SFMono-Regular', Consolas, monospace";
 const FONT = "'Manrope', 'Segoe UI', sans-serif";
 const CONTAINER = 1180;
@@ -429,23 +429,23 @@ h1,h2,h3,h4 { font-family:'Space Grotesk','Segoe UI',sans-serif; font-synthesis:
 .vv-reveal { opacity:0; }
 .vv-reveal.vv-in { animation:vvFadeUp .6s cubic-bezier(.16,1,.3,1) forwards; }
 
-.vv-cta { min-height:44px; background:linear-gradient(115deg,#E69A24 0%,#F8C85C 52%,#FFDF8F 100%); color:${INK}; font-weight:600; border:none; border-radius:10px; cursor:pointer; transition:background .12s cubic-bezier(.2,0,0,1),transform .12s cubic-bezier(.2,0,0,1); }
-.vv-cta:hover:not(:disabled) { background:linear-gradient(115deg,#F0AC3C 0%,#FFD477 52%,#FFE8AE 100%); }
-.vv-cta:active:not(:disabled) { background:#D69529; transform:translateY(1px); }
-.vv-ghost { min-height:44px; background:${CARD}; border:1px solid #747D8B; color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .12s cubic-bezier(.2,0,0,1); }
-.vv-ghost:hover:not(:disabled) { background:#2A2E35; }
-.vv-navcta { min-height:44px; border:1px solid #747D8B; background:${CARD}; color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .12s cubic-bezier(.2,0,0,1); }
-.vv-navcta:hover { background:#2A2E35; }
+.vv-cta { min-height:44px; background:linear-gradient(115deg,#F6D98B 0%,#D4A64A 52%,#B07D2A 100%); color:${INK}; font-weight:600; border:none; border-radius:10px; cursor:pointer; box-shadow:0 8px 28px rgba(212,166,74,.18); transition:background .18s cubic-bezier(.2,0,0,1),transform .18s cubic-bezier(.2,0,0,1),box-shadow .18s cubic-bezier(.2,0,0,1); }
+.vv-cta:hover:not(:disabled) { background:linear-gradient(115deg,#FBE7AE 0%,#E0B85F 52%,#C28D35 100%); box-shadow:${BRAND_GLOW}; }
+.vv-cta:active:not(:disabled) { background:#B07D2A; box-shadow:0 4px 16px rgba(212,166,74,.16); transform:translateY(1px); }
+.vv-ghost { min-height:44px; background:${CARD}; border:1px solid rgba(255,255,255,.16); color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1); }
+.vv-ghost:hover:not(:disabled) { background:#1E1E23; border-color:rgba(246,217,139,.34); }
+.vv-navcta { min-height:44px; border:1px solid rgba(255,255,255,.16); background:${CARD}; color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1); }
+.vv-navcta:hover { background:#1E1E23; border-color:rgba(246,217,139,.34); }
 .vv-navlink { color:${MUTED}; background:none; border:none; cursor:pointer; font-size:13px; font-weight:500; transition:color .18s ease; text-decoration:none; }
 .vv-navlink:hover { color:${TEXT}; }
-.vv-input::placeholder { color:#4B5563; }
-.vv-input:focus { border-color:${BRAND} !important; box-shadow:0 0 0 3px rgba(214,171,74,.2) !important; outline:none; }
+.vv-input::placeholder { color:${DIM}; }
+.vv-input:focus { border-color:${BRAND_HI} !important; box-shadow:0 0 0 3px rgba(212,166,74,.16),0 0 24px rgba(212,166,74,.2) !important; outline:none; }
 .vv-link { color:${MUTED}; text-decoration:none; transition:color .18s ease; }
 .vv-link:hover { color:${BRAND_HI}; }
 
 .vv-card { background:${CARD}; border:1px solid ${LINE}; border-radius:12px; }
 .vv-studio { transition:transform .22s ease, border-color .22s ease, box-shadow .22s ease; }
-.vv-studio:hover { transform:translateY(-3px); border-color:rgba(214,171,74,.4); box-shadow:0 18px 48px rgba(0,0,0,.55); }
+.vv-studio:hover { transform:translateY(-3px); border-color:rgba(246,217,139,.34); box-shadow:0 18px 48px rgba(0,0,0,.55),0 0 28px rgba(212,166,74,.18); }
 .vv-tile { transition:transform .22s ease, box-shadow .22s ease; }
 .vv-tile:hover { transform:translateY(-3px); box-shadow:${BRAND_GLOW}; }
 
@@ -541,11 +541,11 @@ const LightField = () => (
       >
         <defs>
           <linearGradient id={`vvFieldGrad${index}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#D6AB4A" stopOpacity="0" />
-            <stop offset="20%" stopColor="#D6AB4A" stopOpacity="0.55" />
-            <stop offset="50%" stopColor="#F3D58B" stopOpacity="1" />
-            <stop offset="80%" stopColor="#FFE8AB" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#D6AB4A" stopOpacity="0" />
+            <stop offset="0%" stopColor="#B07D2A" stopOpacity="0" />
+            <stop offset="20%" stopColor="#D4A64A" stopOpacity="0.55" />
+            <stop offset="50%" stopColor="#F6D98B" stopOpacity="1" />
+            <stop offset="80%" stopColor="#FBE7AE" stopOpacity="0.55" />
+            <stop offset="100%" stopColor="#B07D2A" stopOpacity="0" />
           </linearGradient>
           <filter id={`vvFieldBlur${index}`} x="-10%" y="-45%" width="120%" height="190%">
             <feGaussianBlur stdDeviation={layer.blur} />

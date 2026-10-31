@@ -3,6 +3,7 @@ import { callHook, getWorkspaceToken, workspaceFetch } from '../workspace';
 import { runFfmpegJob } from '../ffmpeg-runtime';
 import type { ActorBlueprint } from '../../apps/UGCStudio/actorCatalog';
 import { UGC_RUNWAY_CREDITS_PER_SECOND } from '../regions';
+import { authorizeCredits, newChargeKey, refundCreditsStrict } from '../credits';
 
 export type UgcMode = 'actor-speaks' | 'voiceover';
 export type UgcFormat = 'talking-camera' | 'demo' | 'unboxing' | 'before-after' | 'problem-solution';
@@ -51,9 +52,41 @@ export async function quoteUgc(input:{actorId:string;productImageUrl:string;lang
   return callHook('ugc-studio-runway',{op:'quote',actor_id:input.actorId,product_image_url:input.productImageUrl,language:input.language,audio:input.mode==='actor-speaks',ratio:'720:1280',clips:input.clips.map(c=>({...c,userConcept:buildUserConcept(c,input.language,input.mode)}))});
 }
 export async function startUgc(input:{actorId:string;productImageUrl:string;language:string;mode:UgcMode;clips:UgcClip[];quote:any;sourceBlueprint?:unknown}):Promise<any>{
-  return callHook('ugc-studio-runway',{op:'start',actor_id:input.actorId,product_image_url:input.productImageUrl,language:input.language,audio:input.mode==='actor-speaks',ratio:'720:1280',clips:input.clips.map(c=>({...c,userConcept:buildUserConcept(c,input.language,input.mode)})),approved:true,approved_vidverge_credits:Number(input.quote?.vidvergeCredits),quote_fingerprint:String(input.quote?.fingerprint||''),source_blueprint:input.sourceBlueprint||null});
+  const seconds = input.clips.reduce((sum, clip) => sum + Math.max(0, Number(clip.duration) || 0), 0);
+  const entryKey = newChargeKey('ugc');
+  await authorizeCredits({ seconds, entryKey, source: 'ugc-runway', note: `UGC Studio · ${seconds}s` });
+  try {
+    const result = await callHook<any>('ugc-studio-runway',{op:'start',actor_id:input.actorId,product_image_url:input.productImageUrl,language:input.language,audio:input.mode==='actor-speaks',ratio:'720:1280',clips:input.clips.map(c=>({...c,userConcept:buildUserConcept(c,input.language,input.mode)})),approved:true,approved_vidverge_credits:Number(input.quote?.vidvergeCredits),quote_fingerprint:String(input.quote?.fingerprint||''),credit_entry_key:entryKey,source_blueprint:input.sourceBlueprint||null});
+    if (result?.refunded === true) {
+      await refundCreditsStrict(entryKey, 'UGC provider work did not start');
+    }
+    return result;
+  } catch (error: any) {
+    const status = Math.round(Number(error?.status) || 0);
+    // Refund only a confirmed client rejection. A network-uncertain request may
+    // already have created the email-owned durable job, so it must stay charged
+    // until that job's provider outcome reconciles it.
+    if (status >= 400 && status < 500) {
+      await refundCreditsStrict(entryKey, 'UGC provider work did not start').catch(() => undefined);
+    }
+    throw error;
+  }
 }
-export async function startOmniByChoice(jobId:number):Promise<any>{ return callHook('ugc-studio-runway',{op:'omni_start',job_id:jobId,approved:true}); }
+export async function startOmniByChoice(jobId:number, seconds:number):Promise<any>{
+  const entryKey = newChargeKey('ugc-omni');
+  await authorizeCredits({ seconds, entryKey, source: 'ugc-omni', note: `UGC Studio Omni alternative · ${seconds}s` });
+  try {
+    const result = await callHook<any>('ugc-studio-runway',{op:'omni_start',job_id:jobId,approved:true,credit_entry_key:entryKey});
+    if (result?.success === false) await refundCreditsStrict(entryKey, 'UGC Omni alternative did not start');
+    return result;
+  } catch (error: any) {
+    const status = Math.round(Number(error?.status) || 0);
+    if (status >= 400 && status < 500) {
+      await refundCreditsStrict(entryKey, 'UGC Omni alternative was rejected before submission').catch(() => undefined);
+    }
+    throw error;
+  }
+}
 export async function loadUgcJob(jobId:number,resume=true):Promise<any>{ return callHook('ugc-studio-runway',{op:'status',job_id:jobId,resume}); }
 export async function listUgcJobs():Promise<any[]>{ const data=await callHook<any>('ugc-studio-runway',{op:'list'}); return Array.isArray(data?.jobs)?data.jobs:[]; }
 

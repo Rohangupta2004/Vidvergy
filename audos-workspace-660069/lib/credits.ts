@@ -21,12 +21,15 @@
 import { useEffect, useState } from 'react';
 import { openPricing } from './plans';
 import type { PlanId } from './plans';
-import { callHook, getSessionId, hookUrl, refreshWorkspaceSession, spaceId } from './workspace';
+import { callHook, getSessionId, getVerifiedSessionId, hookUrl, refreshWorkspaceSession, spaceId } from './workspace';
+import { scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
 
 export const CREDITS_HOOK_ENDPOINT = hookUrl('vv-credits');
 
 /** Fired whenever the cached balance moves, so every surface re-renders. */
 export const CREDITS_EVENT = 'vidverge:credits';
+/** Opens the shell-level recovery notice after a persistent wallet 401/403. */
+export const CREDIT_AUTH_REQUIRED_EVENT = 'vidverge:credit-auth-required';
 
 /** The locked meter. */
 export const SECONDS_PER_CREDIT = 1;
@@ -167,17 +170,121 @@ function publish(state: CreditState | null): CreditState | null {
   return state;
 }
 
+function announceCreditSignInRequired(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(CREDIT_AUTH_REQUIRED_EVENT, {
+    detail: { message: 'Sign in with your email to use credits.' },
+  }));
+}
+
+function creditSessionError(notify = true): CreditAuthorizationError {
+  if (notify) announceCreditSignInRequired();
+  return new CreditAuthorizationError('Sign in with your email to use credits.', {
+    code: 'session_expired',
+    status: 401,
+  });
+}
+
+/** Clear only this workspace's identity, then reopen the standard email gate. */
+export function beginCreditEmailSignIn(): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(scopedSpaceSessionStorageKey(spaceId())); } catch { /* storage may be disabled */ }
+  try { window.sessionStorage.removeItem('space_session_id'); } catch { /* storage may be disabled */ }
+  window.__audosAcceptedSessionId = undefined;
+  window.__spaceSessionId = undefined;
+  window.__SESSION_ID__ = undefined;
+  window.__workspaceDb?.setSessionId?.('');
+  window.location.reload();
+}
+
+async function sendCredits(payload: Record<string, unknown>): Promise<any> {
+  return callHook('vv-credits', payload, { retryOn401: false });
+}
+
 /**
- * One call to the wallet function. Returns null when there is nobody to bill
- * yet (no session, storage disabled, the function unreachable) — callers must
- * treat null as "unknown", never as "zero".
+ * Prove the saved `wses_` session against the platform before every charge or
+ * refund. The balance preflight proves the wallet resolved the session to an
+ * email; a 401 refreshes and replays exactly once. No body identity is used.
+ */
+async function callVerifiedCredits(
+  payload: Record<string, unknown>,
+  options: { preflight?: boolean; notify?: boolean } = {},
+): Promise<any> {
+  const { preflight = false, notify = true } = options;
+  if (typeof window === 'undefined') throw creditSessionError(notify);
+
+  await refreshWorkspaceSession();
+  if (!getVerifiedSessionId()) throw creditSessionError(notify);
+
+  const attempt = async (): Promise<any> => {
+    if (preflight && payload.op !== 'balance') {
+      const balance = await sendCredits({ op: 'balance' });
+      if (!balance || balance.ok !== true || typeof balance.email !== 'string' || !balance.email.includes('@')) {
+        throw creditSessionError(notify);
+      }
+    }
+    return sendCredits(payload);
+  };
+
+  try {
+    return await attempt();
+  } catch (error: any) {
+    const status = Math.round(Number(error?.status) || 0);
+    if (status !== 401 && status !== 403) throw error;
+    await refreshWorkspaceSession();
+    if (!getVerifiedSessionId()) throw creditSessionError(notify);
+    try {
+      return await attempt();
+    } catch (retryError: any) {
+      const retryStatus = Math.round(Number(retryError?.status) || 0);
+      if (retryStatus === 401 || retryStatus === 403) throw creditSessionError(notify);
+      throw retryError;
+    }
+  }
+}
+
+/** Re-check the email session from the global recovery notice. */
+export async function refreshCreditSession(): Promise<boolean> {
+  try {
+    const data = await callVerifiedCredits({ op: 'balance' }, { notify: false });
+    const state = toState(data);
+    if (!state) return false;
+    publish(state);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Fail closed before a durable pipeline creates provider work. */
+export async function requireVerifiedCreditSession(): Promise<CreditState> {
+  try {
+    const data = await callVerifiedCredits({ op: 'balance' });
+    const state = toState(data);
+    if (!state) throw creditSessionError(true);
+    publish(state);
+    return state;
+  } catch (error: any) {
+    if (isCreditAuthorizationError(error)) throw error;
+    const status = Math.round(Number(error?.status) || 0);
+    if (status === 401 || status === 403) throw creditSessionError(true);
+    throw new CreditAuthorizationError('Credit authorization could not be confirmed. Your generation was not started.', {
+      code: 'credit_authorization_unavailable',
+      status,
+    });
+  }
+}
+
+/**
+ * One passive wallet read. Signed-out and guest visitors have no wallet yet,
+ * so balance/quote callers receive null without opening the sign-in notice.
  */
 async function callCredits(payload: Record<string, unknown>): Promise<any | null> {
   if (typeof window === 'undefined') return null;
-  if (!getSessionId()) await refreshWorkspaceSession();
-  if (!getSessionId()) return null;
+  const current = getSessionId();
+  if (!current || current.startsWith('guest_')) return null;
   try {
-    return await callHook('vv-credits', payload);
+    return await callVerifiedCredits(payload, { notify: false });
   } catch (e) {
     console.warn('[VidVerge] credit wallet unreachable:', e);
     return null;
@@ -240,29 +347,24 @@ export interface ChargeResult {
 export async function authorizeCredits(request: ChargeRequest): Promise<ChargeResult> {
   const cost = creditsForSeconds(request.seconds);
   if (!cost) return { metered: false, charged: 0, state: cached };
-  if (typeof window === 'undefined') {
-    throw new CreditAuthorizationError('A signed-in session is required.', { code: 'session_expired', status: 401 });
-  }
-  if (!getSessionId()) await refreshWorkspaceSession();
-  if (!getSessionId()) {
-    throw new CreditAuthorizationError('Sign-in session expired — sign in again and retry.', { code: 'session_expired', status: 401 });
-  }
 
   let data: any;
   try {
-    data = await callHook('vv-credits', {
+    data = await callVerifiedCredits({
       op: 'charge',
       entryKey: request.entryKey,
       seconds: Math.round(request.seconds),
       source: request.source || 'app',
       note: request.note,
-    });
+    }, { preflight: true });
   } catch (e: any) {
+    if (isCreditAuthorizationError(e)) throw e;
     const status = Math.round(Number(e?.status) || 0);
     const auth = status === 401 || status === 403;
+    if (auth) throw creditSessionError(true);
     throw new CreditAuthorizationError(
-      auth ? 'Sign-in session expired — refresh and retry.' : `Credit authorization could not be confirmed${e?.message ? `: ${String(e.message)}` : '.'}`,
-      { code: auth ? 'session_expired' : 'credit_authorization_unavailable', status },
+      'Credit authorization could not be confirmed. Your generation was not started.',
+      { code: 'credit_authorization_unavailable', status },
     );
   }
 
@@ -283,67 +385,31 @@ export async function authorizeCredits(request: ChargeRequest): Promise<ChargeRe
 }
 
 export async function chargeCredits(request: ChargeRequest): Promise<ChargeResult> {
-  const cost = creditsForSeconds(request.seconds);
-  if (!cost) return { metered: false, charged: 0, state: cached };
-
-  const data = await callCredits({
-    op: 'charge',
-    entryKey: request.entryKey,
-    seconds: Math.round(request.seconds),
-    source: request.source || 'app',
-    note: request.note,
-  });
-  if (!data) {
-    throw new CreditAuthorizationError(
-      'Your signed-in session could not authorize this render, so nothing was charged or submitted. Retry once; if the email session cannot be renewed, sign in again.',
-      { code: 'credit_authorization_unavailable', status: getSessionId() ? 0 : 401 },
-    );
-  }
-
-  const state = toState(data);
-  if (state) publish(state);
-
-  if (data.code === 'insufficient_credits') {
-    const balance = state ? state.balance : 0;
-    const plan = state ? state.plan : 'free';
-    openPricing('credits', { required: cost, balance, seconds: Math.round(request.seconds) });
-    throw new InsufficientCreditsError({ required: cost, balance, seconds: Math.round(request.seconds), plan });
-  }
-
-  if (data.ok !== true) {
-    throw new CreditAuthorizationError(String(data.error || 'Credit authorization was refused.'), {
-      code: String(data.code || 'credit_authorization_refused'),
-    });
-  }
-
-  return { metered: true, charged: Math.max(0, Math.round(Number(data.charged) || 0)), state };
+  return authorizeCredits(request);
 }
 
 /** Hand credits back when the provider never actually started the render. */
 export async function refundCredits(entryKey: string, note?: string): Promise<void> {
-  const data = await callCredits({ op: 'refund', entryKey, note });
-  const state = toState(data);
-  if (state) publish(state);
+  try {
+    await refundCreditsStrict(entryKey, note);
+  } catch (error) {
+    console.warn('[VidVerge] credit refund could not be confirmed:', error);
+  }
 }
 
 /** Authenticated refund variant for flows that must prove reconciliation. */
 export async function refundCreditsStrict(entryKey: string, note?: string): Promise<void> {
-  if (typeof window === 'undefined') {
-    throw new CreditAuthorizationError('A signed-in session is required.', { code: 'session_expired', status: 401 });
-  }
-  if (!getSessionId()) await refreshWorkspaceSession();
-  if (!getSessionId()) {
-    throw new CreditAuthorizationError('Sign-in session expired — sign in again and retry.', { code: 'session_expired', status: 401 });
-  }
   let data: any;
   try {
-    data = await callHook('vv-credits', { op: 'refund', entryKey, note });
+    data = await callVerifiedCredits({ op: 'refund', entryKey, note }, { preflight: true });
   } catch (e: any) {
+    if (isCreditAuthorizationError(e)) throw e;
     const status = Math.round(Number(e?.status) || 0);
-    throw new CreditAuthorizationError(
-      status === 401 || status === 403 ? 'Sign-in session expired — refresh and retry.' : `Credit refund could not be confirmed${e?.message ? `: ${String(e.message)}` : '.'}`,
-      { code: status === 401 || status === 403 ? 'session_expired' : 'credit_refund_unavailable', status },
-    );
+    if (status === 401 || status === 403) throw creditSessionError(true);
+    throw new CreditAuthorizationError('Credit refund could not be confirmed.', {
+      code: 'credit_refund_unavailable',
+      status,
+    });
   }
   const state = toState(data);
   if (state) publish(state);

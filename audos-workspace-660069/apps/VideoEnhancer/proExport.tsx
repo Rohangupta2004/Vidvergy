@@ -90,7 +90,7 @@ export default function ProExport(props: ExportProps) {
             onClick={props.onExport}
           >
             {props.busy ? <Loader2 size={14} className="vp-spin" /> : <Play size={14} />}
-            {props.busy ? 'Exporting…' : 'Export now'}
+            {props.busy ? 'Exporting…' : (serverSide ? 'Export · $0.05' : 'Export now')}
           </button>
         </>
       )}
@@ -135,7 +135,7 @@ export default function ProExport(props: ExportProps) {
             </button>
           ))}
         </div>
-        <p className="vp-note">The platform render service is pinned to a 1920×1080 canvas, so 720p and 4K are off.</p>
+        <p className="vp-note">Cloud MP4 renders cost $0.05 each, run one at a time, and use a fixed 1920×1080 canvas; 720p and 4K are off.</p>
       </Section>
 
       <Section title="Aspect" hint={serverSide ? 'Tick more than one to export several' : 'Single output'}>

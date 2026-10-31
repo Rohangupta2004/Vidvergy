@@ -20,6 +20,7 @@ import {
 import { resolveVideoModel } from './videoModelService';
 import { prepareContextBody, requestWithContextRetry } from '../contextBudget';
 import { scrubProviderPrompt } from './promptDirector';
+import { workspaceFetch } from '../../../lib/workspace';
 
 interface OpusCall {
   system: string;
@@ -51,6 +52,35 @@ function workspaceToken(): string {
   return typeof window === 'undefined' ? '' : String((window as any).__workspaceDb?.token || '');
 }
 
+const RETRYABLE_PROXY_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const retryPause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function proxyPostJson(path: string, body: unknown, label: string, timeoutMs: number): Promise<any> {
+  let lastReason = 'unknown error';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await workspaceFetch(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal,
+      });
+      const data = await response.json().catch(() => null);
+      if (response.ok && !data?.error) return data;
+      lastReason = String(data?.error?.message || data?.error || data?.message || `${label} HTTP ${response.status}`);
+      const retryable = RETRYABLE_PROXY_STATUS.has(response.status) || /overloaded|temporar|try again|timeout/i.test(lastReason);
+      if (!retryable || attempt === 2) throw new Error(`${label}: ${lastReason}`);
+    } catch (error: any) {
+      lastReason = error?.name === 'AbortError' ? `${label} timed out after ${Math.round(timeoutMs / 1000)} seconds` : String(error?.message || error);
+      const retryable = error?.name === 'AbortError' || /network|fetch|overloaded|temporar|timeout|timed out|try again|\b(?:408|409|425|429|5\d\d)\b/i.test(lastReason);
+      if (!retryable || attempt === 2) throw new Error(`${label} failed after ${attempt + 1} attempt${attempt ? 's' : ''}: ${lastReason}`);
+    } finally {
+      window.clearTimeout(timer);
+    }
+    await retryPause([1000, 3000, 7000][attempt]);
+  }
+  throw new Error(`${label} failed: ${lastReason}`);
+}
+
 async function callOpus(system: string, user: string, token: string, images: string[] = []): Promise<OpusReply> {
   const content: any = images.length
     ? [...images.map((url) => ({ type: 'image', source: { type: 'url', url } })), { type: 'text', text: user }]
@@ -69,16 +99,7 @@ async function callOpus(system: string, user: string, token: string, images: str
         stream: false,
       }),
     }),
-    send: async (body) => {
-      const res = await fetch('/proxy/anthropic/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || data?.error) throw new Error(String(data?.error?.message || data?.error || `Claude Opus did not answer (HTTP ${res.status}).`));
-      return data;
-    },
+    send: async (body) => proxyPostJson('/proxy/anthropic/v1/messages', body, 'Claude Opus', 300_000),
   });
   const data: any = call.result;
   const text = (Array.isArray(data?.content) ? data.content : []).filter((block: any) => block?.type === 'text').map((block: any) => String(block.text || '')).join('');
@@ -96,17 +117,21 @@ async function callGptVision(system: string, user: string, token: string, images
       system: '', messages, aggressive,
       buildBody: (_safeSystem, safeMessages) => ({ model: S2V_GPT_MODEL, reasoning_effort: effort, max_completion_tokens: S2V_TEXT_MAX_TOKENS, messages: safeMessages, stream: false }),
     }),
-    send: async (body) => {
-      const res = await fetch('/proxy/openai/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token }, body: JSON.stringify(body) });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || data?.error) throw new Error(String(data?.error?.message || data?.error || `GPT vision did not answer (HTTP ${res.status}).`));
-      return data;
-    },
+    send: async (body) => proxyPostJson('/proxy/openai/v1/chat/completions', body, 'GPT vision', 180_000),
   });
   const data: any = call.result;
   const text = String(data?.choices?.[0]?.message?.content || '');
   if (!text.trim()) throw new Error('GPT vision returned no visible answer.');
   return { text, stopReason: String(data?.choices?.[0]?.finish_reason || ''), writtenBy: 'GPT Sol' };
+}
+
+export async function askGptVisionJson<T = any>(system: string, user: string, images: string[]): Promise<T> {
+  const token = workspaceToken();
+  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
+  const safeImages = images.filter((url) => /^https:\/\//.test(String(url || ''))).slice(0, 10);
+  if (!safeImages.length) throw new Error('GPT vision needs at least one durable image URL.');
+  const reply = await callGptVision(system, user, token, safeImages, 'high');
+  return extractJson<T>(reply.text);
 }
 
 /** Claude Opus 5 writes every director response. When images are present,
@@ -1169,7 +1194,8 @@ export async function prepareScenePrompt(params: {
 
   if (dialogue) {
     const block = buildDialogueBlock(dialogue, film);
-    prompt = `${prompt.replace(/\s*Dialogue:\s*"[\s\S]*$/i, '').trim().slice(0, Math.max(200, maxChars - block.length - 2))}\n${block}`;
+    const withoutStandaloneSpeech = prompt.split('\n').filter((line) => !/^\s*(?:Dialogue|Narration|Speaker|Voice|Delivery|Language|Timing|Lip-sync)\s*:/i.test(line)).join('\n').trim();
+    prompt = `${withoutStandaloneSpeech.slice(0, Math.max(200, maxChars - block.length - 2))}\n${block}`;
   } else {
     const noTalk = 'speaking to camera, talking, moving lips as if speaking, voice-over';
     if (!/speaking to camera/i.test(negative)) negative = `${negative}, ${noTalk}`.slice(0, 500);

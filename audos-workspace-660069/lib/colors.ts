@@ -60,18 +60,18 @@ export const semantic = {
  * Neutral colors - Backgrounds, text, borders
  */
 export const neutral = {
-  0: '#ffffff',
-  50: '#f9fafb',
-  100: '#f3f4f6',
-  200: '#e5e7eb',
-  300: '#d1d5db',
-  400: '#9ca3af',
-  500: '#6b7280',
-  600: '#4b5563',
-  700: '#374151',
-  800: '#1f2937',
-  900: '#111827',
-  950: '#030712',
+  0: 'var(--vg-text)',
+  50: 'var(--vg-text)',
+  100: 'var(--vg-secondary)',
+  200: 'var(--vg-muted)',
+  300: 'var(--vg-control-border)',
+  400: 'var(--vg-muted)',
+  500: 'var(--vg-muted)',
+  600: 'var(--vg-border)',
+  700: 'var(--vg-hover)',
+  800: 'var(--vg-raised)',
+  900: 'var(--vg-surface)',
+  950: 'var(--vg-bg)',
 } as const;
 
 // =============================================================================
@@ -137,17 +137,17 @@ export const colors = {
   
   // Gradient backgrounds (for Desktop background)
   gradients: {
-    default: 'from-[#08090B] via-[#0B0D10] to-[#111318]',
-    warm: 'from-[#0B0D10] via-[#111318] to-[#171A21]',
-    cool: 'from-[#08090B] via-[#0D1016] to-[#131722]',
-    nature: 'from-[#08090B] via-[#0D1213] to-[#121A1B]',
-    brand: 'from-[#111318] via-[#171A21] to-[#1D212A]',
+    default: 'from-[var(--vg-bg)] via-[var(--vg-bg)] to-[var(--vg-surface)]',
+    warm: 'from-[var(--vg-bg)] via-[var(--vg-surface)] to-[var(--vg-raised)]',
+    cool: 'from-[var(--vg-bg)] via-[var(--vg-surface)] to-[var(--vg-raised)]',
+    nature: 'from-[var(--vg-bg)] via-[var(--vg-surface)] to-[var(--vg-raised)]',
+    brand: 'from-[var(--vg-bg)] via-[var(--vg-surface)] to-[var(--vg-raised)]',
   },
   
   // Glass/frosted effect
   glass: {
-    background: 'bg-[rgba(17,19,24,0.86)] backdrop-blur-lg',
-    border: 'border-[rgba(255,255,255,0.07)]',
+    background: 'bg-[color-mix(in_srgb,var(--vg-surface)_92%,transparent)] backdrop-blur-lg',
+    border: 'border-[var(--vg-border)]',
   }
 } as const;
 
@@ -239,7 +239,7 @@ export const tw = {
     primary: 'bg-[var(--space-surface-accent-soft)] text-[var(--space-text-brand)]',
     accent: 'bg-[var(--space-brand-highlight-100)] text-[var(--space-text-accent)]',
     success: 'bg-[var(--space-semantic-success-50)] text-[var(--space-semantic-success)]',
-    warning: 'bg-[color-mix(in_srgb,#fbbf24_15%,transparent)] text-[#fcd34d]',
+    warning: 'bg-[var(--vg-warning-bg)] text-[var(--vg-warning)]',
     danger: 'bg-[color-mix(in_srgb,#f87171_12%,transparent)] text-[var(--space-semantic-danger)]',
     neutral: 'bg-[var(--space-surface-muted)] text-[var(--space-text-secondary)]',
   },
@@ -293,8 +293,8 @@ export const tw = {
   // LEGACY (for backwards compatibility)
   // ---------------------------------------------------------------------------
   priority: {
-    high: 'bg-[color-mix(in_srgb,#f87171_12%,transparent)] text-[var(--space-semantic-danger)]',
-    medium: 'bg-[color-mix(in_srgb,#fbbf24_15%,transparent)] text-[#fcd34d]',
+    high: 'bg-[var(--vg-danger-bg)] text-[var(--space-semantic-danger)]',
+    medium: 'bg-[var(--vg-warning-bg)] text-[var(--vg-warning)]',
     low: 'bg-[var(--space-semantic-success-50)] text-[var(--space-semantic-success)]',
   },
   

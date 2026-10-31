@@ -13,7 +13,9 @@
  * policy (interactive tier, X-Workspace-DB-Token).
  */
 import { callHook, getWorkspaceToken, WORKSPACE_ID } from '../../../lib/workspace';
+import { requireVerifiedCreditSession } from '../../../lib/credits';
 import type { ForgeAvatar, ForgeAvatarBundle, ForgeChoices, ForgeClonedVoice, ForgeCreatedAvatar, ForgeProject } from './forgeTypes';
+import type { ForgeBrowserTask } from './forgeTypes';
 
 // ---------------------------------------------------------------------------
 // Pipeline ops
@@ -42,6 +44,7 @@ export async function createProject(input: {
 }
 
 export async function startProject(projectId: string, script: string, choices: ForgeChoices): Promise<ForgeProject> {
+  await requireVerifiedCreditSession();
   const data = await pipeline({ op: 'start', project_id: projectId, script, choices });
   if (!data?.ok || !data.project) throw new Error(data?.error || 'Generation could not start.');
   return data.project;
@@ -81,8 +84,28 @@ export async function deleteProject(projectId: string): Promise<void> {
 }
 
 export async function retryFromStep(projectId: string): Promise<ForgeProject | null> {
+  await requireVerifiedCreditSession();
   const data = await pipeline({ op: 'retry_step', project_id: projectId });
   if (!data?.ok) throw new Error(data?.error || 'This step could not be retried.');
+  return data.project || null;
+}
+
+/**
+ * Browser → server report for the browser-owned avatar step
+ * (op `complete_avatar_step`): persists the submitted HeyGen video id, the
+ * finished video URL, or the exact failure, so the durable pipeline resumes
+ * from the next step without restarting or re-charging the project.
+ */
+export async function reportAvatarStep(projectId: string, update: {
+  state: 'submitted' | 'completed' | 'failed';
+  video_id?: string;
+  video_url?: string;
+  duration_sec?: number;
+  error?: string;
+  transparent_fallback?: boolean;
+}): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'complete_avatar_step', project_id: projectId, ...update });
+  if (!data?.ok) throw new Error(data?.error || 'The avatar result could not be saved to the project.');
   return data.project || null;
 }
 
@@ -314,6 +337,42 @@ async function heygen(path: string, init?: RequestInit): Promise<any> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`HeyGen HTTP ${response.status}: ${data?.error?.message || data?.message || data?.error || 'request failed'}`);
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Avatar render — browser-owned HeyGen submit + status poll.
+// The HeyGen credential proxy rejects server-function calls with 401
+// "Same-origin request required", so the durable pipeline pauses at the avatar
+// step and this signed-in tab drives the render through the same-origin proxy
+// above, then persists the result with reportAvatarStep.
+// ---------------------------------------------------------------------------
+
+export async function submitAvatarRender(payload: NonNullable<ForgeBrowserTask['payload']>): Promise<string> {
+  const data = await heygen('v2/video/generate', { method: 'POST', body: JSON.stringify(payload) });
+  const videoId = String(data?.data?.video_id || data?.video_id || '');
+  if (!videoId) throw new Error('HeyGen accepted the avatar request but did not return data.video_id.');
+  return videoId;
+}
+
+export interface AvatarRenderStatus {
+  status: string;
+  url: string | null;
+  durationSec: number;
+  error: string | null;
+}
+
+export async function pollAvatarRender(videoId: string): Promise<AvatarRenderStatus> {
+  const data = await heygen(`v1/video_status.get?video_id=${encodeURIComponent(videoId)}`);
+  const video = data?.data || data || {};
+  const failure = video?.error;
+  return {
+    status: String(video?.status || 'processing').toLowerCase(),
+    url: typeof video?.video_url === 'string' && /^https?:\/\//i.test(video.video_url) ? String(video.video_url) : null,
+    durationSec: Number(video?.duration) || 0,
+    error: failure
+      ? [failure.code, failure.message, failure.detail].filter(Boolean).join(': ') || 'HeyGen reported that the avatar render failed.'
+      : null,
+  };
 }
 
 // HeyGen caps list page sizes at 50 — a larger `limit` is rejected with

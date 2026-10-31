@@ -9,7 +9,7 @@
  * caption treatment — concept MOTION GRAPHICS at each caption moment (animated
  * SVG from captionGraphics.MOTION_GRAPHICS_LIB) instead of burned-in text.
  */
-import { submitRender } from '../../lib/render/remotion';
+import { submitRender } from '../../lib/render/cloudRender';
 import { MOTION_GRAPHICS_LIB } from './captionGraphics';
 
 export async function submitRenderV2(props: Record<string, unknown>, durationInFrames: number, width: number, height: number): Promise<string> {

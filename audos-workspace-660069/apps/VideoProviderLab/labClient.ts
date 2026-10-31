@@ -53,6 +53,17 @@ export function workspaceHeaders(extra?: Record<string, string>): Record<string,
   };
 }
 
+/**
+ * Headers for the Veo/Seedance/Omni proxies (/api/veo/*, /api/generate/video).
+ * They record X-App-Id in veo_generations.app_id, a foreign key to apps.id, and
+ * the space id is not an apps row — so the header is left off and the proxy
+ * resolves the caller from the workspace token.
+ */
+function veoHeaders(extra?: Record<string, string>): Record<string, string> {
+  const { 'X-App-Id': _omitted, ...rest } = workspaceHeaders(extra);
+  return rest;
+}
+
 /** Carries the status code and path so a card can label a 402 or a 404 exactly. */
 export class RequestError extends Error {
   status: number;
@@ -89,8 +100,8 @@ function providerMessage(value: unknown, fallback = ''): string {
   return fallback;
 }
 
-async function jsonFetch(url: string, init: RequestInit = {}) {
-  const response = await workspaceFetch(url, init);
+async function jsonFetch(url: string, init: RequestInit = {}, options: { skipAppId?: boolean } = {}) {
+  const response = await workspaceFetch(url, init, options);
   const raw = await response.text();
   let data: any = null;
   try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
@@ -440,7 +451,9 @@ async function readProviderStatus(provider: string, operationId: string): Promis
     : `/api/veo/status/${encodeURIComponent(operationId)}`;
   let response: Response;
   try {
-    response = await fetch(path, { headers: workspaceHeaders() });
+    response = await fetch(path, {
+      headers: path.startsWith('/api/veo/') ? veoHeaders() : workspaceHeaders(),
+    });
   } catch (error) {
     return { kind: 'unknown', note: errorText(error) };
   }
@@ -743,7 +756,7 @@ function pollVeoStatus(ctx: RunContext, operationId: string, label: string, capM
     onNote: ctx.note,
     timeoutMessage: `${label} is still rendering after ${Math.round(capMs / 1000)}s. The job may still land — the operation id is ${operationId}.`,
     step: async (elapsed) => {
-      const state = await jsonFetch(path, { headers: workspaceHeaders() });
+      const state = await jsonFetch(path, { headers: veoHeaders() }, { skipAppId: true });
       const status = String(state?.status || '');
       // The proxy reports `status`; `done` is accepted too in case an older
       // build of the endpoint answers with the operation-style boolean.
@@ -812,8 +825,8 @@ async function runGroupA(ctx: RunContext, model: LabModel, input: LabRunInput): 
   ctx.note(`Submitting ${model.modelId}${sourceVideo ? ' (video edit)' : ''}…`);
   ctx.tried(`POST ${path} · model=${model.modelId}${sourceVideo ? ' · videoData=<attached>' : ''}`);
   const start = await jsonFetch(path, {
-    method: 'POST', headers: workspaceHeaders(), body: JSON.stringify(body),
-  });
+    method: 'POST', headers: veoHeaders(), body: JSON.stringify(body),
+  }, { skipAppId: true });
 
   const operationId = String(start?.operationId || start?.operation_id || '');
   if (!operationId) throw new Error(`${model.name} accepted the request but returned no operationId.`);
@@ -852,9 +865,9 @@ async function runVeoManaged(ctx: RunContext, model: LabModel, input: LabRunInpu
   ctx.tried(`POST ${path}`);
   const start = await jsonFetch(path, {
     method: 'POST',
-    headers: workspaceHeaders(),
+    headers: veoHeaders(),
     body: JSON.stringify(body),
-  });
+  }, { skipAppId: true });
   const operationId = String(start?.operationId || '');
   if (!operationId) throw new Error('The managed proxy accepted the request but returned no operationId.');
   if (/_error_/.test(operationId)) {

@@ -326,6 +326,6 @@ export interface ProjectRow {
 export const FPS = 30;
 export const OUT_W = 1920;
 export const OUT_H = 1080;
-export const MAX_RENDER_SEC = 570;        // chunk past ~9.5 min (render cap is 10)
+export const MAX_RENDER_SEC = 180;        // cloud complexity ceiling: split at 3 minutes
 export const MAX_VIDEO_ASSETS = 6;        // wallet guardrails per project
 export const MAX_IMAGE_ASSETS = 10;

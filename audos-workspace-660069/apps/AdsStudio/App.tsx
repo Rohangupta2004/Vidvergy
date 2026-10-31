@@ -56,6 +56,8 @@ import { fetchBrandFromWebsite, matchSavedBrand, type BrandRecord, useBrandKit }
 import CampaignContextView from './CampaignContextView';
 import CompetitorsTab from './CompetitorsTab';
 import { saveVideoToHistory } from '../../lib/videoHistory';
+import ResearchLibrary from '../../components/ResearchLibrary';
+import type { CreativeBreakdown, ResearchItem } from '../../lib/researchLibrary';
 
 function OwnerVideoIntegrationPicker(props: any) {
   const { userRole } = useSpaceRuntime();
@@ -240,13 +242,27 @@ function formatClipElapsed(ms: number): string {
 // ---------------------------------------------------------------------------
 
 function VergeyeAdsStudioApp() {
-  const [surface, setSurface] = useState<'intelligence' | 'competitors' | 'campaign' | 'create'>('intelligence');
+  const [surface, setSurface] = useState<'intelligence' | 'research' | 'competitors' | 'campaign' | 'create'>('intelligence');
   if (surface === 'campaign') return <CampaignContextView onBack={() => setSurface('intelligence')} />;
   if (surface === 'competitors') return <CompetitorsTab onBack={() => setSurface('intelligence')} />;
+  if (surface === 'research') {
+    const useInBrief = (item: ResearchItem, breakdown: CreativeBreakdown | null) => {
+      const current = loadSession();
+      const source = [
+        `Inspiration source: ${item.platform}${item.advertiser ? ` · ${item.advertiser}` : ''}.`,
+        `Use only the original structure and angle; do not copy footage, branding, names, or exact wording.`,
+        breakdown ? `Observed hook: ${breakdown.hook}\nObserved angle: ${breakdown.angle}\nObserved offer: ${breakdown.offer}\nObserved format: ${breakdown.format}` : `Observed copy/transcript: ${item.copy_transcript || 'not reported'}`,
+      ].join('\n');
+      saveSession({ ...current, productDescription: [current.productDescription, source].filter(Boolean).join('\n\n'), offerCta: breakdown?.cta && breakdown.cta !== 'Not observable' ? breakdown.cta : current.offerCta, currentStep: 1 });
+      setSurface('create');
+    };
+    return <ResearchLibrary title="Research" subtitle="Search public ads and creatives once, keep the saved evidence, and turn a selected structure into an original ad brief." onUseItem={useInBrief} />;
+  }
   if (surface === 'intelligence') {
     return (
       <div style={{ minHeight: '100%', position: 'relative' }}>
-        <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8 }}>
+        <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button type="button" onClick={() => setSurface('research')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.accent, color: 'var(--vg-on-accent)', cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Research</button>
           <button type="button" onClick={() => setSurface('competitors')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.raised, color: T.accent, cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Competitors</button>
           <button type="button" onClick={() => setSurface('campaign')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Campaign Context</button>
         </div>
@@ -257,8 +273,9 @@ function VergeyeAdsStudioApp() {
   return (
     <div style={{ minHeight: '100%', position: 'relative' }}>
       <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8 }}>
+        <button type="button" onClick={() => setSurface('research')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.raised, color: T.accent, cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Research</button>
         <button type="button" onClick={() => setSurface('campaign')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Campaign Context</button>
-        <button type="button" onClick={() => setSurface('intelligence')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>← Discover &amp; Research</button>
+        <button type="button" onClick={() => setSurface('intelligence')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>← Discover</button>
       </div>
       <AdsStudioApp />
     </div>

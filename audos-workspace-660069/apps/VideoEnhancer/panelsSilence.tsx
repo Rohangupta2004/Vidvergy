@@ -33,9 +33,9 @@ export default function SilencePanel({ state, onDetect, onParam, onToggleRegion,
   const includedCount = state.regions.filter((r) => r.included).length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className="ve-v2-panel" style={{ display: 'flex', flexDirection: 'column', gap: 10, fontFamily: "Manrope, 'Segoe UI', system-ui, sans-serif", color: '#f2f3f5' }}>
 
-      <div style={{ background: 'var(--space-surface-panel)', border: '1px solid var(--space-border-default)', borderRadius: 12, padding: 12 }}>
+      <div style={{ background: '#15171a', border: '1px solid #2a2e34', borderRadius: 12, padding: 12 }}>
         <button
           onClick={onDetect}
           disabled={!hasFile || busy}
@@ -44,9 +44,9 @@ export default function SilencePanel({ state, onDetect, onParam, onToggleRegion,
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             fontSize: 13.5, fontWeight: 700, padding: '11px 14px', borderRadius: 10, border: 'none',
             cursor: hasFile && !busy ? 'pointer' : 'not-allowed',
-            background: hasFile && !busy ? 'var(--space-brand-primary-600)' : 'var(--space-surface-panel-strong)',
-            color: hasFile && !busy ? '#fff' : 'var(--space-text-muted)',
-            boxShadow: hasFile && !busy ? '0 8px 22px -10px color-mix(in srgb, var(--space-brand-primary-600) 80%, transparent)' : 'none',
+            background: hasFile && !busy ? '#f2b544' : '#24282d',
+            color: hasFile && !busy ? '#21180a' : '#878d97',
+            boxShadow: hasFile && !busy ? '0 8px 22px -10px rgba(242,181,68,.75)' : 'none',
           }}
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Scissors size={15} />}
@@ -65,7 +65,7 @@ export default function SilencePanel({ state, onDetect, onParam, onToggleRegion,
         )}
       </div>
 
-      <Section title="Detection settings" icon={<Scissors size={14} style={{ color: 'var(--space-text-brand)' }} />} defaultOpen>
+      <Section title="Detection settings" icon={<Scissors size={14} style={{ color: '#e5675a' }} />} defaultOpen>
         <Slider label="Silence threshold" value={state.thresholdDb} min={-70} max={-10} unit=" dB" onChange={(v) => onParam({ thresholdDb: v })} />
         <Slider label="Minimum silence duration" value={state.minDur} min={0.1} max={2} step={0.05} onChange={(v) => onParam({ minDur: v })} format={(v) => v.toFixed(2) + ' s'} />
         <Slider label="Keep padding around cuts" value={state.padMs} min={0} max={500} step={10} unit=" ms" onChange={(v) => onParam({ padMs: v })} />
@@ -75,16 +75,16 @@ export default function SilencePanel({ state, onDetect, onParam, onToggleRegion,
       </Section>
 
       {stats && state.status === 'ready' && includedCount > 0 && (
-        <div style={{ background: 'color-mix(in srgb, var(--space-semantic-success-500) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--space-semantic-success-500) 40%, transparent)', borderRadius: 12, padding: '10px 12px', fontSize: 13, fontWeight: 600, color: 'var(--space-text-primary)' }}>
+        <div style={{ background: 'rgba(95,203,138,.08)', border: '1px solid rgba(95,203,138,.34)', borderRadius: 12, padding: '10px 12px', fontSize: 13, fontWeight: 600, color: '#f2f3f5' }}>
           Original: {formatDuration(stats.original)} → After cuts: {formatDuration(stats.after)}
           <span style={{ color: 'var(--space-semantic-success-600)' }}> (saves {stats.savedPct}%)</span>
         </div>
       )}
 
       {state.status === 'ready' && state.regions.length > 0 && (
-        <div style={{ background: 'var(--space-surface-panel)', border: '1px solid var(--space-border-default)', borderRadius: 12, padding: 12 }}>
+        <div style={{ background: '#15171a', border: '1px solid #2a2e34', borderRadius: 12, padding: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <Play size={14} style={{ color: 'var(--space-text-brand)' }} />
+            <Play size={14} style={{ color: '#f2b544' }} />
             <span style={{ fontSize: 13, fontWeight: 700 }}>Preview cuts</span>
             <div style={{ marginLeft: 'auto' }}><Toggle on={state.previewCuts} onChange={onPreviewCuts} label="" /></div>
           </div>
@@ -92,7 +92,7 @@ export default function SilencePanel({ state, onDetect, onParam, onToggleRegion,
 
           <div style={{ marginTop: 10, maxHeight: 240, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
             {state.regions.map((r, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--space-surface-card)', borderRadius: 8, padding: '6px 9px', opacity: r.included ? 1 : 0.5 }}>
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#1c1f23', border: '1px solid #2a2e34', borderRadius: 8, padding: '6px 9px', opacity: r.included ? 1 : 0.5 }}>
                 <Toggle on={r.included} onChange={() => onToggleRegion(i)} label="" />
                 <span style={{ fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: 'var(--space-text-primary)' }}>
                   {formatTime(r.start)} → {formatTime(r.end)}

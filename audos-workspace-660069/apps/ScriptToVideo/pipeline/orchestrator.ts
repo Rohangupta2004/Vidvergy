@@ -30,14 +30,14 @@
 import {
   Aspect, AtReference, Film, FilmAudio, FilmCharacter, FilmCharacterProfile, FilmScene, MAX_OPERATION_ID_CHARS,
   MachineState, OnScreenTextItem, ParsedScene, PlanScene, ReferenceAsset, ReferenceType,
-  SceneDialogue, VideoClipSpec, db, generateBackdropImage, newSceneKey,
+  SceneDialogue, VideoClipSpec, db, generateBackdropImage, newSceneKey, uploadDataUrl,
   resolveAtMentions, sceneFingerprint,
 } from '../api';
 import {
   buildManualScenePrompt, manualSceneNegative, manualSceneSegment, parseManualScript,
 } from '../manualScript';
 import {
-  analyzeScriptCast, askOpusJson, characterPortraitBrief, extractStyleFingerprint, extractVisualAttributes,
+  analyzeScriptCast, askGptVisionJson, askOpusJson, characterPortraitBrief, extractStyleFingerprint, extractVisualAttributes,
   prepareScenePrompt, segmentScript, validateScene,
 } from './opus';
 import { VideoModelService, capText, resolveDuration, resolveVideoModel } from './videoModelService';
@@ -175,9 +175,10 @@ function onScreenCharacterReferences(film: Film, scene: FilmScene): ReferenceAss
   const sourceText = `${scene.script_segment || ''} ${scene.dialogue?.speaker || ''} ${scene.dialogue?.line || ''}`.toLowerCase();
   const named = profiles.filter((profile) => [profile.id, profile.name].some((value) => sourceText.includes(String(value || '').toLowerCase()))).map((profile) => String(profile.id));
   const ids = Array.from(new Set([...explicit, ...named]));
-  if (!ids.length && /\b(person|people|man|woman|boy|girl|character|speaker|customer|athlete)\b/i.test(sourceText)) {
-    const main = profiles.find((profile) => profile.kind === 'main');
-    if (main) ids.push(String(main.id));
+  if (!ids.length && scene.dialogue?.speaker) {
+    const speaker = String(scene.dialogue.speaker).trim().toLowerCase();
+    const matchedSpeaker = profiles.find((profile) => [profile.id, profile.name].some((value) => String(value || '').trim().toLowerCase() === speaker));
+    if (matchedSpeaker) ids.push(String(matchedSpeaker.id));
   }
   const cast = Array.isArray(film.character_refs) ? film.character_refs : [];
   const seen = new Set<string>();
@@ -226,13 +227,43 @@ export function allScenesDone(scenes: FilmScene[]): boolean {
  * becomes 30+30 (subject to the source plan's measured total), not six browser-
  * dependent 10-second jobs. The final remainder is rebalanced, never padded or
  * discarded. */
+function splitScriptVerbatim(text: string, count: number): string[] {
+  if (count <= 1) return [text];
+  const pieces: string[] = [];
+  let start = 0;
+  for (let part = 1; part < count; part += 1) {
+    const target = Math.round((text.length * part) / count);
+    let quote = '';
+    const boundaries: number[] = [];
+    for (let index = start; index < text.length - 1; index += 1) {
+      const char = text[index];
+      if ((char === '"' || char === "'") && text[index - 1] !== '\\') quote = quote === char ? '' : quote || char;
+      if (!quote && /[.!?;,:\n]/.test(char) && /\s/.test(text[index + 1] || '')) boundaries.push(index + 1);
+    }
+    const cut = boundaries.sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0] || Math.max(start + 1, Math.min(text.length - (count - part), target));
+    pieces.push(text.slice(start, cut)); start = cut;
+  }
+  pieces.push(text.slice(start));
+  return pieces;
+}
+
 function packPlannedBlocks(source: any[], model: VideoModelConfig, targetDuration?: number | null): any[] {
   const max = Math.max(4, Number(model.safeMaxDuration) || 8);
   const min = Math.max(4, Number(model.minDuration) || 4);
-  const blocks = (Array.isArray(source) ? source : []).map((scene, index) => {
-    const duration = Math.round(Number(scene?.duration_s) || max);
-    if (duration > max) throw new Error(`${model.label} block ${index + 1} is ${duration}s; re-plan it at ${max}s or less without splitting dialogue.`);
-    return { ...scene, duration_s: Math.max(min, duration), transition: index === 0 ? 'new_shot' : scene.transition === 'continuous' ? 'continuous' : 'new_shot' };
+  const blocks = (Array.isArray(source) ? source : []).flatMap((scene, index) => {
+    const requested = Math.round(Number(scene?.duration_s) || max);
+    const sourceText = String(scene.script_segment || '');
+    const parts = requested > max ? splitSegmentForModel(model.apiModel, sourceText, requested) : [{ text: sourceText, durationS: Math.max(min, requested) }];
+    const exactParts = splitScriptVerbatim(sourceText, parts.length);
+    return parts.map((part, partIndex) => ({
+      ...scene,
+      script_segment: exactParts[partIndex],
+      duration_s: Math.max(min, Math.min(max, part.durationS)),
+      transition: index === 0 && partIndex === 0 ? 'new_shot' : partIndex > 0 ? 'continuous' : scene.transition === 'continuous' ? 'continuous' : 'new_shot',
+      timed_beats: partIndex === 0 ? scene.timed_beats : [{ start_s: 0, end_s: part.durationS, action: scene.visual_goal || scene.summary || '', dialogue: undefined }],
+      dialogue: partIndex === 0 ? scene.dialogue : null,
+      duration_notes: [...(Array.isArray(scene.duration_notes) ? scene.duration_notes : []), ...(parts.length > 1 ? [`Split the ${requested}s block at a sentence or clause boundary into ${parts.length} legal ${model.label} blocks.`] : [])],
+    }));
   });
   if (!blocks.length) return [];
   const wanted = Math.max(0, Math.round(Number(targetDuration) || 0));
@@ -244,27 +275,34 @@ function packPlannedBlocks(source: any[], model: VideoModelConfig, targetDuratio
       blocks[i].duration_s += change;
       delta -= change;
     }
-    if (delta !== 0) throw new Error(`The accepted script cannot fit ${wanted}s as ${min}–${max}s ${model.label} blocks without cutting or padding dialogue. Revise the script or duration.`);
+    if (delta !== 0) blocks.forEach((block) => { block.duration_notes = [...(block.duration_notes || []), `Requested ${wanted}s; the closest legal ${model.label} plan differs by ${Math.abs(delta)}s without cutting dialogue.`]; });
   }
   return blocks.map((block) => {
     const duration = Number(block.duration_s);
     const supplied = Array.isArray(block.timed_beats) ? block.timed_beats.filter((beat: any) => Number(beat?.end_s) > Number(beat?.start_s)) : [];
-    const timedBeats = supplied.length ? supplied.map((beat: any) => ({
-      start_s: Number(beat.start_s), end_s: Number(beat.end_s), action: String(beat.action || block.visual_goal || block.summary || ''),
-      camera: beat.camera ? String(beat.camera) : undefined, dialogue: beat.dialogue ? String(beat.dialogue) : undefined,
-      audio: beat.dialogue ? (block.dialogue?.kind === 'narrator' ? 'narration' : 'native dialogue') : 'native ambience/effects',
-    })) : [{ start_s: 0, end_s: duration, action: String(block.visual_goal || block.summary || ''), dialogue: block.dialogue?.line || undefined, audio: block.dialogue?.kind === 'narrator' ? 'narration' : block.dialogue?.line ? 'native dialogue' : 'native ambience/effects' }];
-    const last = timedBeats[timedBeats.length - 1];
-    if (timedBeats[0].start_s !== 0 || last.end_s !== duration) throw new Error(`Block timecodes must cover 0–${duration}s exactly.`);
-    for (const beat of timedBeats) {
+    const sourceBeats = supplied.length ? supplied : [{ start_s: 0, end_s: duration, action: String(block.visual_goal || block.summary || ''), dialogue: block.dialogue?.line || undefined }];
+    const weights = sourceBeats.map((beat: any) => {
       const line = String(beat.dialogue || '');
-      if (!line) continue;
       const words = line.trim().split(/\s+/).filter(Boolean).length;
-      const hindi = /[\u0900-\u097F]/.test(line);
-      const capacity = (Number(beat.end_s) - Number(beat.start_s)) * (hindi ? 2.2 : 2.5);
-      if (words > capacity + 0.01) throw new Error(`Dialogue in ${beat.start_s}–${beat.end_s}s needs more speaking time. Lengthen or move the whole line; it was not cut.`);
-    }
-    return { ...block, timed_beats: timedBeats, visual_goal: timedBeats.map((beat: any) => `[${beat.start_s}–${beat.end_s}s] ${beat.action}`).join('\n') };
+      const speechNeed = words ? words / (/[\u0900-\u097F]/.test(line) ? 2.2 : 2.5) : 0;
+      return Math.max(0.5, Number(beat.end_s) - Number(beat.start_s) || 1, speechNeed);
+    });
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    let cursor = 0;
+    const timedBeats = sourceBeats.map((beat: any, beatIndex: number) => {
+      const start_s = Math.round(cursor * 100) / 100;
+      cursor = beatIndex === sourceBeats.length - 1 ? duration : cursor + duration * (weights[beatIndex] / totalWeight);
+      const end_s = beatIndex === sourceBeats.length - 1 ? duration : Math.round(cursor * 100) / 100;
+      return { ...beat, start_s, end_s, action: String(beat.action || block.visual_goal || block.summary || ''), camera: beat.camera ? String(beat.camera) : undefined, dialogue: beat.dialogue ? String(beat.dialogue) : undefined, audio: beat.dialogue ? (block.dialogue?.kind === 'narrator' ? 'narration' : 'native dialogue') : 'native ambience/effects' };
+    });
+    const tight = timedBeats.find((beat: any) => {
+      const line = String(beat.dialogue || '');
+      const words = line.trim().split(/\s+/).filter(Boolean).length;
+      const need = words ? words / (/[\u0900-\u097F]/.test(line) ? 2.2 : 2.5) : 0;
+      return need > Number(beat.end_s) - Number(beat.start_s) + 0.05;
+    });
+    const speech_warning = tight ? `Speech is tight: ${String(tight.dialogue).trim().split(/\s+/).filter(Boolean).length} words may not fit ${(Number(tight.end_s) - Number(tight.start_s)).toFixed(1)} seconds. Review timing before Start.` : block.speech_warning;
+    return { ...block, timed_beats: timedBeats, ...(speech_warning ? { speech_warning } : {}), visual_goal: timedBeats.map((beat) => `[${beat.start_s}–${beat.end_s}s] ${beat.action}`).join('\n') };
   });
 }
 
@@ -592,7 +630,7 @@ export async function createAndSegmentFilm(params: {
         audio_enabled: params.audioEnabled !== false,
         narration_enabled: params.audioEnabled !== false && params.narrationEnabled === true,
         characters_speak: params.audioEnabled !== false && params.charactersSpeak === true,
-        cast_reviewed: false,
+        cast_reviewed: characterRefs.every((character) => character.sheet_required === false),
       },
       character_refs: characterRefs,
       stage_note: characterRefs.length
@@ -622,30 +660,63 @@ function castSlug(value: string): string {
 /** Generate every proposed sheet before plan approval. Existing @name library
  * references and a creator-uploaded cast image are reused first; only the
  * remaining sheets spend image-generation credits. Nothing is auto-approved. */
-async function requestCharacterSheet(profile: FilmCharacterProfile, visualStyle: string, sourceUrl?: string): Promise<string> {
+async function requestCharacterSheet(profile: FilmCharacterProfile, visualStyle: string, sourceUrl?: string): Promise<{ url: string; model: string }> {
   const prompt = characterPortraitBrief(profile, visualStyle);
-  const response = sourceUrl
-    ? await workspaceFetch('/api/generate/image-to-image', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-image-1.5', prompt, images: [{ data: sourceUrl, label: 'PERSON IDENTITY: likeness only' }], referenceLimit: 1, inputFidelity: 'high', quality: 'medium', size: '1536x1024', fallbackPolicy: 'none' }),
-      })
-    : await workspaceFetch('/api/veo/generate/image', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gemini-3.1-flash-image', prompt, aspectRatio: '16:9' }),
-      });
-  const data = await response.json().catch(() => null);
-  const url = String(data?.imageUrl || data?.url || '');
-  if (!response.ok || !isHttpUrl(url)) throw new Error(String(data?.error?.message || data?.error || `Character sheet generation failed (HTTP ${response.status}).`));
-  return url;
+  let lastError = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = sourceUrl
+        ? await workspaceFetch('/api/generate/image-to-image', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'gpt-image-1.5', prompt, images: [{ data: sourceUrl, label: 'PERSON IDENTITY: likeness only' }], referenceLimit: 1, inputFidelity: 'high', quality: 'medium', size: '1536x1024', fallbackPolicy: 'none' }),
+          })
+        : await workspaceFetch('/api/veo/generate/image', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: 'gemini-3.1-flash-image', prompt, aspectRatio: '16:9' }),
+          });
+      const data = await response.json().catch(() => null);
+      let url = String(data?.imageUrl || data?.url || '');
+      if (response.ok && url.startsWith('data:image/')) url = await uploadDataUrl(url, `s2v-character-${castSlug(profile.name)}-${Date.now()}.jpg`);
+      if (response.ok && isHttpUrl(url)) return { url, model: sourceUrl ? 'gpt-image-1.5' : 'gemini-3.1-flash-image' };
+      lastError = String(data?.error?.message || data?.error || `Character sheet generation failed (HTTP ${response.status}).`);
+      if (![408, 409, 425, 429, 500, 502, 503, 504].includes(response.status) && !/temporar|overload|timeout/i.test(lastError)) break;
+    } catch (error: any) {
+      lastError = String(error?.message || error);
+      if (!/network|fetch|temporar|overload|timeout|timed out/i.test(lastError)) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, [700, 1800, 4000][attempt]));
+  }
+  try {
+    return { url: await generateBackdropImage(prompt, '16:9', 'draft'), model: 'asset-image-gen fallback' };
+  } catch (fallbackError: any) {
+    throw new Error(`${lastError || 'The primary image route failed.'} Fallback: ${String(fallbackError?.message || fallbackError)}`);
+  }
 }
 
-async function inspectCharacterSheet(profile: FilmCharacterProfile, url: string): Promise<{ pass: boolean; issues: string[] }> {
-  const result = await askOpusJson<{ pass: boolean; issues: string[] }>({
-    system: 'Use the GPT 6.1 Sol visual handoff to verify one character sheet. Reply only with JSON {"pass":boolean,"issues":string[]}. Pass only when there is one large face close-up plus full-body front, three-quarter, side and back views; every panel is the same person with matching face, hair, build, wardrobe, shoes and accessories; backdrop is plain; there are no extra people and no text.',
-    user: `CHARACTER: ${profile.name}. WARDROBE: ${profile.wardrobe}. APPEARANCE: ${profile.appearance}.`,
-    images: [url], maxTokens: 2000, effort: 'medium',
-  });
-  return { pass: result?.pass === true, issues: Array.isArray(result?.issues) ? result.issues.map(String) : [] };
+async function inspectCharacterSheet(profile: FilmCharacterProfile, url: string): Promise<{ pass: boolean; issues: string[]; unavailable?: boolean }> {
+  try {
+    const result = await askGptVisionJson<{ pass: boolean; issues: string[] }>(
+      'Inspect this character sheet and reply only with JSON {"pass":boolean,"issues":string[]}. Pass only when it has one large face close-up and four full-body views: front, three-quarter, side and back; every panel is the same person with matching face, hair, build, wardrobe, shoes and accessories; the backdrop is plain; there are no extra people and no text.',
+      `CHARACTER: ${profile.name}. WARDROBE: ${profile.wardrobe}. APPEARANCE: ${profile.appearance}.`,
+      [url],
+    );
+    return { pass: result?.pass === true, issues: Array.isArray(result?.issues) ? result.issues.map(String) : [] };
+  } catch (error: any) {
+    return { pass: true, unavailable: true, issues: [`Vision check unavailable — review by eye. ${String(error?.message || error)}`.slice(0, 300)] };
+  }
+}
+
+export async function generateCharacterSheet(profile: FilmCharacterProfile, visualStyle: string, sourceUrl?: string): Promise<{ url: string; imageModel: string; reviewByEye: boolean; issues: string[] }> {
+  const candidates: Array<{ url: string; imageModel: string; issues: string[] }> = [];
+  for (let pass = 0; pass < 2; pass += 1) {
+    const generated = await requestCharacterSheet(profile, visualStyle, sourceUrl);
+    const check = await inspectCharacterSheet(profile, generated.url);
+    if (check.unavailable) return { url: generated.url, imageModel: generated.model, reviewByEye: true, issues: check.issues };
+    if (check.pass) return { url: generated.url, imageModel: generated.model, reviewByEye: false, issues: [] };
+    candidates.push({ url: generated.url, imageModel: generated.model, issues: check.issues });
+  }
+  const best = candidates.sort((a, b) => a.issues.length - b.issues.length)[0];
+  return { url: best.url, imageModel: best.imageModel, reviewByEye: true, issues: best.issues };
 }
 
 async function generateInitialCharacterSheets(
@@ -659,23 +730,29 @@ async function generateInitialCharacterSheets(
   const output: FilmCharacter[] = [];
   for (let index = 0; index < profiles.length; index += 1) {
     const profile = profiles[index];
+    const voiceOnly = profile.kind === 'narrator' && /voice[- ]only|no (?:physical|on-screen) body|non[- ]corporeal|never shown|off[- ]screen/i.test(`${profile.role} ${profile.age_appearance} ${profile.appearance}`);
+    if (voiceOnly) {
+      output.push({ ...profile, url: null, approved: true, source: 'generated', sheet_required: false });
+      continue;
+    }
     const matched = atReferences.find((ref) => castSlug(ref.name) === castSlug(profile.name) || castSlug(ref.name) === castSlug(profile.id));
     const identitySource = index === 0 && isHttpUrl(uploadedUrl) ? String(uploadedUrl) : String(matched?.url || '');
     const source: FilmCharacter['source'] = identitySource ? (index === 0 && uploadedUrl ? 'uploaded' : 'library') : 'generated';
     let url = '';
     let imageError = '';
+    let imageModel = identitySource ? 'gpt-image-1.5' : 'gemini-3.1-flash-image';
+    let reviewByEye = false;
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        say(hooks, `${attempt ? 'Regenerating' : 'Generating'} ${profile.name}'s 16:9 character sheet…`);
-        url = await requestCharacterSheet(profile, visualStyle, identitySource || undefined);
-        const check = await inspectCharacterSheet(profile, url);
-        if (check.pass) { imageError = ''; break; }
-        imageError = `Vision check: ${check.issues.join('; ') || 'sheet layout or identity consistency failed'}`.slice(0, 500);
-      }
+      say(hooks, `Generating and checking ${profile.name}'s 16:9 character sheet…`);
+      const generated = await generateCharacterSheet(profile, visualStyle, identitySource || undefined);
+      url = generated.url;
+      imageModel = generated.imageModel;
+      reviewByEye = generated.reviewByEye;
+      imageError = generated.issues.join('; ').slice(0, 500);
     } catch (error: any) {
       imageError = String(error?.message || error).slice(0, 500);
     }
-    const sheet: FilmCharacter = { ...profile, url: url || null, approved: false, source, ...(imageError ? { image_error: `${imageError}. Review or regenerate this sheet before approval.` } : {}), ...(url ? { image_model: identitySource ? 'gpt-image-1.5' : 'gemini-3.1-flash-image' } : {}) };
+    const sheet: FilmCharacter = { ...profile, url: url || null, approved: false, source, sheet_required: true, ...(reviewByEye ? { image_review_by_eye: true } : {}), ...(imageError ? { image_error: imageError } : {}), ...(url ? { image_model: imageModel } : {}) };
     output.push(sheet);
     if (url) await db.addAsset({ film_id: film.id, kind: 'character', name: `${profile.name} character sheet`, description: profile.appearance.slice(0, 200), url });
   }
@@ -728,6 +805,9 @@ export async function prepareScene(
     // card permits a later scene to proceed without that frame.
     const existingSpec = (scene.spec || {}) as VideoClipSpec;
     const assets: ReferenceAsset[] = [];
+    if (plannedCut === 'new_shot' && isHttpUrl(existingSpec.storyboard_url)) {
+      assets.push({ role: 'first_frame', url: String(existingSpec.storyboard_url), type: 'storyboard', label: `Block ${scene.idx + 1} storyboard keyframe`, priority: 600, critical: true });
+    }
     let continuation = false;
     let referenceType: ReferenceType = 'none';
     const immediate = scene.idx > 0 ? immediatePreviousScene(scenes, scene.idx) : null;
@@ -1037,7 +1117,7 @@ export async function createManualScriptFilm(params: {
         audio_enabled: params.audioEnabled !== false,
         narration_enabled: params.audioEnabled !== false && params.narrationEnabled === true,
         characters_speak: params.audioEnabled !== false && params.charactersSpeak === true,
-        cast_reviewed: false,
+        cast_reviewed: characterRefs.every((character) => character.sheet_required === false),
       },
       character_refs: characterRefs,
       stage_note: characterRefs.length

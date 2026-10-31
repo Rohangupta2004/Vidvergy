@@ -38,7 +38,13 @@ import {
 } from './remotionCompositions';
 import type { BrandObject, ScrapedVideo, ScriptVariant } from './brandreel/types';
 import { brandTheme } from './brandreel/types';
-import { buildBrandObject, scrapeBrand, writeScriptVariants } from './brandreel/api';
+import {
+  buildBrandObject,
+  pollRender as pollCloudComposition,
+  scrapeBrand,
+  submitRender as submitCloudComposition,
+  writeScriptVariants,
+} from './brandreel/api';
 import { BRAND_REEL_TSX, buildReelProps } from './brandreel/composition';
 import StoryboardColumns from './brandreel/StoryboardColumns';
 import { poll } from '../../lib/poll';
@@ -71,7 +77,7 @@ function saveRenderState(state: Record<string, unknown> | null) {
     else window.localStorage.setItem(RENDER_STORE_KEY, JSON.stringify({ ...state, ts: Date.now() }));
   } catch { /* storage unavailable — the render still completes server-side */ }
 }
-function readRenderState(): { operationId?: string; renderUrl?: string; ts?: number } | null {
+function readRenderState(): { operationId?: string; renderUrl?: string; aspect?: '16:9' | '9:16'; ts?: number } | null {
   try {
     const raw = window.localStorage.getItem(RENDER_STORE_KEY);
     const parsed = raw ? JSON.parse(raw) : null;
@@ -183,11 +189,11 @@ export default function RemotionStudio() {
     if (s.operationId && Date.now() - (s.ts || 0) < 30 * 60 * 1000) {
       setPhase('render');
       setStep(4);
-      setRenderNote('Rendering with Remotion…');
+      setRenderNote('Submitting the $0.05 cloud render…');
       void (async () => {
         try {
           const out = await poll(
-            () => callHook<any>('pv-render-composition', { operationId: s.operationId }),
+            () => pollCloudComposition(String(s.operationId), s.aspect || '16:9'),
             {
               interval: 2_000,
               timeout: 30 * 60 * 1_000,
@@ -403,7 +409,7 @@ export default function RemotionStudio() {
       //    the scene-based composition renders the variant's own scenes,
       //    durations and transition instead of the fixed UI/Story layout.
       setPhase('render');
-      setRenderNote('Rendering with Remotion…');
+      setRenderNote('Submitting the $0.05 cloud render…');
       const musicUrl = PV_MUSIC_BEDS.find((m) => m.id === musicBedId)?.url || '';
       let submission: Record<string, unknown>;
 
@@ -458,20 +464,20 @@ export default function RemotionStudio() {
         };
       }
 
-      // Short first budget so the operation id lands fast and is persisted —
-      // from that moment the render survives tab switches and app reopens.
-      let out = await callHook('pv-render-composition', {
-        ...submission,
-        fps: PV_FPS,
-        width: 1920,
-        height: 1080,
-        budgetMs: 20000,
-      });
-      if (out?.operationId) saveRenderState({ operationId: String(out.operationId) });
+      // Persist the operation id immediately: reloads resume the same paid job
+      // and never submit an accidental duplicate $0.05 render.
+      const renderAspect = mode === 'story' ? '9:16' : '16:9';
+      let out = await submitCloudComposition(
+        String(submission.compositionTsx),
+        (submission.props || {}) as Record<string, unknown>,
+        Number(submission.durationInFrames),
+        renderAspect,
+      );
+      if (out?.operationId) saveRenderState({ operationId: String(out.operationId), aspect: renderAspect });
       if (out?.status === 'rendering' && out.operationId) {
         const operationId = String(out.operationId);
         out = await poll(
-          () => callHook<any>('pv-render-composition', { operationId }),
+          () => pollCloudComposition(operationId, renderAspect),
           {
             interval: 2_000,
             timeout: 30 * 60 * 1_000,

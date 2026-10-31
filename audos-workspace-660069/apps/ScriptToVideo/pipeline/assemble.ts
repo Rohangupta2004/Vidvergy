@@ -14,7 +14,10 @@ import { WORKSPACE_ID, getWorkspaceToken, spaceId } from '../../../lib/workspace
 
 /** Stop an in-browser assembly immediately. Saved scenes and audio stay in
  * WorkspaceDB; the next Retry loads a fresh FFmpeg instance and resumes. */
+const aspectRetrying = new Set<string>();
+
 export function interruptAssembly(): void {
+  aspectRetrying.clear();
   void resetSharedFFmpeg();
 }
 
@@ -259,6 +262,18 @@ async function verifyAudibleAudio(ff: any, fileName: string): Promise<number> {
   return meanDb;
 }
 
+async function verifyOutputAspect(ff: any, fileName: string, aspect: Aspect): Promise<void> {
+  const logs: string[] = [];
+  const listener = ({ message }: any) => logs.push(String(message || ''));
+  ff.on('log', listener);
+  try { await ff.exec(['-i', fileName]); } finally { try { ff.off('log', listener); } catch {} }
+  const dimensions = Array.from(logs.join('\n').matchAll(/(?:^|\s)(\d{2,5})x(\d{2,5})(?:[\s,]|$)/g)).map((match) => ({ width: Number(match[1]), height: Number(match[2]) }));
+  const actual = dimensions.find((item) => item.width >= 320 && item.height >= 320);
+  if (!actual) throw new Error('The finished MP4 dimensions could not be verified. Your clips are safe; tap Retry.');
+  const valid = aspect === '9:16' ? actual.height > actual.width : aspect === '1:1' ? Math.abs(actual.width - actual.height) <= 2 : actual.width > actual.height;
+  if (!valid) throw new Error(`The finished ${aspect} film came back ${actual.width}×${actual.height}. It was not delivered; your clips are safe. Tap Retry.`);
+}
+
 async function drop(ff: any, cleanup: string[], ...names: string[]): Promise<void> {
   for (const name of names) {
     try { await ff.deleteFile(name); } catch { /* already gone */ }
@@ -402,6 +417,7 @@ export async function assembleFilm(
     const finishLayers = !!(finish && ((finish.narrationUrls?.length || 0) > 0 || finish.musicUrl || finish.captionsSrt || (finish.textOverlays?.length || 0) > 0));
     const outputName = finishLayers ? await applyFinish(ff, joinedName, finish!, aspect, cleanup, say) : joinedName;
     const audioMeanDb = finish?.requireAudibleAudio ? await verifyAudibleAudio(ff, outputName) : undefined;
+    await verifyOutputAspect(ff, outputName, aspect);
     const bytes = await ff.readFile(outputName);
     const blob = new Blob([bytes], { type: 'video/mp4' });
     for (const name of [...new Set(cleanup)]) { try { await ff.deleteFile(name); } catch { /* fs cleanup */ } }
@@ -412,17 +428,28 @@ export async function assembleFilm(
     return { url, durationS: Number(finish?.durationS) || 0, via: 'ffmpeg_wasm', audioMeanDb };
     }, { label: 'Script-to-Video assembly', timeoutMs: 8 * 60_000 });
   } catch (wasmError: any) {
+    if (aspect !== '16:9') {
+      const retryKey = `${aspect}:${clips.map((clip) => clip.url).join('|')}`;
+      if (!aspectRetrying.has(retryKey)) {
+        aspectRetrying.add(retryKey);
+        try {
+          say(`Resetting the video engine and retrying ${aspect} assembly once…`, 0.25);
+          await resetSharedFFmpeg();
+          return await assembleFilm(clips, aspect, onProgress, finish);
+        } finally { aspectRetrying.delete(retryKey); }
+      }
+      throw new Error(`${aspect} assembly failed after one clean FFmpeg retry: ${String(wasmError?.message || wasmError).slice(0, 220)}. No landscape fallback was created; your clips are safe. Tap Retry.`);
+    }
     // Finishing cannot silently disappear. The stitch fallback has no audio or
     // caption mixer, so an opted-in finish must fail clearly and preserve the
     // previously assembled film.
     if (finishRequested) throw wasmError;
-    say('FFmpeg unavailable — using the platform joiner…', 0.5);
-    let url: string;
+    say('FFmpeg unavailable — using the 16:9 platform joiner…', 0.5);
     try {
-      url = await platformStitch(clips.map((c) => c.url));
+      const url = await platformStitch(clips.map((c) => c.url));
+      return { url, durationS: 0, via: 'platform_stitch' };
     } catch (stitchError: any) {
       throw new Error(`Assembly failed. In-browser FFmpeg: ${String(wasmError?.message || wasmError).slice(0, 160)}. Platform joiner: ${String(stitchError?.message || stitchError).slice(0, 200)}`);
     }
-    return { url, durationS: 0, via: 'platform_stitch' };
   }
 }

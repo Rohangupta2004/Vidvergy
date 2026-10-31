@@ -84,10 +84,10 @@ export default function ProAgent(props: AgentProps) {
   return (
     <>
       <div className="vp-scrim" onClick={props.onClose} />
-      <aside className="vp-agent" aria-label="AI agent">
+      <aside className="vp-agent ve-v2-panel" aria-label="Auto agent" style={{ fontFamily: "Manrope, 'Segoe UI', system-ui, sans-serif" }}>
         <header className="vp-agenthead">
-          <Sparkles size={15} color="#C8920A" />
-          <b style={{ fontSize: 13, fontWeight: 800 }}>Agent</b>
+          <Sparkles size={15} color="#f2b544" />
+          <b style={{ fontSize: 13, fontWeight: 800 }}>Auto agent</b>
           <button
             type="button"
             className="vp-ico sm vp-spread"
@@ -160,7 +160,7 @@ export default function ProAgent(props: AgentProps) {
             </div>
           ) : (
             <p className="vp-note" style={{ marginTop: 4 }}>
-              Or just say what you want: “add captions”, “tighten the silences”, “make it look cinematic”.
+              Say what you want: “add captions”, “tighten the silences”, or “make it look cinematic”. Every change remains reviewable and undoable.
             </p>
           )}
 
@@ -175,7 +175,7 @@ export default function ProAgent(props: AgentProps) {
         <div className="vp-agentfoot">
           <input
             className="vp-input"
-            placeholder="Tell the agent what to do…"
+            placeholder="Ask Auto agent to edit…"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); send(); } }}

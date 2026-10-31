@@ -16,6 +16,11 @@
 //   /api/render/remotion + status         server-side Remotion render
 
 import { workspaceToken } from './ai';
+import {
+  finishPortrait as finishCloudPortrait,
+  readRender as readCloudRender,
+  submitRender as submitCloudRender,
+} from '../../../lib/render/cloudRender';
 
 export const WORKSPACE_ID = 'f24710e5-7c6d-4db4-92b4-c2c235877575';
 
@@ -272,23 +277,24 @@ export async function generateVoiceover(text: string, voiceId?: string): Promise
 // Remotion rendering
 // ---------------------------------------------------------------------------
 
-export async function submitRender(compositionTsx: string, props: unknown, durationInFrames: number): Promise<string> {
-  const response = await fetch('/api/render/remotion', {
-    method: 'POST',
-    headers: jsonHeaders(),
-    body: JSON.stringify({
-      workspaceId: WORKSPACE_ID,
-      compositionTsx,
-      props,
-      durationInFrames: Math.max(30, Math.min(17990, Math.round(durationInFrames))),
-      fps: 30,
-      width: 1920,
-      height: 1080,
-    }),
+export async function submitRender(
+  compositionTsx: string,
+  props: unknown,
+  durationInFrames: number,
+  onStatus?: (status: string) => void,
+): Promise<string> {
+  const submitted = await submitCloudRender({
+    compositionTsx,
+    props: (props || {}) as Record<string, unknown>,
+    durationInFrames: Math.max(30, Math.min(17990, Math.round(durationInFrames))),
+    aspect: '16:9',
+  }, {
+    onStatus: (phase, detail) => {
+      console.info('[CineAgent] cloud render:', phase);
+      onStatus?.(phase === 'queued' ? (detail || 'queued') : phase);
+    },
   });
-  const data = await readJson(response);
-  if (!data?.operationId) throw new Error(String(data?.error || 'Render did not start'));
-  return String(data.operationId);
+  return submitted.operationId;
 }
 
 export async function pollRender(
@@ -297,39 +303,21 @@ export async function pollRender(
   timeoutMs = 2400000,
 ): Promise<string> {
   const start = Date.now();
+  let delay = 4000;
   while (Date.now() - start < timeoutMs) {
-    const response = await fetch('/api/render/remotion/' + encodeURIComponent(operationId), { headers: tokenHeaders() });
-    const data = await response.json().catch(() => null);
-    const status = String(data?.status || 'pending');
-    if (onTick) onTick(status);
-    if (status === 'complete' && data?.videoUrl) return String(data.videoUrl);
-    if (status === 'failed') throw new Error(String(data?.error || 'Render failed'));
-    await sleep(4000);
+    const status = await readCloudRender(operationId);
+    onTick?.(status.state === 'pending' ? 'queued' : status.state);
+    if (status.state === 'complete' && status.videoUrl) return status.videoUrl;
+    if (status.state === 'failed') throw new Error(status.error || 'Render failed');
+    await sleep(delay);
+    delay = Math.min(15000, Math.round(delay * 1.15));
   }
-  throw new Error('Render timed out.');
+  throw new Error('Render timed out. It may still finish in the cloud; resume this project before submitting again.');
 }
 
-/**
- * Convert a 1920x1080 master whose portrait content sits centered at full
- * height into a TRUE 1080x1920 MP4. The platform overlay endpoint cover-scales
- * (force_original_aspect_ratio=increase + center crop) and explicitly supports
- * an empty overlay list for exactly this re-encode.
- */
+/** Finish the centered portrait stage with the platform overlay compositor. */
 export async function portraitReencode(masterUrl: string, durationSec: number): Promise<string> {
-  const response = await fetch('/api/workspaces/' + WORKSPACE_ID + '/videos/overlay', {
-    method: 'POST',
-    headers: jsonHeaders(),
-    body: JSON.stringify({
-      base_video_url: masterUrl,
-      overlays: [],
-      dimensions: { width: 1080, height: 1920 },
-      output_format: 'mp4',
-      duration_seconds: Math.max(1, Math.round(durationSec)),
-    }),
-  });
-  const data = await readJson(response);
-  if (!data?.success || !data?.overlayUrl) throw new Error(String(data?.error || 'Portrait re-encode failed'));
-  return String(data.overlayUrl);
+  return finishCloudPortrait(masterUrl, { durationSeconds: Math.max(1, Math.round(durationSec)) });
 }
 
 // ---------------------------------------------------------------------------
