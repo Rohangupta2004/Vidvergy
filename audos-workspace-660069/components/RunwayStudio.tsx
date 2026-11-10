@@ -65,17 +65,17 @@ export interface RunwayTheme {
 
 const DEFAULT_THEME: RunwayTheme = {
   bg: 'transparent',
-  panel: 'var(--space-surface-panel, #1C1808)',
-  card: 'var(--space-surface-card, #15120A)',
-  line: 'var(--space-border-default, rgba(255,255,255,0.07))',
-  lineStrong: 'var(--space-border-strong, rgba(255,255,255,0.18))',
-  ink: 'var(--space-text-primary, #F5E9C8)',
-  soft: 'var(--space-text-secondary, #9E8B55)',
-  muted: 'var(--space-text-muted, #9E8B55)',
-  accent: 'var(--space-brand-primary-500, #D4920A)',
-  onAccent: 'var(--space-text-on-primary, #FFFFFF)',
-  good: 'var(--space-semantic-success-500, #4ade80)',
-  bad: 'var(--space-semantic-danger-500, #f87171)',
+  panel: 'var(--vg-raised)',
+  card: 'var(--vg-surface)',
+  line: 'var(--vg-border)',
+  lineStrong: 'var(--vg-control-border)',
+  ink: 'var(--vg-text)',
+  soft: 'var(--vg-secondary)',
+  muted: 'var(--vg-muted)',
+  accent: 'var(--vg-accent)',
+  onAccent: 'var(--vg-on-accent)',
+  good: 'var(--vg-success)',
+  bad: 'var(--vg-danger)',
   font: "'Inter', system-ui, -apple-system, sans-serif",
 };
 
@@ -134,7 +134,7 @@ function omniQuote(): RunwayQuote {
     credits: 0,
     usd: 0,
     outputs: 1,
-    label: `${OMNI_FALLBACK_LABEL} · billed as workspace credits, one per second of video`,
+    label: `${OMNI_FALLBACK_LABEL} · billed as Vidverge credits at real Omni Flash cost + 30%`,
     raw: null,
   };
 }
@@ -1478,8 +1478,8 @@ export default function RunwayStudio(props: RunwayStudioProps) {
                 key={d.value} type="button" className="rw-btn"
                 onClick={() => setForm({ duration: Number(d.value) })}
                 style={{
-                  background: on ? t.accent : t.panel, color: on ? t.onAccent : t.soft,
-                  border: `1px solid ${on ? 'transparent' : t.line}`, borderRadius: 8,
+                  background: on ? `color-mix(in srgb, ${t.accent} 15%, transparent)` : t.panel, color: on ? t.ink : t.soft,
+                  border: `1px solid ${on ? t.accent : t.line}`, borderRadius: 8,
                   padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: t.font,
                 }}
               >
@@ -1508,9 +1508,9 @@ export default function RunwayStudio(props: RunwayStudioProps) {
             type="button" className="rw-btn"
             onClick={() => setForm({ modelMode: 'auto' })}
             style={{
-              background: form.modelMode === 'auto' ? t.accent : t.panel,
-              color: form.modelMode === 'auto' ? t.onAccent : t.soft,
-              border: `1px solid ${form.modelMode === 'auto' ? 'transparent' : t.line}`, borderRadius: 8,
+              background: form.modelMode === 'auto' ? `color-mix(in srgb, ${t.accent} 15%, transparent)` : t.panel,
+              color: form.modelMode === 'auto' ? t.ink : t.soft,
+              border: `1px solid ${form.modelMode === 'auto' ? t.accent : t.line}`, borderRadius: 8,
               padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', fontFamily: t.font,
             }}
           >
@@ -1525,8 +1525,8 @@ export default function RunwayStudio(props: RunwayStudioProps) {
                 onClick={() => setForm({ model: m, modelMode: 'manual' })}
                 title={cat ? `${runwayInputLabel(cat)} — ${cat.blurb}` : ''}
                 style={{
-                  background: on ? t.accent : t.panel, color: on ? t.onAccent : t.soft,
-                  border: `1px solid ${on ? 'transparent' : t.line}`, borderRadius: 8,
+                  background: on ? `color-mix(in srgb, ${t.accent} 15%, transparent)` : t.panel, color: on ? t.ink : t.soft,
+                  border: `1px solid ${on ? t.accent : t.line}`, borderRadius: 8,
                   padding: '7px 14px', fontSize: 12.5, fontWeight: 700,
                   cursor: 'pointer', fontFamily: t.font,
                 }}
@@ -1885,8 +1885,9 @@ export default function RunwayStudio(props: RunwayStudioProps) {
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px',
                 borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: t.font,
-                background: active ? t.accent : 'transparent',
-                color: active ? t.onAccent : offline ? t.muted : t.soft,
+                background: active ? `color-mix(in srgb, ${t.accent} 15%, transparent)` : 'transparent',
+                boxShadow: active ? `inset 0 0 0 1px ${t.accent}` : 'none',
+                color: active ? t.ink : offline ? t.muted : t.soft,
                 opacity: offline && !active ? 0.55 : 1,
                 fontSize: 12.5, fontWeight: 700,
               }}
@@ -1982,7 +1983,7 @@ export default function RunwayStudio(props: RunwayStudioProps) {
             display: 'flex', alignItems: 'flex-start', gap: 9,
             background: t.card, borderRadius: 12, padding: '12px 14px',
             border: `1px solid color-mix(in srgb, ${t.accent} 45%, transparent)`,
-            boxShadow: '0 18px 40px rgba(120,80,0,0.12)',
+            boxShadow: '0 18px 40px rgba(0,0,0,0.32)',
           }}
           data-testid="runway-fallback-toast"
         >

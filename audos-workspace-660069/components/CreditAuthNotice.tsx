@@ -11,9 +11,14 @@ export default function CreditAuthNotice() {
   const [visible, setVisible] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
+  const [message, setMessage] = useState('Your credit authorization needs to be refreshed. No generation was started.');
+  const [requiresSignIn, setRequiresSignIn] = useState(false);
 
   useEffect(() => {
-    const show = () => {
+    const show = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      setMessage(String(detail.message || 'Your credit authorization needs to be refreshed. No generation was started.'));
+      setRequiresSignIn(detail.requiresSignIn === true);
       setRefreshFailed(false);
       setVisible(true);
     };
@@ -37,7 +42,7 @@ export default function CreditAuthNotice() {
     <div
       role="alertdialog"
       aria-live="assertive"
-      aria-label="Credit sign-in required"
+      aria-label="Credit authorization needs attention"
       className="fixed inset-x-3 bottom-3 z-[120] mx-auto max-w-xl rounded-2xl border p-4 shadow-2xl"
       style={{
         background: 'var(--space-surface-card)',
@@ -49,9 +54,9 @@ export default function CreditAuthNotice() {
       <div className="flex items-start gap-3">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--space-semantic-warning-500)]" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <div className="font-semibold">Sign in with your email to use credits</div>
+          <div className="font-semibold">Credit authorization needs attention</div>
           <p className="mt-1 text-sm text-[var(--space-text-secondary)]">
-            Paid generation did not start. Your saved work and idempotency key are unchanged, so retrying after sign-in will not repeat earlier steps or double-charge you.
+            {message} Your saved work and idempotency key are unchanged, so retrying will not repeat earlier steps or double-charge you.
           </p>
           {refreshFailed ? (
             <p className="mt-2 text-sm text-[var(--space-semantic-warning-500)]">
@@ -69,14 +74,16 @@ export default function CreditAuthNotice() {
               {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Refresh session
             </button>
-            <button
-              type="button"
-              onClick={beginCreditEmailSignIn}
-              className="min-h-11 rounded-[10px] bg-[var(--space-brand-primary)] px-4 text-sm font-bold text-[var(--space-text-on-primary)]"
-              data-testid="button-credit-email-sign-in"
-            >
-              Sign in with email
-            </button>
+            {requiresSignIn || refreshFailed ? (
+              <button
+                type="button"
+                onClick={beginCreditEmailSignIn}
+                className="min-h-11 rounded-[10px] bg-[var(--space-brand-primary)] px-4 text-sm font-bold text-[var(--space-text-on-primary)]"
+                data-testid="button-credit-email-sign-in"
+              >
+                Sign in with email
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

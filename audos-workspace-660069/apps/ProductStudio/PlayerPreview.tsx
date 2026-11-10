@@ -116,9 +116,9 @@ export default function PlayerPreview({
         position: 'absolute', top: 10, right: 10, zIndex: 3,
         display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 700,
-        color: '#B45309',
-        background: 'color-mix(in srgb, #B45309 14%, rgba(255,253,244,0.92))',
-        border: '1px solid color-mix(in srgb, #B45309 40%, transparent)',
+        color: 'var(--vg-warning)',
+        background: 'color-mix(in srgb, var(--vg-warning) 14%, rgba(0,0,0,0.82))',
+        border: '1px solid color-mix(in srgb, var(--vg-warning) 40%, transparent)',
         cursor: onRerender ? 'pointer' : 'default',
       }}
       data-testid="badge-pending-rerender"
@@ -159,7 +159,7 @@ export default function PlayerPreview({
           data-testid="video-preview"
         />
         {durationMismatch ? (
-          <div style={{ padding: '8px 12px', fontSize: 11.5, lineHeight: 1.5, color: '#B45309', background: 'rgba(255,253,244,0.95)', borderTop: '1px solid color-mix(in srgb, #B45309 30%, transparent)' }} data-testid="duration-mismatch-note">
+          <div style={{ padding: '8px 12px', fontSize: 11.5, lineHeight: 1.5, color: 'var(--vg-warning)', background: 'var(--vg-warning-bg)', borderTop: '1px solid color-mix(in srgb, var(--vg-warning) 30%, transparent)' }} data-testid="duration-mismatch-note">
             This video is an earlier cut ({fmtSecs(renderedDur)}). Your current {scenes.length} scene{scenes.length === 1 ? '' : 's'} total {fmtSecs(plannedSecs)} — re-render to bring the video up to date. The previous cut stays downloadable.
           </div>
         ) : null}

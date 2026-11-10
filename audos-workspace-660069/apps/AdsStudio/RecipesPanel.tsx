@@ -136,7 +136,7 @@ function SavedVideos({ onUseVideo }: { onUseVideo: RecipesPanelProps['onUseVideo
 
       {error ? (
         <div className="rx-rise" style={{ ...card, borderColor: T.bad, marginBottom: 16, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-          <span style={{ display: 'grid', placeItems: 'center', width: 32, height: 32, borderRadius: 10, background: 'rgba(153,27,27,.1)', flexShrink: 0 }}><AlertTriangle size={16} color={T.bad} /></span>
+          <span style={{ display: 'grid', placeItems: 'center', width: 32, height: 32, borderRadius: 10, background: 'var(--vg-danger-bg)', flexShrink: 0 }}><AlertTriangle size={16} color={T.bad} /></span>
           <span style={{ minWidth: 0, flex: 1 }}>
             <span style={{ display: 'block', color: T.ink, fontSize: 14, fontWeight: 700 }}>The video library could not be read</span>
             <span style={{ display: 'block', marginTop: 4, color: T.muted, fontSize: 13, lineHeight: 1.55 }}>{error}</span>
@@ -259,7 +259,7 @@ export default function RecipesPanel(props: RecipesPanelProps) {
             style={{
               position: 'relative', zIndex: 1,
               background: 'transparent',
-              color: section === s.id ? '#fff' : T.soft,
+              color: section === s.id ? 'var(--vg-on-accent)' : T.soft,
               border: 'none',
               borderRadius: 999, padding: '9px 15px', fontSize: 13, fontWeight: 700,
               fontFamily: T.sans, cursor: 'pointer',
@@ -286,7 +286,7 @@ export default function RecipesPanel(props: RecipesPanelProps) {
           autoPersona
           theme={{
             panel: T.panel, card: T.card, line: T.line, lineStrong: T.lineStrong,
-            ink: T.ink, soft: T.soft, muted: T.muted, accent: T.accent, onAccent: '#ffffff',
+            ink: T.ink, soft: T.soft, muted: T.muted, accent: T.accent, onAccent: 'var(--vg-on-accent)',
             good: T.good, bad: T.bad, font: T.sans,
           }}
           prefill={{

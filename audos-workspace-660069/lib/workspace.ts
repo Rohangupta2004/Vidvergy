@@ -1,4 +1,4 @@
-import { scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
+import { getTenantDelegationScope, scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
 
 /**
  * One place for workspace identity, the workspace DB token, the visitor
@@ -61,6 +61,81 @@ export function spaceId(): string {
   return String(window.__APP_ID__ || window.__SPACE_ID__ || SPACE_ID);
 }
 
+const SESSION_EMAIL_COOKIE = 'vidverge_session_email';
+
+function normalizeEmail(value: unknown): string {
+  const email = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return email.includes('@') ? email : '';
+}
+
+function cookieEmail(): string {
+  if (typeof document === 'undefined') return '';
+  const prefix = `${SESSION_EMAIL_COOKIE}=`;
+  const row = document.cookie.split(';').map((item) => item.trim()).find((item) => item.startsWith(prefix));
+  if (!row) return '';
+  try { return normalizeEmail(decodeURIComponent(row.slice(prefix.length))); } catch { return ''; }
+}
+
+/** Signed-in email cached across reloads and tabs. The server-validated session
+ * remains authoritative; this value is identity context, never authorization. */
+export function getSessionEmail(): string {
+  if (typeof window === 'undefined') return '';
+  const delegation = getTenantDelegationScope();
+  const delegatedEmail = normalizeEmail(delegation?.email)
+    || (delegation?.consumerWorkspaceId ? `delegation-${delegation.consumerWorkspaceId.toLowerCase()}@tenant-agent.audos` : '');
+  if (delegatedEmail) return delegatedEmail;
+  try {
+    const raw = window.localStorage.getItem(scopedSpaceSessionStorageKey(spaceId()));
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const email = normalizeEmail(parsed.email);
+      if (email) return email;
+    }
+  } catch { /* cookie fallback below */ }
+  return cookieEmail();
+}
+
+/** Persist only identity context that has already been accepted by the host. */
+export function clearSessionIdentity(): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(scopedSpaceSessionStorageKey(spaceId())); } catch { /* best effort */ }
+  try { document.cookie = `${SESSION_EMAIL_COOKIE}=; max-age=0; path=/; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`; } catch { /* best effort */ }
+  window.__audosAcceptedSessionId = undefined;
+  window.__spaceSessionId = undefined;
+  window.__SESSION_ID__ = undefined;
+  window.__workspaceDb?.setSessionId?.('');
+}
+
+export function persistSessionIdentity(sessionId: string, email: string, verified = true): void {
+  if (typeof window === 'undefined') return;
+  const normalized = normalizeEmail(email);
+  if (!sessionId.startsWith('wses_') || !normalized) return;
+  const key = scopedSpaceSessionStorageKey(spaceId());
+  let previous: Record<string, unknown> = {};
+  try { previous = JSON.parse(window.localStorage.getItem(key) || '{}') || {}; } catch { previous = {}; }
+  try {
+    window.localStorage.setItem(key, JSON.stringify({
+      ...previous,
+      id: sessionId,
+      sessionId,
+      workspaceSessionId: sessionId,
+      workspaceId: WORKSPACE_ID,
+      email: normalized,
+      verified,
+      authorized: true,
+      identityMode: verified ? 'strict_verified' : String(previous.identityMode || 'legacy_registration'),
+      timestamp: Date.now(),
+    }));
+  } catch { /* private mode may disable storage */ }
+  try {
+    document.cookie = `${SESSION_EMAIL_COOKIE}=${encodeURIComponent(normalized)}; max-age=31536000; path=/; SameSite=Lax${window.location.protocol === 'https:' ? '; Secure' : ''}`;
+  } catch { /* cookie may be unavailable */ }
+  window.__audosAcceptedSessionId = sessionId;
+  window.__spaceSessionId = sessionId;
+  window.__SESSION_ID__ = sessionId;
+  window.__workspaceDb?.setSessionId?.(sessionId);
+}
+
 /**
  * Canonical visitor session id (`wses_…` or its UUID form).
  *
@@ -80,10 +155,17 @@ export function getSessionId(): string {
   if (typeof window === 'undefined') return '';
   let raw = '';
   try {
+    // The shell publishes the currently validated session. Prefer it over an
+    // older recovery value: a stale __audosAcceptedSessionId used to shadow a
+    // freshly signed-in __spaceSessionId and made every credit retry replay the
+    // stale identity forever.
+    const delegation = getTenantDelegationScope();
     raw =
-      String(window.__audosAcceptedSessionId || '') ||
+      String(delegation?.workspaceSessionId || '') ||
+      (String(delegation?.sessionId || '').startsWith('wses_') ? String(delegation?.sessionId || '') : '') ||
       String(window.__spaceSessionId || '') ||
       String(window.__SESSION_ID__ || '') ||
+      String(window.__audosAcceptedSessionId || '') ||
       (() => {
         const stored = window.localStorage.getItem(scopedSpaceSessionStorageKey(spaceId()));
         if (!stored) return '';
@@ -95,7 +177,7 @@ export function getSessionId(): string {
         return authorized && typeof recovered === 'string' && recovered.startsWith('wses_') ? recovered : '';
       })();
   } catch {
-    raw = String(window.__audosAcceptedSessionId || window.__spaceSessionId || window.__SESSION_ID__ || '');
+    raw = String(window.__spaceSessionId || window.__SESSION_ID__ || window.__audosAcceptedSessionId || '');
   }
   const id = raw.trim();
   if (!id) return '';
@@ -112,6 +194,9 @@ export function getVerifiedSessionId(): string {
   if (typeof window === 'undefined') return '';
   const id = getSessionId();
   if (!id.startsWith('wses_')) return '';
+  const delegation = getTenantDelegationScope();
+  const delegatedId = String(delegation?.workspaceSessionId || (String(delegation?.sessionId || '').startsWith('wses_') ? delegation?.sessionId : '') || '');
+  if (delegation && delegatedId === id && getSessionEmail().endsWith('@tenant-agent.audos')) return id;
   try {
     const raw = window.localStorage.getItem(scopedSpaceSessionStorageKey(spaceId()));
     if (!raw) return '';
@@ -120,6 +205,74 @@ export function getVerifiedSessionId(): string {
     const email = typeof stored.email === 'string' ? stored.email.trim().toLowerCase() : '';
     const verified = stored.verified === true;
     return storedId === id && verified && email.includes('@') ? id : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Prove the current canonical session even when the draft-preview host supplied
+ * it before this origin had a complete localStorage record. The platform's
+ * cookie-backed check is authoritative: only a verified wses_ session with a
+ * matching email is adopted. Guest, stale, pending-OTP and legacy-registration
+ * sessions still fail closed.
+ */
+export async function ensureVerifiedCreditSession(): Promise<string> {
+  if (typeof window === 'undefined') return '';
+  const cached = getVerifiedSessionId();
+  if (cached) return cached;
+  const current = getSessionId();
+  if (!current.startsWith('wses_')) return '';
+  const delegation = getTenantDelegationScope();
+  const delegatedId = String(delegation?.workspaceSessionId || (String(delegation?.sessionId || '').startsWith('wses_') ? delegation?.sessionId : '') || '');
+  if (delegation && delegatedId === current) {
+    const email = normalizeEmail(delegation.email)
+      || (delegation.consumerWorkspaceId ? `delegation-${delegation.consumerWorkspaceId.toLowerCase()}@tenant-agent.audos` : '');
+    if (email) {
+      persistSessionIdentity(current, email, true);
+      return current;
+    }
+  }
+  try {
+    const sharedPath = `/space/${encodeURIComponent(spaceId())}`;
+    const onSharedPath = window.location.pathname === sharedPath;
+    const query = new URLSearchParams({ sessionUuid: current });
+    if (!onSharedPath) {
+      query.set('workspaceId', WORKSPACE_ID);
+      query.set('spaceId', spaceId());
+    }
+    const response = await fetch(
+      onSharedPath
+        ? `${sharedPath}/check-session?${query}`
+        : `/api/auth/otp/space/check-session?${query}`,
+      { credentials: 'include', cache: 'no-store' },
+    );
+    const checked = await response.json().catch(() => null);
+    const accepted = String(checked?.canonicalSessionId || checked?.workspaceSessionId || current);
+    const email = String(checked?.email || '').trim().toLowerCase();
+    const verified = checked?.verified === true || checked?.sessionVerified === true;
+    if (!response.ok || !verified || !accepted.startsWith('wses_') || !email.includes('@')) return '';
+
+    const storageKey = scopedSpaceSessionStorageKey(spaceId());
+    let previous: Record<string, unknown> = {};
+    try { previous = JSON.parse(window.localStorage.getItem(storageKey) || '{}') || {}; } catch { previous = {}; }
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      ...previous,
+      id: accepted,
+      sessionId: accepted,
+      workspaceSessionId: accepted,
+      workspaceId: String(checked?.workspaceId || WORKSPACE_ID),
+      email,
+      verified: true,
+      authorized: true,
+      identityMode: 'strict_verified',
+      timestamp: Date.now(),
+    }));
+    persistSessionIdentity(accepted, email, true);
+    window.dispatchEvent(new CustomEvent('audos:session-established', {
+      detail: { workspaceSessionId: accepted, email, verified: true, authorized: true, identityMode: 'strict_verified', recovered: true },
+    }));
+    return accepted;
   } catch {
     return '';
   }
@@ -180,24 +333,28 @@ export async function refreshWorkspaceSession(): Promise<string> {
         timestamp: Date.now(),
       };
       window.localStorage.setItem(storageKey, JSON.stringify(next));
-      window.__audosAcceptedSessionId = accepted;
-      window.__spaceSessionId = accepted;
-      window.__SESSION_ID__ = accepted;
-      window.__workspaceDb?.setSessionId?.(accepted);
+      persistSessionIdentity(accepted, email, verified);
       window.dispatchEvent(new CustomEvent('audos:session-established', {
         detail: { workspaceSessionId: accepted, email, verified, authorized: true, identityMode, recovered: true },
       }));
       return accepted;
     };
 
-    // First prove the exact stored session against the platform's HttpOnly
-    // cookie. Re-registering an email is not identity proof and, when OTP is
-    // enabled, only creates a pending session that WorkspaceDB must reject.
-    if (storedSessionId.startsWith('wses_')) {
+    // Prove every credible session candidate, newest shell state first. A
+    // signed-in tab can legitimately have a fresh __spaceSessionId while its
+    // localStorage record still names the previous session. Checking only the
+    // stored id made "Retry" deterministically replay that stale session.
+    const candidates = Array.from(new Set([
+      String(window.__spaceSessionId || ''),
+      String(window.__SESSION_ID__ || ''),
+      String(window.__audosAcceptedSessionId || ''),
+      storedSessionId,
+    ].map((value) => value.trim()).filter((value) => value.startsWith('wses_'))));
+    for (const candidate of candidates) {
       try {
         const sharedPath = `/space/${encodeURIComponent(spaceId())}`;
         const onSharedPath = window.location.pathname === sharedPath;
-        const query = new URLSearchParams({ sessionUuid: storedSessionId });
+        const query = new URLSearchParams({ sessionUuid: candidate });
         if (!onSharedPath) {
           query.set('workspaceId', WORKSPACE_ID);
           query.set('spaceId', spaceId());
@@ -214,7 +371,7 @@ export async function refreshWorkspaceSession(): Promise<string> {
         const legacyAuthorized = checked?.authorized === true
           && checked?.identityMode === 'legacy_registration';
         const checkedEmail = String(checked?.email || '').trim().toLowerCase();
-        const accepted = String(checked?.canonicalSessionId || checked?.workspaceSessionId || storedSessionId);
+        const accepted = String(checked?.canonicalSessionId || checked?.workspaceSessionId || candidate);
         if (
           checkResponse.ok
           && accepted.startsWith('wses_')
@@ -229,7 +386,7 @@ export async function refreshWorkspaceSession(): Promise<string> {
           );
         }
       } catch {
-        // Continue to the policy-aware registration fallback below.
+        // Try the next candidate, then the policy-aware fallback below.
       }
     }
 
@@ -293,6 +450,8 @@ export function hookUrl(hookName: string): string {
 export interface WorkspaceFetchOptions {
   /** Wait for the injected workspace token before the first request. Default true. */
   waitForToken?: boolean;
+  /** Wait for the host/delegation session to hydrate before the first request. Default true. */
+  waitForSession?: boolean;
   /** Refresh the accepted email session and retry one authentication failure. Default true. */
   retryAuth?: boolean;
   /**
@@ -300,6 +459,8 @@ export interface WorkspaceFetchOptions {
    * foreign-keyed column, so the space id is rejected there. Default false.
    */
   skipAppId?: boolean;
+  /** Explicit registered app id. null omits it; undefined uses the space id. */
+  appId?: string | null;
 }
 
 export interface CallHookOptions {
@@ -329,7 +490,7 @@ function unwrap(payload: unknown): any {
   return payload;
 }
 
-const AUTH_FAILURE_TEXT = /invalid workspace session|workspace session (?:is )?required|session verification|required.*sign.?in|session (?:expired|invalid)|no_credentials/i;
+const AUTH_FAILURE_TEXT = /invalid workspace session|workspace session (?:is )?required|session verification|required.*sign.?in|session (?:expired|invalid)|no_credentials|same-origin request required/i;
 
 async function responseIsAuthFailure(response: Response): Promise<boolean> {
   if (response.status === 401 || response.status === 403) return true;
@@ -365,25 +526,36 @@ export async function workspaceFetch(
   init: RequestInit = {},
   options: WorkspaceFetchOptions = {},
 ): Promise<Response> {
-  const { waitForToken = true, retryAuth = true, skipAppId = false } = options;
+  const { waitForToken = true, waitForSession = true, retryAuth = true, skipAppId = false, appId } = options;
   let token = waitForToken ? await getWorkspaceToken() : workspaceTokenNow();
+  if (waitForSession) await ensureVerifiedCreditSession();
 
   const send = (activeToken: string): Promise<Response> => {
     const headers = new Headers(init.headers || {});
     if (activeToken) headers.set('X-Workspace-DB-Token', activeToken);
     const sid = getSessionId();
+    const email = getSessionEmail();
     if (sid) headers.set('X-Session-Id', sid);
-    if (skipAppId) headers.delete('X-App-Id');
-    else headers.set('X-App-Id', spaceId());
+    if (email) headers.set('X-Session-Email', email);
+    if (skipAppId || appId === null) headers.delete('X-App-Id');
+    else headers.set('X-App-Id', appId === undefined ? spaceId() : appId);
     return fetch(input, { ...init, credentials: init.credentials || 'include', headers });
   };
 
+  const requestPath = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url;
   let response = await send(token);
   if (retryAuth && await responseIsAuthFailure(response)) {
+    console.warn('[VidVerge auth] reason=auth_rejected_first_pass', { path: requestPath, status: response.status, hasSession: Boolean(getSessionId()), hasEmail: Boolean(getSessionEmail()), hasToken: Boolean(token) });
     const previousToken = token;
-    await refreshWorkspaceSession();
+    const refreshed = getTenantDelegationScope()
+      ? await ensureVerifiedCreditSession()
+      : await refreshWorkspaceSession();
+    if (!refreshed) await ensureVerifiedCreditSession();
     token = await waitForRefreshedToken(previousToken);
     response = await send(token);
+    if (await responseIsAuthFailure(response)) {
+      console.warn('[VidVerge auth] reason=auth_rejected_after_retry', { path: requestPath, status: response.status, hasSession: Boolean(getSessionId()), hasEmail: Boolean(getSessionEmail()), hasToken: Boolean(token) });
+    }
   }
   return response;
 }
@@ -402,6 +574,7 @@ export async function callHook<T = any>(
   options: CallHookOptions = {},
 ): Promise<T> {
   const { waitForToken = true, retryOn401 = true, signal } = options;
+  await ensureVerifiedCreditSession();
   const sid = getSessionId();
   const res = await workspaceFetch(hookUrl(hookName), {
     method: 'POST',

@@ -53,6 +53,7 @@ import {
 } from './videoTypes';
 import type { CharacterRef } from './videoTypes';
 import { callHook, getSessionId, spaceId, workspaceTokenNow } from '../../lib/workspace';
+import { sharedUnlessDelegated } from '../../lib/tenant-delegation-scope';
 
 export { generateImage, uploadImage, describeImage, CHARACTER_VISION_PROMPT };
 
@@ -642,7 +643,7 @@ export async function listSavedCharacters(): Promise<SavedCharacter[]> {
     let offset = 0;
     while (true) {
       const res = await client
-        .from('characters', { shared: true })
+        .from('characters', sharedUnlessDelegated())
         .orderBy('created_at', 'desc')
         .limit(pageSize)
         .offset(offset)
@@ -1055,7 +1056,7 @@ export async function fetchJobClipUrls(jobId: string): Promise<string[]> {
     const client = db();
     if (!client || typeof client.from !== 'function') return [];
     const res = await client
-      .from('video_clips', { shared: true })
+      .from('video_clips', sharedUnlessDelegated())
       .eq('job_id', jobId)
       .orderBy('clip_index', 'asc')
       .limit(100)
@@ -1122,7 +1123,7 @@ export async function listOwnVideos(
 
     while (true) {
       const res = await client
-        .from('video_jobs', { shared: true })
+        .from('video_jobs', sharedUnlessDelegated())
         .orderBy('created_at', 'desc')
         .limit(pageSize)
         .offset(offset)

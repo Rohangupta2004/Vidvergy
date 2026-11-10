@@ -20,6 +20,7 @@ import VideoErrorCard from '../../components/video/VideoErrorCard';
 import { withBrandContext } from '../../components/BrandContextLayer';
 import { VideoHistory } from '../../components/VideoHistory';
 import { saveVideoToHistory } from '../../lib/videoHistory';
+import { CAPTIONS_NOTES, FRAMING_NOTES, FRAMING_PREVIEWS, MOTION_NOTES, MUSIC_NOTES, OptionThumb, PREFS_HELPER } from './optionPreviews';
 
 const card: CSSProperties = {
   background: 'var(--vg-surface)',
@@ -137,14 +138,14 @@ function App() {
   }, []);
 
   return (
-    <div style={{ minHeight: '100%', color: textPrimary, fontFamily: "'Manrope', 'Segoe UI', sans-serif", padding: '32px clamp(16px, 4vw, 52px) 72px', background: 'var(--vg-gradient-ambient), var(--vg-bg)' }}>
+    <div style={{ minHeight: '100%', color: textPrimary, fontFamily: 'var(--body)', padding: '32px clamp(16px, 4vw, 52px) 72px', background: 'var(--vg-gradient-ambient), var(--vg-bg)' }}>
       <style>{cineCss}</style>
       <header style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14, marginBottom: 30 }}>
         <div style={{ width: 46, height: 46, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--vg-accent-soft)', border: '1px solid var(--vg-border)' }}>
           <Wand2 size={24} color={accent as string} />
         </div>
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontFamily: "'Space Grotesk', 'Segoe UI', sans-serif", fontSize: 28, lineHeight: '36px', fontWeight: 600, letterSpacing: '-0.025em', color: 'var(--vg-text)' }}>CineAgent</h1>
+          <h1 style={{ margin: 0, fontFamily: 'var(--display)', fontSize: 28, lineHeight: '36px', fontWeight: 800, letterSpacing: '-0.03em', color: 'var(--vg-text)' }}>CineAgent</h1>
           <p style={{ margin: 0, fontSize: 13, color: textMuted }}>Upload footage. The AI directs, edits, reviews — and hands you the finished film.</p>
         </div>
         {view === 'run' ? (
@@ -205,14 +206,14 @@ const cineCss = `
 .cine-btn:hover { background-color: var(--vg-hover); }
 .cine-btn:focus-visible { outline: 2px solid var(--vg-focus); outline-offset: 3px; }
 .cine-btn:active { transform: scale(0.98); }
-button.cine-btn:hover { border-color: var(--space-border-strong, rgba(245,158,11,0.45)); }
+button.cine-btn:hover { border-color: var(--line-gold); }
 .cine-input { transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; }
-.cine-input:focus { outline: none; border-color: color-mix(in srgb, var(--space-brand-primary, #f59e0b) 55%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--space-brand-primary, #f59e0b) 16%, transparent), 0 0 28px color-mix(in srgb, var(--space-brand-primary, #f59e0b) 18%, transparent); }
+.cine-input:focus { outline: none; border-color: color-mix(in srgb, var(--vg-gold) 55%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--vg-gold) 16%, transparent), 0 0 28px color-mix(in srgb, var(--vg-gold) 18%, transparent); }
 .cine-card { transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease; }
-.cine-card:hover { transform: translateY(-2px); border-color: var(--space-border-strong, rgba(255,255,255,0.18)); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+.cine-card:hover { transform: translateY(-2px); border-color: var(--vg-control-border); box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
 .cine-upload { position: relative; }
-.cine-upload::before { content: ''; position: absolute; inset: 0; border-radius: 24px; padding: 2px; pointer-events: none; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--space-brand-primary, #f59e0b) 60%, transparent) 0 12px, color-mix(in srgb, var(--space-text-accent, #E0A33A) 55%, transparent) 12px 24px, transparent 24px 34px); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; transition: background 0.2s ease; }
-.cine-upload.cine-drag::before { background: linear-gradient(135deg, var(--space-brand-primary, #f59e0b), var(--space-text-accent, #E0A33A)); }
+.cine-upload::before { content: ''; position: absolute; inset: 0; border-radius: 24px; padding: 2px; pointer-events: none; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--vg-gold) 60%, transparent) 0 12px, color-mix(in srgb, var(--vg-accent-hover) 55%, transparent) 12px 24px, transparent 24px 34px); -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0); mask-composite: exclude; transition: background 0.2s ease; }
+.cine-upload.cine-drag::before { background: linear-gradient(135deg, var(--vg-gold), var(--vg-accent-hover)); }
 `;
 
 // ---------------------------------------------------------------------------
@@ -240,15 +241,15 @@ function HomeView(props: {
           ...card, padding: 'clamp(36px, 10vw, 64px) clamp(16px, 6vw, 32px)', textAlign: 'center',
           border: 'none', borderRadius: 24,
           background: dragOver
-            ? 'color-mix(in srgb, var(--space-brand-primary, #f59e0b) 9%, color-mix(in srgb, var(--space-surface-card, #15120A) 80%, transparent))'
+            ? 'color-mix(in srgb, var(--vg-gold) 9%, color-mix(in srgb, var(--vg-surface) 80%, transparent))'
             : card.background,
           boxShadow: dragOver
-            ? '0 0 0 4px color-mix(in srgb, var(--space-brand-primary, #f59e0b) 14%, transparent), 0 18px 50px rgba(120,80,0,0.14)'
-            : '0 18px 50px rgba(120,80,0,0.12)',
+            ? '0 0 0 4px color-mix(in srgb, var(--vg-gold) 14%, transparent), 0 18px 50px rgba(0,0,0,0.35)'
+            : '0 18px 50px rgba(0,0,0,0.3)',
           transition: 'background 0.2s ease, box-shadow 0.2s ease',
         }}
       >
-        <div style={{ width: 84, height: 84, margin: '0 auto 20px', borderRadius: 28, display: 'grid', placeItems: 'center', background: 'linear-gradient(135deg, color-mix(in srgb, var(--space-brand-primary, #f59e0b) 18%, transparent), color-mix(in srgb, var(--space-text-accent, #E0A33A) 12%, transparent))', border: '1px solid color-mix(in srgb, var(--space-brand-primary, #f59e0b) 35%, transparent)', boxShadow: '0 0 40px color-mix(in srgb, var(--space-brand-primary, #f59e0b) 18%, transparent)' }}>
+        <div style={{ width: 84, height: 84, margin: '0 auto 20px', borderRadius: 28, display: 'grid', placeItems: 'center', background: 'linear-gradient(135deg, color-mix(in srgb, var(--vg-gold) 18%, transparent), color-mix(in srgb, var(--vg-accent-hover) 12%, transparent))', border: '1px solid color-mix(in srgb, var(--vg-gold) 35%, transparent)', boxShadow: '0 0 40px color-mix(in srgb, var(--vg-gold) 18%, transparent)' }}>
           <Upload size={36} color={accent as string} />
         </div>
         <h2 style={{ margin: '0 0 10px', fontSize: 30, fontWeight: 800, letterSpacing: '-0.02em' }}>Drop your footage here</h2>
@@ -273,18 +274,19 @@ function HomeView(props: {
         </div>
         {prefsOpen ? (
           <div style={{ marginTop: 18, display: 'grid', gap: 12, maxWidth: 680, marginLeft: 'auto', marginRight: 'auto', textAlign: 'left' }}>
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.5, color: textMuted }}>{PREFS_HELPER}</p>
             <input
               value={prefs.tone || ''}
               onChange={(e) => setPrefs({ ...prefs, tone: e.target.value })}
               placeholder="Anything you want the director to know? (tone, audience, must-keep moments) — optional"
               className="cine-input"
-              style={{ width: '100%', padding: '14px 20px', fontSize: 13, color: textPrimary, background: 'color-mix(in srgb, var(--space-surface-muted, #18150A) 78%, transparent)', border: '1px solid var(--space-border-default, rgba(245,158,11,0.18))', borderRadius: 999, outline: 'none', boxSizing: 'border-box' }}
+              style={{ width: '100%', padding: '14px 20px', fontSize: 13, color: textPrimary, background: 'color-mix(in srgb, var(--vg-raised) 78%, transparent)', border: '1px solid var(--vg-control-border)', borderRadius: 999, outline: 'none', boxSizing: 'border-box' }}
             />
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <PrefSelect label="Captions" value={prefs.captions || 'auto'} options={['auto', 'on', 'off']} onChange={(v) => setPrefs({ ...prefs, captions: v as UserPrefs['captions'] })} />
-              <PrefSelect label="Music" value={prefs.music || 'auto'} options={['auto', 'on', 'off']} onChange={(v) => setPrefs({ ...prefs, music: v as UserPrefs['music'] })} />
-              <PrefSelect label="Framing" value={prefs.framing || 'auto'} options={['auto', 'fit', 'cover']} onChange={(v) => setPrefs({ ...prefs, framing: v as UserPrefs['framing'] })} />
-              <PrefSelect label="Motion" value={prefs.intensity || 'balanced'} options={['subtle', 'balanced', 'expressive']} onChange={(v) => setPrefs({ ...prefs, intensity: v as UserPrefs['intensity'] })} />
+              <PrefSelect label="Captions" value={prefs.captions || 'auto'} options={['auto', 'on', 'off']} notes={CAPTIONS_NOTES} onChange={(v) => setPrefs({ ...prefs, captions: v as UserPrefs['captions'] })} />
+              <PrefSelect label="Music" value={prefs.music || 'auto'} options={['auto', 'on', 'off']} notes={MUSIC_NOTES} onChange={(v) => setPrefs({ ...prefs, music: v as UserPrefs['music'] })} />
+              <PrefSelect label="Framing" value={prefs.framing || 'auto'} options={['auto', 'fit', 'cover']} notes={FRAMING_NOTES} previews={FRAMING_PREVIEWS} onChange={(v) => setPrefs({ ...prefs, framing: v as UserPrefs['framing'] })} />
+              <PrefSelect label="Motion" value={prefs.intensity || 'balanced'} options={['subtle', 'balanced', 'expressive']} notes={MOTION_NOTES} onChange={(v) => setPrefs({ ...prefs, intensity: v as UserPrefs['intensity'] })} />
             </div>
           </div>
         ) : null}
@@ -302,25 +304,39 @@ function HomeView(props: {
   );
 }
 
-function PrefSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (v: string) => void }) {
-  return (
+function PrefSelect({ label, value, options, onChange, notes, previews }: { label: string; value: string; options: string[]; onChange: (v: string) => void; notes?: Record<string, string>; previews?: Record<string, string | undefined> }) {
+  const control = (
     <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: textMuted }}>
       {label}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="cine-input"
-        style={{ padding: '8px 14px', fontSize: 12, color: textPrimary, background: 'color-mix(in srgb, var(--space-surface-muted, #18150A) 78%, transparent)', border: '1px solid var(--space-border-default, rgba(245,158,11,0.18))', borderRadius: 999 }}
+        style={{ padding: '8px 14px', fontSize: 12, color: textPrimary, background: 'color-mix(in srgb, var(--vg-raised) 78%, transparent)', border: '1px solid var(--vg-control-border)', borderRadius: 999 }}
       >
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     </label>
   );
+  if (!notes && !previews) return control;
+  const note = notes?.[value];
+  const preview = previews?.[value];
+  return (
+    <div style={{ display: 'grid', gap: 6, alignContent: 'start', flex: '1 1 150px', minWidth: 0 }}>
+      {control}
+      {note ? <div style={{ fontSize: 11.5, lineHeight: 1.4, color: textMuted }}>{note}</div> : null}
+      {preview ? (
+        <div style={{ width: '100%', maxWidth: 220 }}>
+          <OptionThumb key={preview} src={preview} style={{ border: '1px solid var(--vg-border)' }} />
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function ProjectCard({ row, onOpen, onDelete }: { row: ProjectRow; onOpen: () => void; onDelete: () => void }) {
-  const statusColor = row.status === 'done' ? 'var(--space-semantic-success, #10b981)'
-    : row.status === 'failed' ? 'var(--space-semantic-danger, #ef4444)' : accent;
+  const statusColor = row.status === 'done' ? 'var(--vg-accent)'
+    : row.status === 'failed' ? 'var(--vg-danger)' : accent;
   return (
     <div className="cine-card" style={{ ...card, padding: 18, display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }} onClick={onOpen}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -331,7 +347,7 @@ function ProjectCard({ row, onOpen, onDelete }: { row: ProjectRow; onOpen: () =>
       <div style={{ fontSize: 12, color: textMuted }}>
         {row.status === 'done' && row.result ? ('Finished — ' + fmtClock(row.result.durationSec)) : row.status === 'failed' ? 'Failed — open for details' : (STAGE_LABELS[row.stage as StageId] || 'Running') + (row.progress?.detail ? ' · ' + row.progress.detail : '')}
       </div>
-      <div style={{ height: 5, background: 'rgba(180,120,0,0.1)', borderRadius: 3, overflow: 'hidden' }}>
+      <div style={{ height: 5, background: 'var(--vg-border)', borderRadius: 3, overflow: 'hidden' }}>
         <div style={{ width: (row.status === 'done' ? 100 : row.progress?.pct || 0) + '%', height: '100%', background: statusColor, borderRadius: 3, transition: 'width 0.4s ease' }} />
       </div>
     </div>
@@ -375,9 +391,9 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
             return (
               <div key={s} style={{
                 display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-                background: done ? 'color-mix(in srgb, var(--space-semantic-success, #10b981) 14%, transparent)' : activeStage ? 'color-mix(in srgb, var(--space-brand-primary, #f59e0b) 16%, transparent)' : 'rgba(180,120,0,0.06)',
-                color: done ? 'var(--space-semantic-success-600, #34d399)' : activeStage ? accent : textMuted,
-                border: '1px solid ' + (activeStage ? 'var(--space-border-strong, rgba(245,158,11,0.45))' : 'transparent'),
+                background: done ? 'var(--vg-gold-tint)' : activeStage ? 'color-mix(in srgb, var(--vg-gold) 16%, transparent)' : 'var(--vg-raised)',
+                color: done ? accent : activeStage ? accent : textMuted,
+                border: '1px solid ' + (activeStage ? 'var(--vg-accent)' : 'transparent'),
               }}>
                 {done ? <CheckCircle2 size={13} /> : activeStage ? <Loader2 size={13} style={{ animation: 'cine-spin 1s linear infinite' }} /> : <span style={{ width: 13 }} />}
                 {STAGE_LABELS[s]}
@@ -385,8 +401,8 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
             );
           })}
         </div>
-        <div style={{ height: 6, background: 'rgba(180,120,0,0.1)', borderRadius: 3, overflow: 'hidden', marginTop: 14 }}>
-          <div style={{ width: (row.status === 'done' ? 100 : row.progress?.pct || 0) + '%', height: '100%', background: row.status === 'failed' ? 'var(--space-semantic-danger, #ef4444)' : accent, transition: 'width 0.5s ease' }} />
+        <div style={{ height: 6, background: 'var(--vg-border)', borderRadius: 3, overflow: 'hidden', marginTop: 14 }}>
+          <div style={{ width: (row.status === 'done' ? 100 : row.progress?.pct || 0) + '%', height: '100%', background: row.status === 'failed' ? 'var(--vg-danger)' : accent, transition: 'width 0.5s ease' }} />
         </div>
       </div>
 
@@ -402,7 +418,7 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
               {fmtClock(row.result.durationSec)} final cut · 1080p · rendered {new Date(row.result.renderedAt).toLocaleString()}
             </div>
             {latestQA ? (
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: latestQA.shippable ? 'var(--space-semantic-success-600, #34d399)' : accent }}>
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700, color: latestQA.shippable ? 'var(--vg-accent-hover)' : accent }}>
                 <Sparkles size={15} /> Review score {Math.round(latestQA.score * 100)}/100
               </div>
             ) : null}
@@ -421,8 +437,8 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
 
       {/* Failure */}
       {row.status === 'failed' ? (
-        <div style={{ ...card, padding: 20, borderColor: 'var(--space-semantic-danger, #ef4444)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700, color: 'var(--space-semantic-danger, #ef4444)' }}>
+        <div style={{ ...card, padding: 20, borderColor: 'var(--vg-danger)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 700, color: 'var(--vg-danger)' }}>
             <AlertTriangle size={17} /> The run could not finish
           </div>
           <p style={{ margin: '10px 0 0', fontSize: 13.5, color: textPrimary, lineHeight: 1.5 }}>{row.error || 'Unknown error.'}</p>
@@ -447,7 +463,7 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
               </div>
               <div style={{ display: 'grid', gap: 6, maxHeight: 300, overflowY: 'auto', paddingRight: 6 }}>
                 {row.plan.timeline.map((s) => (
-                  <div key={s.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '8px 12px', background: 'rgba(180,120,0,0.05)', borderRadius: 9 }}>
+                  <div key={s.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '8px 12px', background: 'var(--vg-raised)', borderRadius: 9 }}>
                     <span style={{ color: accent, fontWeight: 700, minWidth: 74, textTransform: 'uppercase', fontSize: 11 }}>{s.kind}</span>
                     <span style={{ color: textMuted }}>
                       {s.kind === 'source' && s.src ? fmtClock(s.src.start) + '–' + fmtClock(s.src.end) : (s.duration || 0).toFixed(1) + 's'}
@@ -456,8 +472,8 @@ function RunView({ row, onStop, onResume, running }: { row: ProjectRow; onStop: 
                   </div>
                 ))}
                 {row.plan.overlays.map((o) => (
-                  <div key={o.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '8px 12px', background: 'rgba(224,163,58,0.1)', borderRadius: 9 }}>
-                    <span style={{ color: 'var(--space-text-accent, #E0A33A)', fontWeight: 700, minWidth: 74, fontSize: 11 }}>GRAPHIC</span>
+                  <div key={o.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, padding: '8px 12px', background: 'var(--vg-gold-tint)', borderRadius: 9 }}>
+                    <span style={{ color: 'var(--vg-accent-hover)', fontWeight: 700, minWidth: 74, fontSize: 11 }}>GRAPHIC</span>
                     <span style={{ color: textMuted }}>{fmtClock(o.at)} · {o.duration.toFixed(1)}s</span>
                     <span style={{ flex: 1, color: textPrimary }}>{o.spec.type}{o.note ? ' — ' + o.note : ''}</span>
                   </div>
@@ -484,14 +500,14 @@ function ActivityLog({ lines }: { lines: ActivityLine[] }) {
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }); }, [lines.length]);
   if (!lines.length) return <div style={{ fontSize: 13, color: textMuted }}>Waiting for the agent…</div>;
   return (
-    <div style={{ maxHeight: 300, overflowY: 'auto', display: 'grid', gap: 7, fontFamily: "'JetBrains Mono', Menlo, monospace", fontSize: 12 }}>
+    <div style={{ maxHeight: 300, overflowY: 'auto', display: 'grid', gap: 7, fontFamily: "'Geist Mono', ui-monospace, monospace", fontSize: 12 }}>
       {lines.map((l, i) => (
         <div key={i} style={{ display: 'flex', gap: 10, lineHeight: 1.5 }}>
           <span style={{ color: textMuted, flexShrink: 0 }}>{new Date(l.t).toLocaleTimeString()}</span>
           <span style={{
-            color: l.kind === 'error' ? 'var(--space-semantic-danger, #ef4444)'
+            color: l.kind === 'error' ? 'var(--vg-danger)'
               : l.kind === 'warn' ? accent
-              : l.kind === 'ok' ? 'var(--space-semantic-success-600, #34d399)'
+              : l.kind === 'ok' ? 'var(--vg-success)'
               : textPrimary,
           }}>{l.text}</span>
         </div>

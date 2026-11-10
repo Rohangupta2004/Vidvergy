@@ -65,13 +65,13 @@ const menuItemStyle: CSSProperties = {
 
 function StatusWord({ f }: { f: Film }) {
   const map: Record<string, { word: string; color: string; bg: string }> = {
-    draft: { word: 'Draft', color: T.muted, bg: 'rgba(180,120,0,0.10)' },
-    planning: { word: 'Planning', color: T.live, bg: 'rgba(232,163,60,0.12)' },
-    plan_ready: { word: 'Plan ready', color: T.bone, bg: 'rgba(180,120,0,0.10)' },
-    producing: { word: 'Producing', color: T.live, bg: 'rgba(232,163,60,0.12)' },
-    assembling: { word: 'Assembling', color: T.live, bg: 'rgba(232,163,60,0.12)' },
-    ready: { word: 'Ready', color: T.done, bg: 'rgba(22,101,52,0.12)' },
-    error: { word: 'Needs attention', color: T.fault, bg: 'rgba(153,27,27,0.12)' },
+    draft: { word: 'Draft', color: T.muted, bg: 'var(--vg-raised)' },
+    planning: { word: 'Planning', color: T.live, bg: 'var(--vg-gold-tint)' },
+    plan_ready: { word: 'Plan ready', color: T.bone, bg: 'var(--vg-raised)' },
+    producing: { word: 'Producing', color: T.live, bg: 'var(--vg-gold-tint)' },
+    assembling: { word: 'Assembling', color: T.live, bg: 'var(--vg-gold-tint)' },
+    ready: { word: 'Ready', color: T.done, bg: 'var(--vg-success-bg)' },
+    error: { word: 'Needs attention', color: T.fault, bg: 'var(--vg-danger-bg)' },
   };
   const s = map[String(f.status || 'draft')] || map.draft;
   return <span style={{ color: s.color, background: s.bg, fontSize: 11.5, fontWeight: 650, borderRadius: 6, padding: '3px 8px' }}>{s.word}</span>;
@@ -151,7 +151,7 @@ export default function Library(props: {
               {([['active', 'Active', activeFilms.length], ['archived', 'Archived', archivedFilms.length]] as const).map(([key, label, count]) => {
                 const on = (key === 'archived') === showArchived;
                 return (
-                  <button key={key} onClick={() => { setShowArchived(key === 'archived'); setMenuId(null); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: on ? T.bone : 'transparent', color: on ? T.canvas : T.muted, border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+                  <button key={key} onClick={() => { setShowArchived(key === 'archived'); setMenuId(null); }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: on ? 'var(--vg-gold-tint)' : 'transparent', color: on ? T.bone : T.muted, border: 'none', boxShadow: on ? 'inset 0 0 0 1px var(--vg-accent)' : 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
                     {label}<span style={{ opacity: 0.7, fontFamily: T.mono, fontSize: 11 }}>{count}</span>
                   </button>
                 );
@@ -186,7 +186,7 @@ export default function Library(props: {
                 {/* A finished film shows a real frame. The stored thumbnail is
                     preferred; without one the master's own first second is the
                     poster, which is why a finished row is never a blank tile. */}
-                <div style={{ width: 104, height: 58, background: T.raised, borderRadius: 6, overflow: 'hidden', flexShrink: 0, border: '1px solid rgba(180,120,0,0.14)' }}>
+                <div style={{ width: 104, height: 58, background: T.raised, borderRadius: 6, overflow: 'hidden', flexShrink: 0, border: '1px solid var(--vg-border)' }}>
                   {f.final_thumb_url ? (
                     <img src={f.final_thumb_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : f.final_video_url ? (
@@ -198,7 +198,11 @@ export default function Library(props: {
                       tabIndex={-1}
                       style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }}
                     />
-                  ) : null}
+                  ) : (
+                    <span aria-label="Film preview not ready" style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'radial-gradient(circle at 32% 24%, color-mix(in srgb, var(--vg-accent) 24%, transparent), transparent 42%), linear-gradient(145deg, var(--vg-raised), var(--vg-bg))' }}>
+                      <Clapperboard size={20} color={running ? T.live : T.dim} />
+                    </span>
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ color: T.bone, fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{f.title || 'Untitled film'}</div>
@@ -229,7 +233,7 @@ export default function Library(props: {
                 {menuId === f.id ? (
                   <>
                     <div onClick={() => setMenuId(null)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 178, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 10, boxShadow: '0 12px 32px rgba(120,80,0,0.14)', padding: 5 }}>
+                    <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 178, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.4)', padding: 5 }}>
                       <button className="s2v-menu-item" onClick={() => { setMenuId(null); onArchive(f, !archived); }} style={menuItemStyle}>
                         {archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                         {archived ? 'Unarchive' : 'Archive'}
@@ -263,10 +267,10 @@ export default function Library(props: {
         ))}
       </div>
       {confirmFilm ? (
-        <div onClick={() => setConfirmId(null)} style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(26,16,0,0.35)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 16, padding: '24px 24px 20px', boxShadow: '0 30px 70px rgba(120,80,0,0.14)' }}>
+        <div onClick={() => setConfirmId(null)} style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'color-mix(in srgb, var(--vg-bg) 70%, transparent)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: 420, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 16, padding: '24px 24px 20px', boxShadow: '0 30px 70px rgba(0,0,0,0.45)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 11, background: 'rgba(153,27,27,0.12)', border: '1px solid rgba(153,27,27,0.24)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 11, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 35%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Trash2 size={18} color={T.fault} />
               </div>
               <div style={{ color: T.bone, fontSize: 16, fontWeight: 700, letterSpacing: -0.2 }}>Delete this film?</div>

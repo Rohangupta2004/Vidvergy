@@ -98,7 +98,7 @@ export function CreateTabs({ value, onChange }: { value: CreateTab; onChange: (t
         marginBottom: 22,
         borderRadius: 16,
         border: `1px solid ${T.border}`,
-        background: 'rgba(180,120,0,0.05)',
+        background: 'var(--vg-surface)',
       }}
       data-testid="tabs-create-mode"
     >
@@ -314,7 +314,7 @@ export default function ManualCreate() {
                   overflow: 'hidden',
                   color: characterPhotoUrl ? T.accentFg : T.muted,
                   border: `1px solid ${characterPhotoUrl ? T.accentBorder : T.border}`,
-                  background: characterPhotoUrl ? T.accentSoft : 'rgba(180,120,0,0.05)',
+                  background: characterPhotoUrl ? T.accentSoft : 'var(--vg-raised)',
                 }}
               >
                 {characterPhotoUrl ? (

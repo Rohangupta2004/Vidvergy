@@ -44,19 +44,19 @@ export const MAX_COMPOSE_RETRIES = 2;
 // ---------------------------------------------------------------------------
 
 export const T = {
-  bg: '#FFFDF4',
-  bgLift: '#FFFFFF',
-  card: 'rgba(255,255,255,0.72)',
-  cardStrong: 'rgba(255,255,255,0.92)',
-  border: 'rgba(180,120,0,0.14)',
-  borderLit: 'rgba(180,120,0,0.36)',
-  text: '#1A1000',
-  muted: '#3D2800',
-  dim: '#7A6030',
-  amber: '#C8920A',
-  amberSoft: 'rgba(200,146,10,0.12)',
-  fail: '#991B1B',
-  failSoft: 'rgba(153,27,27,0.12)',
+  bg: 'var(--vg-bg)',
+  bgLift: 'var(--vg-raised)',
+  card: 'var(--vg-surface)',
+  cardStrong: 'var(--vg-raised)',
+  border: 'var(--vg-border)',
+  borderLit: 'color-mix(in srgb, var(--vg-accent) 36%, transparent)',
+  text: 'var(--vg-text)',
+  muted: 'var(--vg-secondary)',
+  dim: 'var(--vg-muted)',
+  amber: 'var(--vg-accent)',
+  amberSoft: 'var(--vg-gold-tint)',
+  fail: 'var(--vg-danger)',
+  failSoft: 'var(--vg-danger-bg)',
   mono: "'JetBrains Mono', 'SF Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
   sans: "'Inter', system-ui, -apple-system, sans-serif",
 } as const;
@@ -185,7 +185,7 @@ function apiError(body: any, fallback: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Claude Opus 5 (platform Anthropic proxy)
+// Claude Opus 5.5 (platform Anthropic proxy)
 // ---------------------------------------------------------------------------
 
 export function estimateTokens(text: string): number {
@@ -203,9 +203,9 @@ async function opus(system: string, user: string, maxTokens: number): Promise<Op
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
     body: JSON.stringify({
-      model: 'claude-opus-5',
+      model: 'claude-opus-5-5',
       max_tokens: maxTokens,
-      // Opus 5 cannot turn thinking off; adaptive + medium effort is the
+      // Opus 5.5 cannot turn thinking off; adaptive + medium effort is the
       // documented pairing for the frontier tier.
       thinking: { type: 'adaptive' },
       output_config: { effort: 'medium' },

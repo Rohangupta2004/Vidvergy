@@ -139,8 +139,26 @@ export function Toast({ tone = 'info', children, onDismiss }: { tone?: 'success'
   return <div role={tone === 'danger' ? 'alert' : 'status'} aria-live={tone === 'danger' ? 'assertive' : 'polite'} style={{ display: 'flex', alignItems: 'center', gap: 10, maxWidth: 420, padding: '12px 14px', border: `1px solid ${colors[0]}`, borderRadius: 10, background: colors[1], color: colors[0], boxShadow: '0 18px 48px rgba(0,0,0,.52)' }}><ToneIcon aria-hidden="true" size={16} /><span style={{ flex: 1, color: COLORS.text, font: `500 14px/20px ${FONT.body}` }}>{children}</span>{onDismiss ? <button type="button" onClick={onDismiss} aria-label="Dismiss notification" title="Dismiss" style={{ width: 44, height: 44, border: 0, background: 'transparent', color: colors[0] }}><X size={16} /></button> : null}</div>;
 }
 
-export function Skeleton({ width = '100%', height = 20, radius = 6, label = 'Loading' }: { width?: number | string; height?: number; radius?: number; label?: string }) {
-  return <span role="status" aria-label={label} style={{ display: 'block', width, height, borderRadius: radius, background: `linear-gradient(90deg, ${COLORS.surface} 25%, ${COLORS.hover} 50%, ${COLORS.surface} 75%)`, backgroundSize: '200% 100%', animation: 'vgSkeleton 1.4s linear infinite' }}><style>{'@keyframes vgSkeleton{from{background-position:200% 0}to{background-position:-200% 0}}'}</style></span>;
+export function Tooltip({ content, children, side = 'top' }: { content: React.ReactNode; children: React.ReactElement; side?: 'top' | 'bottom' }) {
+  const [open, setOpen] = React.useState(false);
+  const id = useStableId('vg-tooltip');
+  const child = React.Children.only(children) as React.ReactElement<any>;
+  const describedBy = [child.props['aria-describedby'], id].filter(Boolean).join(' ');
+  const anchor = React.cloneElement(child, {
+    'aria-describedby': describedBy,
+    onFocus: (event: React.FocusEvent) => { child.props.onFocus?.(event); setOpen(true); },
+    onBlur: (event: React.FocusEvent) => { child.props.onBlur?.(event); setOpen(false); },
+    onMouseEnter: (event: React.MouseEvent) => { child.props.onMouseEnter?.(event); setOpen(true); },
+    onMouseLeave: (event: React.MouseEvent) => { child.props.onMouseLeave?.(event); setOpen(false); },
+  });
+  return <span style={{ position: 'relative', display: 'inline-flex' }}>
+    {anchor}
+    <span id={id} role="tooltip" aria-hidden={!open} style={{ position: 'absolute', zIndex: 70, left: '50%', [side === 'top' ? 'bottom' : 'top']: 'calc(100% + 8px)', width: 'max-content', maxWidth: 240, padding: '7px 9px', border: `1px solid ${COLORS.controlBorder}`, borderRadius: 8, background: COLORS.raised, color: COLORS.text, boxShadow: '0 12px 32px rgba(0,0,0,.46)', font: `500 12px/17px ${FONT.body}`, pointerEvents: 'none', opacity: open ? 1 : 0, transform: open ? 'translate(-50%, 0)' : `translate(-50%, ${side === 'top' ? '4px' : '-4px'})`, transition: `opacity ${MOTION.fast}, transform ${MOTION.fast}` }}>{content}</span>
+  </span>;
 }
 
-export default { Field, Select, Tabs, Menu, Dialog, Drawer, Toast, Skeleton };
+export function Skeleton({ width = '100%', height = 20, radius = 6, label = 'Loading' }: { width?: number | string; height?: number; radius?: number; label?: string }) {
+  return <span role="status" aria-label={label} className="vg-skeleton" style={{ display: 'block', width, height, borderRadius: radius, background: `linear-gradient(90deg, ${COLORS.surface} 25%, ${COLORS.hover} 50%, ${COLORS.surface} 75%)`, backgroundSize: '200% 100%', animation: 'vgSkeleton 1.4s linear infinite' }}><style>{'@keyframes vgSkeleton{from{background-position:200% 0}to{background-position:-200% 0}}'}</style></span>;
+}
+
+export default { Field, Select, Tabs, Menu, Dialog, Drawer, Toast, Tooltip, Skeleton };

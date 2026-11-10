@@ -1,7 +1,7 @@
 /**
  * ADS STUDIO — agentic short-form ad engine.
  *
- * A linear 8-step workflow (Product → Research → Angles → Script → Scene Plan
+ * A linear 8-step workflow (Product → Research → Hooks → Script → Scene Plan
  * → Generate → Review → Variations) where the creative planner chooses shot
  * intent and shared routing resolves each engine; GSAP/SVG renders overlays
  * and FFmpeg.wasm assembles the final MP4 in the browser. No Remotion.
@@ -17,19 +17,22 @@ import {
   Play, Plus, RefreshCw, Sparkles, Trash2, Upload, Wand2, X,
 } from 'lucide-react';
 import {
-  AdsSession, ClipDuration, GeneratedClip, ProductResearch, ScenePlan, ScriptClip,
+  AdAngle, AdHook, AdsSession, ClipDuration, GeneratedClip, HookVideoJob, ProductResearch, ScenePlan, ScriptClip,
   STEPS, T, UploadedAsset, clearSession, clipDurationChoices, emptySession,
-  generateImageAsset, loadSession, saveSession, uploadUserFile, wordCount, wordLimitFor,
+  generateAdHooks, generateImageAsset, loadSession, saveSession, uploadUserFile, wordCount, wordLimitFor,
 } from './api';
 import { Btn, Spin, Tag, card, inputStyle, labelStyle } from './ui';
 import {
   assembleVeoPrompt, buildScenePlan, castPresenter, continuityNoteFromFrame,
-  generateAngles, generateVariationMatrix, pickBestAngle,
+  generateVariationMatrix, pickBestAngle,
   presenterFallbackDescription, presenterPortraitBrief,
   regenerateScenePlanForClip, researchProduct, writeScript,
 } from './opus';
 import { generateClipAgentic, assembleWithOverlays, ResolvedClip } from './pipeline';
 import RecipesPanel from './RecipesPanel';
+import {
+  AD_FORMAT_HELPER, AD_FORMAT_NOTES, AD_FORMAT_RATIOS, OptionThumb, PRODUCTION_PATH_HELPER, PRODUCTION_PATH_NOTES, previewFor,
+} from './optionPreviews';
 import RunwayStudio from '../../components/RunwayStudio';
 import { AgentChatProvider } from '../../components/AgentChat/AgentChatContext';
 import { AgentChatButton } from '../../components/AgentChat/AgentChatButton';
@@ -52,7 +55,9 @@ import VideoErrorCard from '../../components/video/VideoErrorCard';
 import VideoGeneratingState from '../../components/video/VideoGeneratingState';
 import { withBrandContext } from '../../components/BrandContextLayer';
 import { useSpaceRuntime } from '../../SpaceRuntimeContext';
-import { fetchBrandFromWebsite, matchSavedBrand, type BrandRecord, useBrandKit } from '../../components/brandKitStore';
+import { fetchBrandFromWebsite, normalizeBrandUrl, type BrandRecord, useBrandKit } from '../../components/brandKitStore';
+import SavedBrandKitConfirm from '../../components/brand/SavedBrandKitConfirm';
+import { revokeBrandUse } from '../../lib/brandDoc';
 import CampaignContextView from './CampaignContextView';
 import CompetitorsTab from './CompetitorsTab';
 import { saveVideoToHistory } from '../../lib/videoHistory';
@@ -164,7 +169,7 @@ const ADS_RESPONSIVE_CSS = `
     gap: 6px !important;
     padding: 10px 12px !important;
     border-right: none !important;
-    border-bottom: 1px solid var(--space-border-default, rgba(148,163,184,0.16)) !important;
+    border-bottom: 1px solid var(--vg-border) !important;
     overflow-x: auto !important;
     overflow-y: hidden !important;
     -webkit-overflow-scrolling: touch;
@@ -176,6 +181,8 @@ const ADS_RESPONSIVE_CSS = `
   .ads-rail-extra button { width: auto !important; }
   .ads-rail-footer { margin-top: 0 !important; padding-top: 0 !important; }
   .ads-main { padding: 16px 14px 48px !important; min-height: 0 !important; }
+  .ads-surface-actions { position: sticky !important; top: 0 !important; right: auto !important; width: 100%; justify-content: flex-start !important; flex-wrap: nowrap !important; overflow-x: auto; padding: 8px 12px; background: color-mix(in srgb, var(--vg-bg) 92%, transparent); border-bottom: 1px solid var(--vg-border); backdrop-filter: blur(16px); }
+  .ads-surface-actions > button { flex: 0 0 auto; min-height: 44px !important; }
 }
 @media (max-width: 639px) {
   .ads-rail button { font-size: 11px !important; padding: 8px !important; }
@@ -237,6 +244,56 @@ function formatClipElapsed(ms: number): string {
   return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 }
 
+function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), milliseconds);
+    promise.then((value) => { window.clearTimeout(timer); resolve(value); }, (error) => { window.clearTimeout(timer); reject(error); });
+  });
+}
+
+function angleFromHook(hook: AdHook, research: ProductResearch): AdAngle {
+  return {
+    id: hook.id,
+    angle_name: hook.headline,
+    angle_type: hook.angle,
+    core_idea: hook.rationale,
+    target_audience_state: research.target_audience,
+    hook: hook.headline,
+    problem: research.pain_points[0] || '',
+    mechanism: research.mechanism,
+    desired_outcome: research.desires[0] || research.positioning,
+    proof_opportunity: research.proof_elements[0] || '',
+    creative_direction: `${hook.firstSeconds} ${hook.visualDirection}`.trim(),
+  };
+}
+
+function hookScript(raw: ScriptClip[], hook: AdHook, research: ProductResearch, offerCta: string): ScriptClip[] {
+  const source = Array.isArray(raw) ? raw : [];
+  const bodyA = source[1];
+  const bodyB = source[Math.max(2, Math.floor(source.length / 2))];
+  const closing = source[source.length - 1];
+  const rows: Array<Partial<ScriptClip> & Pick<ScriptClip, 'spoken_line' | 'visual_concept'>> = [
+    { clip_role: 'hook', duration_seconds: 4, spoken_line: hook.headline, visual_concept: hook.visualDirection, overlay_idea: hook.headline, emotion: 'scroll-stopping and direct' },
+    bodyA || { clip_role: 'problem', spoken_line: research.pain_points[0] || research.one_liner, visual_concept: `Show the audience problem clearly: ${research.pain_points[0] || research.one_liner}`, overlay_idea: '', emotion: 'recognition' },
+    bodyB || { clip_role: 'solution', spoken_line: research.mechanism || research.one_liner, visual_concept: `Demonstrate how ${research.product_name} creates the desired outcome`, overlay_idea: research.product_name, emotion: 'confident' },
+    closing || { clip_role: 'cta', spoken_line: offerCta || `Try ${research.product_name} today.`, visual_concept: `Product hero close for ${research.product_name}`, overlay_idea: offerCta || 'Learn more', emotion: 'decisive' },
+  ];
+  return rows.map((row, index) => {
+    const duration = index === 0 || index === rows.length - 1 ? 4 : 6;
+    const spoken = String(row.spoken_line || '').trim().split(/\s+/).slice(0, wordLimitFor(duration)).join(' ');
+    return {
+      clip_number: index + 1,
+      clip_role: String(row.clip_role || (index === rows.length - 1 ? 'cta' : 'body')),
+      duration_seconds: duration,
+      spoken_line: spoken,
+      word_count: wordCount(spoken),
+      visual_concept: String(row.visual_concept || ''),
+      overlay_idea: String(row.overlay_idea || ''),
+      emotion: String(row.emotion || 'natural'),
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The app
 // ---------------------------------------------------------------------------
@@ -261,10 +318,8 @@ function VergeyeAdsStudioApp() {
   if (surface === 'intelligence') {
     return (
       <div style={{ minHeight: '100%', position: 'relative' }}>
-        <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button type="button" onClick={() => setSurface('research')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.accent, color: 'var(--vg-on-accent)', cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Research</button>
-          <button type="button" onClick={() => setSurface('competitors')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.raised, color: T.accent, cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Competitors</button>
-          <button type="button" onClick={() => setSurface('campaign')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Campaign Context</button>
+        <div className="ads-surface-actions" style={{ position: 'sticky', top: 0, zIndex: 90, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', padding: '10px 14px', background: 'color-mix(in srgb, var(--vg-bg) 94%, transparent)', borderBottom: '1px solid var(--vg-border)', backdropFilter: 'blur(16px)' }}>
+          {[['1','Discover','intelligence'],['2','Research','research'],['3','Strategize','campaign'],['4','Create','create'],['5','Edit','create']].map(([number,label,target]) => <button key={label} type="button" onClick={() => setSurface(target as any)} style={{ minHeight: 40, padding: '8px 12px', borderRadius: 10, border: `1px solid ${target === 'intelligence' ? T.accent : T.lineStrong}`, background: target === 'intelligence' ? T.accent : T.raised, color: target === 'intelligence' ? 'var(--vg-on-accent)' : T.ink, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}><span style={{ marginRight: 6, opacity: .65 }}>{number}</span>{label}</button>)}
         </div>
         <VergeyeIntelligence onOpenCreate={() => setSurface('create')} />
       </div>
@@ -272,10 +327,8 @@ function VergeyeAdsStudioApp() {
   }
   return (
     <div style={{ minHeight: '100%', position: 'relative' }}>
-      <div style={{ position: 'fixed', right: 18, top: 14, zIndex: 90, display: 'flex', gap: 8 }}>
-        <button type="button" onClick={() => setSurface('research')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.accent}`, background: T.raised, color: T.accent, cursor: 'pointer', fontSize: 12.5, fontWeight: 800 }}>Research</button>
-        <button type="button" onClick={() => setSurface('campaign')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>Campaign Context</button>
-        <button type="button" onClick={() => setSurface('intelligence')} style={{ minHeight: 40, padding: '9px 13px', borderRadius: 10, border: `1px solid ${T.lineStrong}`, background: T.raised, color: T.ink, cursor: 'pointer', fontSize: 12.5, fontWeight: 700 }}>← Discover</button>
+      <div className="ads-surface-actions" style={{ position: 'sticky', top: 0, zIndex: 90, display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', padding: '10px 14px', background: 'color-mix(in srgb, var(--vg-bg) 94%, transparent)', borderBottom: '1px solid var(--vg-border)', backdropFilter: 'blur(16px)' }}>
+        {[['1','Discover','intelligence'],['2','Research','research'],['3','Strategize','campaign'],['4','Create','create'],['5','Edit','create']].map(([number,label,target]) => <button key={label} type="button" onClick={() => setSurface(target as any)} style={{ minHeight: 40, padding: '8px 12px', borderRadius: 10, border: `1px solid ${target === 'create' ? T.accent : T.lineStrong}`, background: target === 'create' ? 'color-mix(in srgb, var(--vg-accent) 14%, transparent)' : T.raised, color: target === 'create' ? T.accent : T.ink, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}><span style={{ marginRight: 6, opacity: .65 }}>{number}</span>{label}</button>)}
       </div>
       <AdsStudioApp />
     </div>
@@ -288,9 +341,10 @@ function AdsStudioApp() {
   const [s, setS] = useState<AdsSession>(() => loadSession());
   const { document: brandKit } = useBrandKit();
   const [websiteBrand, setWebsiteBrand] = useState<BrandRecord | null>(null);
-  const matchedSavedBrand = (s.productUrl.trim() || s.productDescription.trim())
-    ? matchSavedBrand(brandKit, s.productUrl.trim() || s.productDescription.trim())
-    : null;
+  const [confirmedBrand, setConfirmedBrand] = useState<BrandRecord | null>(null);
+  const confirmedBrandRef = useRef<BrandRecord | null>(null);
+  confirmedBrandRef.current = confirmedBrand;
+  const matchedSavedBrand = confirmedBrand;
   const brandInUse = matchedSavedBrand || websiteBrand;
   const [stageNote, setStageNote] = useState('');
   const [ffLogs, setFfLogs] = useState<string[]>([]);
@@ -351,6 +405,8 @@ function AdsStudioApp() {
   // learns which of it the platform actually accepted today.
   const [toast, setToast] = useState('');
   const busy = useRef(false);
+  const hookBusy = useRef<Set<string>>(new Set());
+  const hookCastPromise = useRef<Promise<{ url: string | null; description: string }> | null>(null);
   const live = useRef(s);
   useEffect(() => { live.current = s; saveSession(s); }, [s]);
 
@@ -484,13 +540,12 @@ function AdsStudioApp() {
     busy.current = true;
     patch({ isProcessing: true, researchStatus: 'loading', researchError: null, currentStep: 2 });
     try {
-      const saved = (cur.productUrl.trim() || cur.productDescription.trim())
-        ? matchSavedBrand(brandKit, cur.productUrl.trim() || cur.productDescription.trim())
-        : null;
+      const confirmed = confirmedBrandRef.current;
+      const saved = confirmed && (!cur.productUrl.trim() || !confirmed.websiteUrl || normalizeBrandUrl(cur.productUrl) === normalizeBrandUrl(confirmed.websiteUrl)) ? confirmed : null;
       if (saved) {
         setWebsiteBrand(saved);
         patch({ research: researchFromBrand(saved), researchStatus: 'done', isProcessing: false });
-        say(`Using saved brand: ${saved.identity.businessName}. Review the sourced details below.`);
+        say(`Using the brand you confirmed: ${saved.identity.businessName}. Review the details below.`);
       } else if (cur.productUrl.trim()) {
         say('Reading the website and its own key pages…');
         const fetched = await fetchBrandFromWebsite(cur.productUrl.trim());
@@ -525,35 +580,197 @@ function AdsStudioApp() {
   }
 
   function useDifferentBrand() {
+    revokeBrandUse();
     setWebsiteBrand(null);
     patch({ productUrl: '', productDescription: '', offerCta: '', research: null, researchStatus: 'idle', researchError: null, currentStep: 1 });
     say('');
   }
 
-  // -------------------------------------------------------------- angles ----
+  // --------------------------------------------------------------- hooks ----
   async function runAngles() {
     if (busy.current || !live.current.research) return;
     busy.current = true;
     patch({ isProcessing: true, currentStep: 3 });
-    say('Your director is generating ad angles…');
+    say('Writing six distinct scroll-stopping opening hooks…');
     try {
-      const angles = await generateAngles(live.current.research!, live.current.offerCta);
-      patch({ angles, selectedAngleIds: [], activeAngleId: null, opusPick: null, isProcessing: false });
-      say(`${angles.length} angles ready — pick one or more.`);
-    } catch (e: any) { patch({ isProcessing: false }); fail('Angle generation failed', e); }
+      const hooks = await generateAdHooks({
+        research: live.current.research!, productUrl: live.current.productUrl,
+        offerCta: live.current.offerCta, count: 6,
+      });
+      const angles = hooks.map((hook) => angleFromHook(hook, live.current.research!));
+      hookCastPromise.current = null;
+      patch({
+        hookIdeas: hooks, selectedHookIds: [], hookJobs: [],
+        angles, selectedAngleIds: [], activeAngleId: null, opusPick: null, isProcessing: false,
+      });
+      say(`${hooks.length} opening hooks ready — choose one or several to turn into complete videos.`);
+    } catch (e: any) { patch({ isProcessing: false }); fail('Hook generation failed', e); }
     finally { busy.current = false; }
+  }
+
+  function toggleHook(hook: AdHook) {
+    setS((prev) => {
+      const selected = prev.selectedHookIds.includes(hook.id);
+      const selectedHookIds = selected ? prev.selectedHookIds.filter((id) => id !== hook.id) : [...prev.selectedHookIds, hook.id];
+      return {
+        ...prev,
+        selectedHookIds,
+        selectedAngleIds: selectedHookIds,
+        activeAngleId: selected ? (prev.activeAngleId === hook.id ? selectedHookIds[0] || null : prev.activeAngleId) : hook.id,
+      };
+    });
+  }
+
+  function updateHookJob(jobId: string, next: Partial<HookVideoJob>) {
+    setS((prev) => ({
+      ...prev,
+      hookJobs: prev.hookJobs.map((job) => job.id === jobId ? { ...job, ...next, updatedAt: new Date().toISOString() } : job),
+    }));
+  }
+
+  function ensureHookCast(cur: AdsSession, plans: ScenePlan[], voiceDescription: string): Promise<{ url: string | null; description: string }> {
+    if (cur.avatar?.url) return Promise.resolve({ url: cur.avatar.url, description: cur.castDescription });
+    if (cur.castUrl) return Promise.resolve({ url: cur.castUrl, description: cur.castDescription });
+    if (hookCastPromise.current) return hookCastPromise.current;
+    hookCastPromise.current = (async () => {
+      let description = cur.castDescription;
+      if (!description && cur.research) {
+        try {
+          description = await castPresenter({ research: cur.research, voiceDescription, accent: 'neutral American', plans });
+        } catch { description = presenterFallbackDescription(plans, voiceDescription); }
+      }
+      if (!description) description = presenterFallbackDescription(plans, voiceDescription);
+      try {
+        const url = await generateImageAsset(presenterPortraitBrief(description, plans[0]?.visual_style || ''), '9:16');
+        patch({ castUrl: url, castDescription: description });
+        return { url, description };
+      } catch {
+        patch({ castDescription: description });
+        return { url: null, description };
+      }
+    })();
+    return hookCastPromise.current;
+  }
+
+  async function runHookVideo(hookId: string) {
+    if (hookBusy.current.has(hookId)) return;
+    const cur = live.current;
+    const hook = cur.hookIdeas.find((item) => item.id === hookId);
+    if (!hook || !cur.research) return;
+    hookBusy.current.add(hookId);
+    const existing = cur.hookJobs.find((job) => job.hookId === hookId);
+    const jobId = existing?.id || `hook-video-${hookId}`;
+    const startedAt = new Date().toISOString();
+    const queued: HookVideoJob = {
+      id: jobId, hookId, hook, status: 'planning', progress: 5, stage: 'Writing the 20-second ad', error: '',
+      videoUrl: existing?.videoUrl || null,
+      script: Array.isArray(existing?.script) ? existing!.script : [],
+      scenePlan: Array.isArray(existing?.scenePlan) ? existing!.scenePlan : [],
+      clips: Array.isArray(existing?.clips) ? existing!.clips : [],
+      startedAt, updatedAt: startedAt,
+    };
+    setS((prev) => ({ ...prev, hookJobs: [...prev.hookJobs.filter((job) => job.hookId !== hookId), queued] }));
+    try {
+      const angle = cur.angles.find((item) => item.id === hookId) || angleFromHook(hook, cur.research);
+      let script = Array.isArray(existing?.script) && existing!.script.length === 4 ? existing!.script : [];
+      let plans = Array.isArray(existing?.scenePlan) && existing!.scenePlan.length === script.length ? existing!.scenePlan : [];
+      let voiceDescription = plans[0]?.voice_description || '';
+      if (!script.length || !plans.length) {
+        const written = await withTimeout(writeScript(cur.research, angle, cur.offerCta), 120000, 'Hook script planning timed out. Retry this video.');
+        script = hookScript(written, hook, cur.research, cur.offerCta);
+        updateHookJob(jobId, { progress: 12, stage: 'Planning body, CTA, motion and captions', script });
+        const assets = [...cur.screenshots, ...cur.productImages, ...(cur.logo ? [cur.logo] : [])];
+        const planned = await withTimeout(buildScenePlan({
+          research: cur.research, angle, script, assets, hasAvatar: !!cur.avatar,
+        }), 150000, 'Scene planning timed out. Retry this video.');
+        plans = Array.isArray(planned.plans) ? planned.plans : [];
+        voiceDescription = planned.voiceDescription;
+        if (plans.length !== script.length) throw new Error('The scene planner returned an incomplete video plan.');
+      }
+      updateHookJob(jobId, { progress: 18, stage: 'Locking one presenter and voice across every scene', script, scenePlan: plans });
+      const cast = await withTimeout(ensureHookCast(cur, plans, voiceDescription), 150000, 'Presenter preparation timed out. Retry this video.');
+      const clips: GeneratedClip[] = [];
+      let previousFrameUrl: string | null = null;
+      let continuityNote: string | null = null;
+      for (let index = 0; index < script.length; index += 1) {
+        const sc = script[index];
+        const plan = plans.find((item) => item.clip_number === sc.clip_number) || plans[index];
+        const savedClip = existing?.clips.find((clip) => clip.clipNumber === sc.clip_number);
+        if (savedClip?.videoUrl) {
+          clips.push(savedClip);
+          previousFrameUrl = savedClip.lastFrameUrl;
+          try { continuityNote = savedClip.lastFrameUrl ? await continuityNoteFromFrame(savedClip.lastFrameUrl) : null; } catch { continuityNote = null; }
+          updateHookJob(jobId, { clips: [...clips], progress: 20 + Math.round(((index + 1) / script.length) * 60), stage: `Reused completed scene ${index + 1}` });
+          continue;
+        }
+        updateHookJob(jobId, { status: 'generating', progress: 20 + Math.round((index / script.length) * 60), stage: `Filming scene ${index + 1} of ${script.length} on Omni Flash` });
+        const result = await withTimeout(generateClipAgentic({
+          plan: { ...plan, spoken_line: sc.spoken_line }, script: sc, aspect: cur.aspect,
+          characterRefUrl: cast.url, characterDescription: cast.description,
+          model: 'gemini-omni-1.1-flash', integration: 'image-and-video-generation',
+          continuityNote, previousFrameUrl,
+          backgroundJobId: savedClip?.backgroundJobId || null,
+          onAdopted: (backgroundJobId) => updateHookJob(jobId, {
+            clips: [...clips, {
+              clipNumber: sc.clip_number, videoUrl: null, status: 'generating', issues: [], attempts: 0,
+              lastFrameUrl: null, promptUsed: '', modelUsed: 'gemini-omni-1.1-flash', backgroundJobId, note: 'Provider operation saved; retry reattaches to it.',
+            }],
+          }),
+          onNote: (message) => updateHookJob(jobId, { stage: message }),
+        }), 540000, `Scene ${index + 1} timed out. Retry this hook video; completed videos are safe.`);
+        if (!result.videoUrl) throw new Error(result.note || `Scene ${index + 1} failed to render.`);
+        clips.push({
+          clipNumber: sc.clip_number, videoUrl: result.videoUrl, status: result.status,
+          issues: result.issues, attempts: result.attempts, lastFrameUrl: result.lastFrameUrl,
+          promptUsed: result.promptUsed, modelUsed: result.modelUsed, note: result.note,
+        });
+        previousFrameUrl = result.lastFrameUrl;
+        continuityNote = result.continuityNote || null;
+        updateHookJob(jobId, { clips: [...clips], progress: 20 + Math.round(((index + 1) / script.length) * 60) });
+      }
+      updateHookJob(jobId, { status: 'assembling', progress: 88, stage: `Burning captions and assembling the final ${cur.aspect} ad` });
+      const result = await withTimeout(assembleWithOverlays({
+        clips: script.map((sc) => ({
+          plan: plans.find((item) => item.clip_number === sc.clip_number) || plans[0],
+          script: sc,
+          videoUrl: clips.find((clip) => clip.clipNumber === sc.clip_number)?.videoUrl || '',
+          durationS: sc.duration_seconds,
+        })).filter((clip) => clip.videoUrl),
+        session: cur,
+        reviewQuote: cur.research.customer_language[0] || '',
+        fileTag: `hook-${hookId}`,
+        onProgress: (message, fraction) => updateHookJob(jobId, { progress: 88 + Math.round(fraction * 10), stage: message }),
+      }), 300000, 'Final assembly timed out. Retry this hook video; its generated scenes are saved.');
+      updateHookJob(jobId, { status: 'done', progress: 100, stage: 'Ready to download', videoUrl: result.url, error: '', clips, script, scenePlan: plans });
+      void saveVideoToHistory({
+        appId: 'ads-studio', title: `${cur.research.product_name} — ${hook.angle} hook`, videoUrl: result.url,
+        durationSec: script.reduce((sum, clip) => sum + clip.duration_seconds, 0),
+      });
+    } catch (caught: any) {
+      updateHookJob(jobId, { status: 'failed', stage: 'Stopped safely', error: customerError(caught?.message || caught) });
+    } finally {
+      hookBusy.current.delete(hookId);
+    }
+  }
+
+  function runSelectedHookVideos(ids = live.current.selectedHookIds) {
+    const unique = Array.from(new Set(ids)).filter((id) => live.current.hookIdeas.some((hook) => hook.id === id));
+    if (!unique.length) { say('Choose at least one opening hook first.'); return; }
+    unique.forEach((id) => { void runHookVideo(id); });
+    say(`${unique.length} hook video${unique.length === 1 ? '' : 's'} started as separate jobs. You can retry any one without restarting the others.`);
   }
 
   async function runOpusPick() {
     if (busy.current || !live.current.angles.length) return;
     busy.current = true;
     patch({ isProcessing: true });
-    say('Your director is picking the strongest angle…');
+    say('Your director is picking the strongest opening hook…');
     try {
       const pick = await pickBestAngle(live.current.research!, live.current.angles);
       setS((prev) => ({
         ...prev, opusPick: pick, isProcessing: false,
         selectedAngleIds: prev.selectedAngleIds.includes(pick.angleId) ? prev.selectedAngleIds : [...prev.selectedAngleIds, pick.angleId],
+        selectedHookIds: prev.selectedHookIds.includes(pick.angleId) ? prev.selectedHookIds : [...prev.selectedHookIds, pick.angleId],
         activeAngleId: pick.angleId,
       }));
       say('Your director made its pick — see the highlighted card.');
@@ -600,7 +817,7 @@ function AdsStudioApp() {
       productDescription: String(s.productDescription || '').slice(0, 500),
       offerCta: String(s.offerCta || '').slice(0, 200),
       researchDone: s.research ? 'yes' : 'no',
-      anglesReady: String(s.angles.length),
+      hooksReady: String(s.hookIdeas.length),
     },
     onFillField: (field: string, value: string) => {
       if (field === 'productUrl') patch({ productUrl: value });
@@ -613,10 +830,10 @@ function AdsStudioApp() {
       else if (action === 'opusPick') void runOpusPick();
     },
     promptHint: [
-      'The user creates short-form video ads through an 8-step workflow (Product → Research → Angles → Script → Scene Plan → Generate → Review → Variations).',
+      'The user creates short-form video ads through an 8-step workflow (Product → Research → Hooks → Script → Scene Plan → Generate → Review → Variations).',
       'Fields you can fill: productUrl (the product website), productDescription (product name, tagline and what it does), offerCta (the offer / call to action).',
-      'Actions you can trigger: generate (runs product research from the URL/description — the workflow continues from there), angles (generate ad angles, needs research done), opusPick (have the AI pick the strongest angle).',
-      'Start by filling productUrl (or productDescription when there is no URL), then trigger generate. Later steps (script, scene plan, clips) run from the on-screen buttons — guide the user through them.',
+      'Actions you can trigger: generate (runs product research from the URL/description), angles (writes 5–8 opening hooks with the interactive GPT tier), opusPick (have the director pick the strongest hook).',
+      'Start with productUrl or productDescription, trigger research, then generate opening hooks. The customer can select several hooks and start a complete 15–30 second video job from each; each job has independent progress and retry.',
     ].join('\n'),
   };
 
@@ -1110,8 +1327,8 @@ function AdsStudioApp() {
             >
               <span style={{
                 width: 22, height: 22, borderRadius: 999, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                background: done ? T.good : active ? T.accent : T.panel, color: done || active ? '#ffffff' : T.muted,
-                fontSize: 11, fontWeight: 800, border: `1px solid ${done || active ? 'transparent' : T.line}`,
+                background: done ? 'var(--vg-gold-tint)' : active ? T.accent : T.panel, color: done ? T.accent : active ? 'var(--vg-on-accent)' : T.muted,
+                fontSize: 11, fontWeight: 800, border: `1px solid ${done ? T.accent : active ? 'transparent' : T.line}`,
               }}>{done ? <Check size={13} /> : st.n}</span>
               STEP {st.n}: {st.label.toUpperCase()}
             </button>
@@ -1132,7 +1349,7 @@ function AdsStudioApp() {
           >
             <span style={{
               width: 22, height: 22, borderRadius: 999, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              background: runwayOpen ? T.highlight : T.panel, color: runwayOpen ? '#FFFFFF' : T.muted,
+              background: runwayOpen ? T.highlight : T.panel, color: runwayOpen ? 'var(--vg-on-accent)' : T.muted,
               border: `1px solid ${runwayOpen ? 'transparent' : T.line}`,
             }}><Sparkles size={12} /></span>
             RECIPES
@@ -1156,7 +1373,7 @@ function AdsStudioApp() {
               {STEPS.map((step) => {
                 const done = step.n < s.currentStep && stepReachable(step.n + 1);
                 const active = step.n === s.currentStep;
-                return <div key={step.id} style={{ fontSize: 11.5, color: done ? T.good : active ? T.highlight : T.muted }}>{done ? '✓' : active ? '•' : '○'} {step.label}</div>;
+                return <div key={step.id} style={{ fontSize: 11.5, color: done ? T.accent : active ? T.highlight : T.muted }}>{done ? '✓' : active ? '•' : '○'} {step.label}</div>;
               })}
             </div>
           </details>
@@ -1194,11 +1411,13 @@ function AdsStudioApp() {
                 <input style={inputStyle} placeholder='e.g. "Get 50% off today"' value={s.offerCta} onChange={(e) => patch({ offerCta: e.target.value })} />
                 <div style={{ height: 12 }} />
                 <span style={labelStyle}>Ad format</span>
+                <div style={{ margin: '-2px 0 8px', color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{AD_FORMAT_HELPER}</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {(['9:16', '1:1', '16:9'] as const).map((a) => (
-                    <Btn key={a} small kind={s.aspect === a ? 'primary' : 'ghost'} onClick={() => patch({ aspect: a })}>{a === '9:16' ? '9:16 · Reels/TikTok' : a === '1:1' ? '1:1 · Feed' : '16:9 · Wide'}</Btn>
+                    <Btn key={a} small kind={s.aspect === a ? 'primary' : 'ghost'} onClick={() => patch({ aspect: a })}><span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}><OptionThumb src={previewFor('ad-format', a)} ratio={AD_FORMAT_RATIOS[a]} style={{ width: 'auto', height: 44, borderRadius: 6 }} />{a === '9:16' ? '9:16 · Reels/TikTok' : a === '1:1' ? '1:1 · Feed' : '16:9 · Wide'}</span></Btn>
                   ))}
                 </div>
+                <div style={{ marginTop: 7, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{AD_FORMAT_NOTES[s.aspect]}</div>
                 </details>
               </div>
               <details style={card}>
@@ -1225,6 +1444,7 @@ function AdsStudioApp() {
                 </div>
                 </div>
               </details>
+              <SavedBrandKitConfirm onChange={setConfirmedBrand} />
               <div>
                 <Btn kind="primary" disabled={s.isProcessing || !(s.productUrl.trim() || s.productDescription.trim())} onClick={runResearch}>
                   {s.isProcessing ? <Spin label="Starting research" /> : <Wand2 size={15} />} Start Research <ChevronRight size={15} />
@@ -1239,12 +1459,11 @@ function AdsStudioApp() {
           <div style={{ maxWidth: 860 }}>
             <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 800 }}>Product research</h2>
             <p style={{ margin: '0 0 20px', color: T.muted, fontSize: 13.5 }}>Your director reads the site's own home, pricing, about and product links with native fetch. Missing or limited fields stay explicit. Correct anything before continuing.</p>
-            {brandInUse ? <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12, borderColor: T.accent, flexWrap: 'wrap' }}><Check size={14} color={T.good} /><strong style={{ fontSize: 12.5 }}>{matchedSavedBrand ? `Using saved brand: ${brandInUse.identity.businessName}` : `Website context fetched: ${brandInUse.identity.businessName}`}</strong>{brandInUse.limited ? <Tag tone="warn">limited pages</Tag> : <Tag tone="ok">sourced</Tag>}<span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}><Btn small onClick={() => void refreshBrandInBrief()} disabled={s.isProcessing}><RefreshCw size={12} /> Refresh</Btn><Btn small onClick={useDifferentBrand}>Use different</Btn></span></div> : null}
+            {brandInUse ? <div style={{ ...card, display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12, borderColor: T.accent, flexWrap: 'wrap' }}><Check size={14} color={T.good} /><strong style={{ fontSize: 12.5 }}>{matchedSavedBrand ? `Using the brand you confirmed: ${brandInUse.identity.businessName}` : `Website context fetched: ${brandInUse.identity.businessName}`}</strong>{brandInUse.limited ? <Tag tone="warn">limited pages</Tag> : <Tag tone="ok">sourced</Tag>}<span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}><Btn small onClick={() => void refreshBrandInBrief()} disabled={s.isProcessing}><RefreshCw size={12} /> Refresh</Btn><Btn small onClick={useDifferentBrand}>Use different</Btn></span></div> : null}
             {s.researchStatus === 'loading' && <div className="ads-rise" style={{ ...card }}><div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0' }}><Spin size={120} caption="Researching your product" /></div></div>}
-            {s.isProcessing && s.researchStatus !== 'loading' && s.currentStep >= 3 && s.currentStep <= 5 && <div className="ads-rise" style={{ ...card, display: 'flex', justifyContent: 'center', padding: '18px 0', marginBottom: 14 }}><Spin size={120} caption={s.currentStep === 3 ? 'Your director is working on your angles' : s.currentStep === 4 ? 'Writing your script' : 'Planning your scenes'} /></div>}
             {s.researchStatus === 'error' && (
-              <div className="ads-rise" style={{ ...card, borderColor: T.bad, background: 'rgba(153,27,27,.07)', display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                <span style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 10, background: 'rgba(153,27,27,.1)', flexShrink: 0 }}><AlertTriangle size={16} color={T.bad} /></span>
+              <div className="ads-rise" style={{ ...card, borderColor: T.bad, background: 'var(--vg-danger-bg)', display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ display: 'grid', placeItems: 'center', width: 34, height: 34, borderRadius: 10, background: 'var(--vg-danger-bg)', flexShrink: 0 }}><AlertTriangle size={16} color={T.bad} /></span>
                 <div style={{ minWidth: 'min(100%, 220px)', flex: 1 }}><div style={{ color: T.ink, fontWeight: 700, marginBottom: 5 }}>Research failed</div>
                 <div style={{ color: T.soft, fontSize: 13, marginBottom: 12 }}>{customerError(s.researchError)}</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1288,67 +1507,91 @@ function AdsStudioApp() {
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <Btn onClick={runResearch} disabled={s.isProcessing}><RefreshCw size={14} /> Re-run research</Btn>
-                  <Btn kind="primary" disabled={s.isProcessing} onClick={runAngles}>Looks good — continue <ChevronRight size={15} /></Btn>
+                  <Btn kind="primary" disabled={s.isProcessing} onClick={runAngles}>Generate opening hooks <ChevronRight size={15} /></Btn>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ================= STEP 3 — ANGLES ================= */}
+        {/* ================= STEP 3 — HOOK LAB ================= */}
         {s.currentStep === 3 && (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
               <div>
-                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 800 }}>Ad angles</h2>
-                <p style={{ margin: 0, color: T.muted, fontSize: 13.5 }}>Each card is a genuinely different reason to buy. Select one or more.</p>
+                <h2 style={{ margin: '0 0 4px', fontSize: 22, fontWeight: 800 }}>Opening Hook Lab</h2>
+                <p style={{ margin: 0, color: T.muted, fontSize: 13.5 }}>Distinct 1–3 second openings across problem, curiosity, proof, bold claim, before/after and question angles. Select one or several.</p>
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Btn onClick={runAngles} disabled={s.isProcessing}><RefreshCw size={14} /> Regenerate angles</Btn>
-                <Btn kind="primary" onClick={runOpusPick} disabled={s.isProcessing || !s.angles.length}><Sparkles size={14} /> Director picks best</Btn>
+                <Btn onClick={runAngles} disabled={s.isProcessing}><RefreshCw size={14} /> Regenerate hooks</Btn>
+                <Btn kind="primary" onClick={runOpusPick} disabled={s.isProcessing || !s.hookIdeas.length}><Sparkles size={14} /> Director picks best</Btn>
               </div>
             </div>
             {s.opusPick && (
               <div style={{ ...card, marginBottom: 14, borderColor: T.highlight }}>
                 <span style={labelStyle}>Director recommends</span>
                 <div style={{ fontSize: 13.5, color: T.soft }}>
-                  <b style={{ color: T.ink }}>{(s.angles.find((a) => a.id === s.opusPick!.angleId) || { angle_name: '' }).angle_name}</b> — {s.opusPick.reason}
+                  <b style={{ color: T.ink }}>{(s.hookIdeas.find((hook) => hook.id === s.opusPick!.angleId) || { headline: '' }).headline}</b> — {s.opusPick.reason}
                 </div>
               </div>
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(330px, 100%), 1fr))', gap: 12 }}>
-              {s.angles.map((a) => {
-                const selected = s.selectedAngleIds.includes(a.id);
-                const isPick = s.opusPick?.angleId === a.id;
+              {s.hookIdeas.map((hook) => {
+                const selected = s.selectedHookIds.includes(hook.id);
+                const isPick = s.opusPick?.angleId === hook.id;
                 return (
-                  <div
-                    key={a.id}
-                    onClick={() => setS((prev) => ({
-                      ...prev,
-                      selectedAngleIds: selected ? prev.selectedAngleIds.filter((x) => x !== a.id) : [...prev.selectedAngleIds, a.id],
-                      activeAngleId: selected ? (prev.activeAngleId === a.id ? prev.selectedAngleIds.filter((x) => x !== a.id)[0] || null : prev.activeAngleId) : a.id,
-                    }))}
-                    style={{ ...card, cursor: 'pointer', border: `${selected ? 2 : 1}px solid ${selected ? T.accent : isPick ? T.highlight : T.line}` }}
+                  <button
+                    key={hook.id}
+                    type="button"
+                    onClick={() => toggleHook(hook)}
+                    style={{ ...card, cursor: 'pointer', textAlign: 'left', color: T.ink, border: `${selected ? 2 : 1}px solid ${selected ? T.accent : isPick ? T.highlight : T.line}` }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-                      <Tag tone="info">{a.angle_type}</Tag>
-                      {selected ? <Tag tone="ok">Selected</Tag> : isPick ? <Tag tone="warn">Director pick</Tag> : null}
+                      <Tag tone="info">{hook.angle.replace('-', ' ')}</Tag>
+                      {selected ? <Tag tone="info">Selected</Tag> : isPick ? <Tag>Director pick</Tag> : null}
                     </div>
-                    <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 6 }}>{a.angle_name}</div>
-                    <div style={{ fontSize: 13.5, color: T.ink, marginBottom: 8, fontStyle: 'italic' }}>“{a.hook}”</div>
-                    <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>{a.core_idea}</div>
-                  </div>
+                    <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 7 }}>“{hook.headline}”</div>
+                    <div style={{ fontSize: 12.5, color: T.soft, marginBottom: 7, lineHeight: 1.5 }}><b style={{ color: T.highlight }}>0–3s:</b> {hook.firstSeconds}</div>
+                    <div style={{ fontSize: 12.5, color: T.muted, lineHeight: 1.5 }}>{hook.rationale}</div>
+                    <div style={{ marginTop: 8, fontSize: 11.5, color: T.muted, lineHeight: 1.45 }}><b style={{ color: T.soft }}>Opening motion:</b> {hook.visualDirection}</div>
+                  </button>
                 );
               })}
             </div>
-            {!s.angles.length && !s.isProcessing && (
-              <div className="ads-rise" style={{ ...card, padding: '32px 24px', textAlign: 'center' }}><span style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, margin: '0 auto 14px', borderRadius: 17, background: T.panel, border: `1px solid ${T.line}` }}><Sparkles size={23} color={T.accent} /></span><div style={{ color: T.ink, fontSize: 16, fontWeight: 700 }}>Find the angle that makes this ad click</div><div style={{ margin: '7px auto 16px', maxWidth: 430, color: T.muted, fontSize: 13.5, lineHeight: 1.6 }}>Your director will turn the research into distinct hooks, objections, outcomes and creative directions.</div><Btn kind="primary" onClick={runAngles}><Wand2 size={14} /> Generate angles</Btn></div>
+            {!s.hookIdeas.length && !s.isProcessing && (
+              <div className="ads-rise" style={{ ...card, padding: '32px 24px', textAlign: 'center' }}><span style={{ display: 'grid', placeItems: 'center', width: 54, height: 54, margin: '0 auto 14px', borderRadius: 17, background: T.panel, border: `1px solid ${T.line}` }}><Sparkles size={23} color={T.accent} /></span><div style={{ color: T.ink, fontSize: 16, fontWeight: 700 }}>Find the opening that stops the scroll</div><div style={{ margin: '7px auto 16px', maxWidth: 430, color: T.muted, fontSize: 13.5, lineHeight: 1.6 }}>GPT writes 5–8 truthful opening hooks across distinct angles, ready to become separate short ads.</div><Btn kind="primary" onClick={runAngles}><Wand2 size={14} /> Generate opening hooks</Btn></div>
             )}
-            {s.selectedAngleIds.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <Btn kind="primary" disabled={s.isProcessing} onClick={() => runScript(s.activeAngleId || s.selectedAngleIds[0])}>
-                  Write the script <ChevronRight size={15} />
+
+            {s.hookJobs.length > 0 ? (
+              <div style={{ marginTop: 20 }}>
+                <h3 style={{ margin: '0 0 10px', fontSize: 17 }}>Hook video jobs</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(300px, 100%), 1fr))', gap: 12 }}>
+                  {s.hookJobs.map((job) => (
+                    <div key={job.id} className="ads-card ads-rise" style={{ ...card, borderColor: job.status === 'done' ? T.good : job.status === 'failed' ? T.bad : T.lineStrong }}>
+                      <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <Tag tone="info">{job.hook.angle.replace('-', ' ')}</Tag>
+                        <Tag tone={job.status === 'done' ? 'ok' : job.status === 'failed' ? 'bad' : 'warn'}>{job.status}</Tag>
+                        <span style={{ marginLeft: 'auto', color: T.muted, fontSize: 11, fontFamily: T.mono }}>{Math.max(0, Math.min(100, Math.round(job.progress || 0)))}%</span>
+                      </div>
+                      <div style={{ marginTop: 9, color: T.ink, fontWeight: 750 }}>“{job.hook.headline}”</div>
+                      {job.status !== 'done' && job.status !== 'failed' ? <div style={{ marginTop: 10 }}><div style={{ height: 6, borderRadius: 999, overflow: 'hidden', background: T.panel }}><div style={{ width: `${Math.max(3, Math.min(100, job.progress || 0))}%`, height: '100%', background: T.accent, transition: 'width .3s ease' }} /></div><div style={{ marginTop: 7, color: T.muted, fontSize: 11.5 }}>{job.stage}</div></div> : null}
+                      {job.status === 'done' && job.videoUrl ? <div style={{ marginTop: 11 }}><video src={job.videoUrl} controls preload="metadata" style={{ width: '100%', maxHeight: 330, borderRadius: 10, background: '#000' }} /><a href={job.videoUrl} download style={{ display: 'inline-block', marginTop: 9, textDecoration: 'none' }}><Btn small kind="primary"><Download size={12} /> Download MP4</Btn></a></div> : null}
+                      {job.status === 'failed' ? <VideoErrorCard error={job.error || 'This hook video stopped safely.'} subject="this hook video" onRetry={() => runSelectedHookVideos([job.hookId])} compact style={{ marginTop: 10 }} /> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {s.selectedHookIds.length > 0 && (
+              <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Btn kind="primary" disabled={s.isProcessing} onClick={() => runSelectedHookVideos()}>
+                  <Play size={14} /> Generate {s.selectedHookIds.length} complete hook video{s.selectedHookIds.length === 1 ? '' : 's'}
                 </Btn>
+                <Btn disabled={s.isProcessing} onClick={() => runScript(s.activeAngleId || s.selectedHookIds[0])}>
+                  Continue one hook in Director Workflow <ChevronRight size={15} />
+                </Btn>
+                <span style={{ alignSelf: 'center', color: T.muted, fontSize: 11.5 }}>20s each · {s.aspect} · captions on · Omni Flash · independent retry</span>
               </div>
             )}
           </div>
@@ -1361,6 +1604,7 @@ function AdsStudioApp() {
             <p style={{ margin: '0 0 16px', color: T.muted, fontSize: 13.5 }}>
               Four clear paths from the same product research and angle. Runway branches use Audos' native authenticated API, wallet billing, and durable media tasks.
             </p>
+            <p style={{ margin: '0 0 14px', color: T.soft, fontSize: 12.5, lineHeight: 1.5 }}>{PRODUCTION_PATH_HELPER}</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(210px, 100%), 1fr))', gap: 10, marginBottom: 18 }}>
               {([
                 ['ugc', 'UGC Ads', 'Creator-led product ads via product_ugc.'],
@@ -1381,8 +1625,9 @@ function AdsStudioApp() {
                     }}
                     data-testid={`step4-branch-${id}`}
                   >
+                    <OptionThumb src={previewFor('production-path', id)} style={{ marginBottom: 10 }} />
                     <span style={{ display: 'block', color: active ? T.highlight : T.ink, fontSize: 14, fontWeight: 800 }}>{label}</span>
-                    <span style={{ display: 'block', marginTop: 5, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{description}</span>
+                    <span style={{ display: 'block', marginTop: 5, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{PRODUCTION_PATH_NOTES[id] || description}</span>
                   </button>
                 );
               })}
@@ -1413,7 +1658,7 @@ function AdsStudioApp() {
                 theme={{
                   panel: T.panel, card: T.card, line: T.line, lineStrong: T.lineStrong,
                   ink: T.ink, soft: T.soft, muted: T.muted, accent: T.accent,
-                  onAccent: '#ffffff', good: T.good, bad: T.bad, font: T.sans,
+                  onAccent: 'var(--vg-on-accent)', good: T.good, bad: T.bad, font: T.sans,
                 }}
               />
             ) : (
@@ -1505,9 +1750,9 @@ function AdsStudioApp() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                       <Tag tone="info">Clip {p.clip_number} · {sc?.clip_role}</Tag>
                       {p.shot_intent && <Tag>{p.shot_intent.replace(/_/g, ' ')}</Tag>}
-                      {p.engine_id && <Tag tone="ok">{engineDisplayName(p.engine_id)}</Tag>}
+                      {p.engine_id && <Tag>{engineDisplayName(p.engine_id)}</Tag>}
                       {p.workflow_kind && p.workflow_kind !== 'engine' && <Tag tone="warn">{p.workflow_kind} workflow</Tag>}
-                      {p.use_screenshot_mockup && <Tag tone="warn">{p.screenshot_mockup_type} mockup</Tag>}
+                      {p.use_screenshot_mockup && <Tag>{p.screenshot_mockup_type} mockup</Tag>}
                       {p.overlay_type !== 'none' && !p.use_screenshot_mockup && <Tag>{p.overlay_type}</Tag>}
                       <span style={{ marginLeft: 'auto' }}>
                         <Btn small onClick={() => regenPlanForClip(p.clip_number)} disabled={s.isProcessing}><RefreshCw size={12} /> Regenerate plan</Btn>
@@ -1782,7 +2027,7 @@ function AdsStudioApp() {
                       <div key={`${hi}-${bi}-${ci}`} style={{ ...card, borderColor: v?.status === 'done' ? T.good : v?.status === 'error' ? T.bad : T.line }}>
                         <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                           <Tag tone="info">H{hi + 1} · B{bi + 1} · C{ci + 1}</Tag>
-                          {isOriginal && <Tag tone="ok">Original</Tag>}
+                          {isOriginal && <Tag>Original</Tag>}
                           {v && (v.status === 'generating' || v.status === 'assembling') ? <Tag tone="warn">{v.status}…</Tag> : null}
                           {v?.status === 'error' && <Tag tone="bad">failed</Tag>}
                         </div>

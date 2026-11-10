@@ -1,5 +1,5 @@
 import { useState, Suspense, LazyExoticComponent, ComponentType, useEffect, useRef, Component, ErrorInfo, ReactNode } from 'react';
-import { Bot, Folder, X, Activity, Clapperboard, Moon, Heart, Calendar, Users, FileText, BarChart, Settings as SettingsIcon, MessageCircle, Plane, TrendingUp, LineChart, Dumbbell, Brain, Target, Zap, Star, Clock, CheckCircle, List, BookOpen, Coffee, Music, Camera, MapPin, Wallet, ShoppingCart, Gift, Lightbulb, Sparkles, Rocket, Home, Building, Globe, Mail, Phone, Video, Mic, Image, Play, Pause, Volume2, Wifi, Cloud, Sun, Umbrella, Thermometer, Wind, Droplets, Leaf, Flower2, Film, Mountain, Waves, Compass, Map as MapIcon, Navigation, Car, Bike, Ship, Award, Trophy, Medal, Crown, Diamond, Gem, Key, Lock, Unlock, Shield, Eye, Search, Filter, SortAsc, Download, Upload, Share2, Link, ExternalLink, Copy, Clipboard, Trash2, Edit, Pencil, PenTool, Scissors, Bookmark, Flag, Bell, AlertCircle, Info, HelpCircle, XCircle, CheckCircle2, Circle, Square, Triangle, Hexagon, Octagon, Hash, AtSign, DollarSign, Percent, Calculator, Code, Terminal, Database, Server, Cpu, Monitor, Smartphone, Tablet, Laptop, Watch, Headphones, Speaker, Radio, Tv, Printer, Scan, QrCode, Barcode, CreditCard, Receipt, Banknote, PiggyBank, TrendingDown, AreaChart, PieChart, FlaskConical, Ghost, Radar, Crosshair, Wand2, Type, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Bot, Folder, X, Activity, Clapperboard, UserRound, Moon, Heart, Calendar, Users, FileText, BarChart, Settings as SettingsIcon, MessageCircle, Plane, TrendingUp, LineChart, Dumbbell, Brain, Target, Zap, Star, Clock, CheckCircle, List, BookOpen, Coffee, Music, Camera, MapPin, Wallet, ShoppingCart, Gift, Lightbulb, Sparkles, Rocket, Home, Building, Globe, Mail, Phone, Video, Mic, Image, Play, Pause, Volume2, Wifi, Cloud, Sun, Umbrella, Thermometer, Wind, Droplets, Leaf, Flower2, Film, Mountain, Waves, Compass, Map as MapIcon, Navigation, Car, Bike, Ship, Award, Trophy, Medal, Crown, Diamond, Gem, Key, Lock, Unlock, Shield, Eye, Search, Filter, SortAsc, Download, Upload, Share2, Link, ExternalLink, Copy, Clipboard, Trash2, Edit, Pencil, PenTool, Scissors, Bookmark, Flag, Bell, AlertCircle, Info, HelpCircle, XCircle, CheckCircle2, Circle, Square, Triangle, Hexagon, Octagon, Hash, AtSign, DollarSign, Percent, Calculator, Code, Terminal, Database, Server, Cpu, Monitor, Smartphone, Tablet, Laptop, Watch, Headphones, Speaker, Radio, Tv, Printer, Scan, QrCode, Barcode, CreditCard, Receipt, Banknote, PiggyBank, TrendingDown, AreaChart, PieChart, FlaskConical, Ghost, Radar, Crosshair, Wand2, Type, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import type { AppConfig, SpaceConfig, DesktopBranding, DesktopThemeTokens } from './types';
 import { useSpaceRuntime } from './SpaceRuntimeContext';
 import FileBrowser from './components/FileBrowser';
@@ -9,6 +9,9 @@ import VideoLibrary from './components/VideoLibrary';
 import PricingScreen from './components/PricingScreen';
 import CreditBalance from './components/CreditBalance';
 import CreditAuthNotice from './components/CreditAuthNotice';
+import CreditActivityToast from './components/CreditActivityToast';
+import CreditConfirmDialog from './components/CreditConfirmDialog';
+import FirstRun from './components/FirstRun';
 import {
   getPlanId,
   isPaidTier,
@@ -19,17 +22,29 @@ import {
 } from './lib/plans';
 import type { PricingRequest, PricingTrigger } from './lib/plans';
 import { consumeCheckoutReturn, refreshCredits } from './lib/credits';
+import { installGlobalErrorReporting, reportClientError } from './lib/clientErrors';
 import { tw } from './lib/colors';
 import { isTenantDelegationCanvas } from './lib/tenant-delegation-canvas';
-import { LauncherFX } from './components/HomeLauncher';
 import VergeLoader from './components/VergeLoader';
 import BrandLogo from './components/BrandLogo';
 import GlobalStyles from './components/ui/GlobalStyles';
 import BackgroundJobsTray from './components/shared/BackgroundJobsTray';
 import { ShellDock, ShellHeader } from './components/ShellNav';
 import type { ShellNavItem, WorkspaceMode } from './components/ShellNav';
+import BrandContextLayer from './components/BrandContextLayer';
+import { requestBrandDocPanel } from './lib/brandDoc';
 
 const DESKTOP_VERSION = 2;
+
+// Verge is the home app. Its registry id stays 'home' (defaultLandingAppId,
+// job rows and saved settings key off it); only the address bar says #verge.
+const VERGE_APP_ID = 'home';
+const VERGE_HASH = 'verge';
+// Brand Kit is now the Brand doc panel inside Verge; old ids and links open it.
+const BRAND_DOC_LINKS = ['brand', 'brand-context', 'brand-kit', 'brandkit', 'brand-doc'];
+function hashForWindow(id: string): string {
+  return id === VERGE_APP_ID ? VERGE_HASH : id;
+}
 
 // Hook to detect mobile vs desktop using JS (prevents double-mounting of components)
 function useIsMobile() {
@@ -76,6 +91,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error(`[AppErrorBoundary] App "${this.props.appName || 'unknown'}" crashed:`, error, errorInfo);
+    reportClientError(error, this.props.appName || 'unknown', 'error_boundary');
   }
 
   render() {
@@ -84,10 +100,10 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
         <div style={{ padding: '32px', textAlign: 'center', fontFamily: 'system-ui, sans-serif' }}>
           <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
           <h2 style={{ fontSize: '20px', fontWeight: 600, marginBottom: '8px', color: 'var(--space-text-primary, #f5f5f7)' }}>
-            {this.props.appName ? `"${this.props.appName}" failed to load` : 'App failed to load'}
+            {`Something broke in ${this.props.appName || 'this app'}. Your work is saved.`}
           </h2>
           <p style={{ fontSize: '14px', color: 'var(--space-text-secondary, #a1a1ab)', marginBottom: '20px', maxWidth: '400px', margin: '0 auto 20px' }}>
-            {this.state.error?.message || 'An unexpected error occurred while loading this app.'}
+            Reopen the app to continue. If it happens again, report it from Health.
           </p>
           <button
             onClick={() => {
@@ -104,7 +120,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
               fontWeight: 500,
             }}
           >
-            ↻ Retry
+            Reopen
           </button>
         </div>
       );
@@ -115,7 +131,7 @@ class AppErrorBoundary extends Component<AppErrorBoundaryProps, AppErrorBoundary
 
 function buildFontFamily(fontName?: string): string {
   if (!fontName) {
-    return '"Manrope", "Segoe UI", sans-serif';
+    return '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif';
   }
 
   return `"${fontName}", system-ui, -apple-system, sans-serif`;
@@ -127,7 +143,7 @@ function resolveGenesisRuntimeTheme(config: SpaceConfig) {
   const headingFont =
     themeTokens.typography?.headingFont ||
     branding.headingFont ||
-    'Space Grotesk';
+    'Inter';
   const bodyFont =
     themeTokens.typography?.bodyFont ||
     branding.bodyFont ||
@@ -173,7 +189,7 @@ const baseIconMap: Record<string, ComponentType<any>> = {
   Cpu, Monitor, Smartphone, Tablet, Laptop, Watch, Headphones, Speaker,
   Radio, Tv, Printer, Scan, QrCode, Barcode, CreditCard, Receipt, Banknote,
   PiggyBank, TrendingDown, AreaChart, PieChart, Flower2, Clapperboard, Film,
-  FlaskConical, Ghost, Radar, Crosshair, Wand2, Type,
+  FlaskConical, Ghost, Radar, Crosshair, Wand2, Type, UserRound,
 };
 
 // Create case-insensitive lookup with common aliases
@@ -261,16 +277,15 @@ const SIDEBAR_GROUPS: Array<{ label: string; emoji: string; appIds: string[] }> 
     label: 'Studios',
     emoji: '\u{1F3AC}',
     appIds: [
-      'brand-context',
       'vidverge-agent',
       'script-to-video',
       'ads-studio',
       'faceless',
       'sceneforge',
+      'avatar-app',
       'video-enhancer',
       'studio',
       'cineagent',
-      'video-provider-lab',
     ],
   },
 ];
@@ -286,8 +301,8 @@ function appNavLabel(app: AppConfig): string {
   // 'brand-context') are what deep links, job rows and stored settings key
   // off, so they are deliberately left alone — only the label a person reads
   // changes here.
+  if (app.id === VERGE_APP_ID) return 'Verge';
   if (app.id === 'vidverge-agent') return 'Verger';
-  if (app.id === 'brand-context') return 'Brand Kit';
   if (app.id === 'cineagent') return 'Studio';
   if (app.id === 'video-provider-lab') return 'Provider Lab';
   return app.name;
@@ -372,8 +387,7 @@ function ManualLauncher({
   onOpenLibrary: () => void;
 }) {
   return (
-    <div className="relative h-full overflow-y-auto bg-[var(--space-surface-bg)] px-4 py-7 sm:px-8 sm:py-10">
-      <LauncherFX compact />
+    <div className="relative h-full overflow-y-auto bg-transparent px-4 py-7 sm:px-8 sm:py-10">
       <div className="relative mx-auto w-full max-w-6xl">
         <div className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -454,6 +468,7 @@ export default function SpaceDesktop({
 }: SpaceDesktopProps) {
   const { sessionId, isBootstrappingSession, trackEvent, subscriptionReady, userRole, sessionMetadata } = useSpaceRuntime();
   const isMobile = useIsMobile();
+  useEffect(() => installGlobalErrorReporting(), []);
   // SUBSCRIPTION GATE TEMPORARILY DISABLED — all users have full access.
   // This used to be the visitor's tier from the `subscriptions` table, looked
   // up by email, and it decided whether Pro features were unlocked. That lookup
@@ -477,19 +492,11 @@ export default function SpaceDesktop({
     const allowedRoles = appAllowedRoles(app);
     return allowedRoles.length === 0 || allowedRoles.includes(effectiveRole);
   });
+  const configuredLandingId = ((config.desktop?.layout || {}) as any).defaultLandingAppId || 'home';
+  const landingAppId = accessibleApps.some((app) => app.id === configuredLandingId) ? configuredLandingId : (accessibleApps[0]?.id || 'home');
   const isSubscriber = isPaidTier(userTier);
-  const planLabel = isProTier(userTier)
-    ? 'Pro'
-    : userTier === 'creator'
-      ? 'Creator'
-      : userTier === 'payg'
-        ? 'Pay-as-you-go'
-        : 'Plans';
-  const planButtonTitle = !isSubscriber
-    ? 'VidVerge plans'
-    : unlimited
-      ? `You're on VidVerge ${planLabel} \u2014 unlimited videos`
-      : `You're on VidVerge ${planLabel}`;
+  const planLabel = isProTier(userTier) ? 'Pro access' : 'Credits';
+  const planButtonTitle = 'Credits & pricing \u2014 pay per use, real engine cost + 30%';
 
   // Timeout guard: if subscriptionReady stays false for too long, unblock the UI
   // so the user isn't stuck on an infinite spinner (fixes EmailGate hang bug).
@@ -542,7 +549,7 @@ export default function SpaceDesktop({
       return 'agent';
     }
   });
-  const [activeWindowId, setActiveWindowId] = useState<WindowId | null>(() => workspaceMode === 'manual' ? null : 'vidverge-agent');
+  const [activeWindowId, setActiveWindowId] = useState<WindowId | null>(() => workspaceMode === 'manual' ? null : landingAppId);
   const [fileAccessLogs] = useState<FileAccessLog[]>([]);
   // Sidebar collapse is a per-visitor preference, so it is read straight out
   // of localStorage on first render rather than flashing expanded first.
@@ -591,13 +598,26 @@ export default function SpaceDesktop({
     } catch {
       // Mode still changes for this visit when browser storage is unavailable.
     }
-    setActiveWindowId(nextMode === 'agent' ? 'vidverge-agent' : null);
+    setActiveWindowId(nextMode === 'agent' ? landingAppId : null);
+  };
+
+  const goHome = () => {
+    setWorkspaceMode('agent');
+    setActiveWindowId(landingAppId);
+    setNavDrawerOpen(false);
+    try { window.localStorage.setItem(WORKSPACE_MODE_KEY, 'agent'); } catch {}
   };
 
   const openApp = (appId: string) => {
+    if (BRAND_DOC_LINKS.includes(String(appId).toLowerCase())) {
+      requestBrandDocPanel();
+      pendingOwnerDeepLink.current = null;
+      setActiveWindowId(accessibleApps.some(a => a.id === VERGE_APP_ID) ? VERGE_APP_ID : landingAppId);
+      return;
+    }
     const app = accessibleApps.find(a => a.id === appId);
     if (!app) {
-      setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent');
+      setActiveWindowId(workspaceMode === 'manual' ? null : landingAppId);
       return;
     }
     if (appId === 'vidverge-agent') {
@@ -644,9 +664,13 @@ export default function SpaceDesktop({
   // regardless of any stored same-origin session.
   const forceVisitor =
     typeof window !== 'undefined' && (window as any).__AUDOS_FORCE_VISITOR__ === true;
+  const forceCreditSignIn = typeof window !== 'undefined' && !sessionId && !tenantDelegationBypass && (() => {
+    try { return window.sessionStorage.getItem('vidverge:force-credit-sign-in') === '1'; }
+    catch { return false; }
+  })();
   const showEmailGate =
-    mode === 'customer' &&
-    (forceVisitor ||
+    (mode === 'customer' || forceCreditSignIn) &&
+    (forceVisitor || forceCreditSignIn ||
       (!sessionId && !isBootstrappingSession && !publicAppBypass && !tenantDelegationBypass));
 
   // With no active window, Manual mode shows the complete studio launcher.
@@ -684,7 +708,7 @@ export default function SpaceDesktop({
       }
       // Agent mode lands on Verger when no deep link is present.
       const landing = (config.desktop?.layout || {}) as any;
-      const defaultAppId = landing.defaultLandingAppId || 'vidverge-agent';
+      const defaultAppId = landing.defaultLandingAppId || 'home';
       const landingApp = accessibleApps.find(app => app.id === defaultAppId) || accessibleApps[0];
       if (landingApp) {
         setActiveWindowId(landingApp.id);
@@ -693,6 +717,12 @@ export default function SpaceDesktop({
     }
 
     if (deepLinkId) {
+      if (BRAND_DOC_LINKS.includes(deepLinkId)) {
+        requestBrandDocPanel();
+        setActiveWindowId(accessibleApps.some(app => app.id === VERGE_APP_ID) ? VERGE_APP_ID : landingAppId);
+        return;
+      }
+
       const matchingApp = accessibleApps.find(
         app => app.id.toLowerCase() === deepLinkId || app.name.toLowerCase() === deepLinkId
       );
@@ -722,9 +752,9 @@ export default function SpaceDesktop({
       );
       if (gatedApp) pendingOwnerDeepLink.current = gatedApp.id;
 
-      setActiveWindowId('vidverge-agent');
+      setActiveWindowId(landingAppId);
     }
-  }, [sessionId, config.apps, effectiveRole, workspaceMode]);
+  }, [sessionId, config.apps, effectiveRole, workspaceMode, landingAppId]);
 
   useEffect(() => {
     const pendingId = pendingOwnerDeepLink.current;
@@ -738,9 +768,10 @@ export default function SpaceDesktop({
   useEffect(() => {
     if (activeWindowId) {
       const currentHash = window.location.hash.slice(1);
-      if (currentHash !== activeWindowId) {
+      const nextHash = hashForWindow(activeWindowId);
+      if (currentHash !== nextHash) {
         isInternalHashChange.current = true;
-        window.location.hash = activeWindowId;
+        window.location.hash = nextHash;
         setTimeout(() => {
           isInternalHashChange.current = false;
         }, 0);
@@ -765,7 +796,13 @@ export default function SpaceDesktop({
       const hash = window.location.hash.slice(1).toLowerCase();
 
       if (!hash) {
-        setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent');
+        setActiveWindowId(workspaceMode === 'manual' ? null : landingAppId);
+        return;
+      }
+
+      if (BRAND_DOC_LINKS.includes(hash)) {
+        requestBrandDocPanel();
+        setActiveWindowId(accessibleApps.some(app => app.id === VERGE_APP_ID) ? VERGE_APP_ID : landingAppId);
         return;
       }
 
@@ -798,7 +835,7 @@ export default function SpaceDesktop({
       }
 
       // Invalid hashes return to the current mode's primary surface.
-      setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent');
+      setActiveWindowId(workspaceMode === 'manual' ? null : landingAppId);
     };
 
     window.addEventListener('hashchange', handleHashChange);
@@ -818,7 +855,7 @@ export default function SpaceDesktop({
 
   // Mini-apps return to the current mode's primary surface.
   useEffect(() => {
-    const handleCloseApp = () => setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent');
+    const handleCloseApp = () => setActiveWindowId(workspaceMode === 'manual' ? null : landingAppId);
 
     window.addEventListener('closeApp', handleCloseApp as EventListener);
     return () => window.removeEventListener('closeApp', handleCloseApp as EventListener);
@@ -854,7 +891,7 @@ export default function SpaceDesktop({
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'm') {
         e.preventDefault();
         if (activeWindowId === 'files') {
-          setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent');
+          setActiveWindowId(workspaceMode === 'manual' ? null : landingAppId);
         } else {
           setActiveWindowId('files');
         }
@@ -874,8 +911,8 @@ export default function SpaceDesktop({
   const workspaceName = runtimeTheme.branding.name || 'VidVerge';
   // Every role-accessible registered app is a first-class navigation target.
   // Owner-only entries remain filtered by accessibleApps above.
-  const navPriority = ['brand-context', 'vidverge-agent', 'video-provider-lab'];
-  const sidebarApps = [...accessibleApps].sort((left, right) => {
+  const navPriority = [VERGE_APP_ID, 'vidverge-agent'];
+  const sidebarApps = accessibleApps.filter((app) => !(app as any).hidden && !['pricing', 'terms', 'privacy', 'refund'].includes(app.id)).sort((left, right) => {
     const leftRank = navPriority.indexOf(left.id);
     const rightRank = navPriority.indexOf(right.id);
     if (leftRank >= 0 || rightRank >= 0) return (leftRank < 0 ? 999 : leftRank) - (rightRank < 0 ? 999 : rightRank);
@@ -888,7 +925,7 @@ export default function SpaceDesktop({
     ...sidebarSections.filter((section) => section.label !== 'Studios').flatMap((section) => section.items),
   ];
   const sidebarWidth = sidebarCollapsed ? SIDEBAR_WIDTH_COLLAPSED : SIDEBAR_WIDTH;
-  // The sidebar uses the Brand Kit → Verger → studios order above. Role
+  // The sidebar uses the Verge → Verger → studios order above. Role
   // filtering happened before sorting, so owner-only tools never leak.
   const dockItems: ShellNavItem[] = sidebarApps.map((app) => ({
     id: app.id,
@@ -906,10 +943,10 @@ export default function SpaceDesktop({
     { id: 'library', label: 'Library', Icon: Film },
     { id: 'settings', label: 'Settings', Icon: SettingsIcon },
   ];
-  const dockHomeItem: ShellNavItem = dockItems.find((item) => item.id === 'vidverge-agent') || {
-    id: 'vidverge-agent',
-    label: 'Verger',
-    Icon: Bot,
+  const dockHomeItem: ShellNavItem = dockItems.find((item) => item.id === VERGE_APP_ID) || {
+    id: VERGE_APP_ID,
+    label: 'Verge',
+    Icon: Home,
   };
   const selectNavTarget = (id: string) => {
     if (id === 'library') {
@@ -946,10 +983,38 @@ export default function SpaceDesktop({
     fontFamily:
       runtimeTheme.themeTokens.typography?.fontFamily ||
       '"Manrope", "Segoe UI", sans-serif',
-    background:
-      runtimeTheme.themeTokens.shell?.pageBackground ||
-      `linear-gradient(135deg, var(--space-surface-gradient-from), var(--space-surface-gradient-via), var(--space-surface-gradient-to))`,
+    // Theme ground: rich black in dark, soft white in light. `--void` is
+    // theme-aware (the light overrides in GlobalStyles win over inline vars),
+    // so the shell flips with the ThemeToggle without any gradient layer.
+    background: 'var(--void, #0b0d12)',
   } as React.CSSProperties;
+
+  // Public pathname pages (/pricing, /terms, /privacy, /refund) render on their
+  // own, ahead of the email gate and the session bootstrap, so crawlers and
+  // payment reviewers always see the full page without signing in.
+  const publicRouteApp = (() => {
+    if (typeof window === 'undefined') return null;
+    const path = window.location.pathname.replace(/\/+$/, '').toLowerCase();
+    if (!path) return null;
+    return config.apps.find((app) => {
+      if ((app as any).public !== true) return false;
+      const route = String((app as any).route || `/${app.id}`).replace(/\/+$/, '').toLowerCase();
+      return route === path;
+    }) || null;
+  })();
+  const PublicRouteApp = publicRouteApp ? apps[publicRouteApp.id] : null;
+  if (publicRouteApp && PublicRouteApp) {
+    return (
+      <div className="min-h-screen vv-dark" style={rootStyle} data-testid={`public-route-${publicRouteApp.id}`}>
+        <GlobalStyles />
+        <AppErrorBoundary key={publicRouteApp.id} appName={publicRouteApp.name}>
+          <Suspense fallback={<div className="flex min-h-screen w-full items-center justify-center"><VergeLoader size={120} /></div>}>
+            <PublicRouteApp appConfig={publicRouteApp} dataFile={publicRouteApp.dataFile || ''} />
+          </Suspense>
+        </AppErrorBoundary>
+      </div>
+    );
+  }
 
   // Show brief loading indicator while post-checkout auto-session is being established
   if (isBootstrappingSession) {
@@ -1017,7 +1082,7 @@ export default function SpaceDesktop({
 
     return (
       <div
-        className="fixed inset-0 overflow-hidden vv-dark bg-[var(--space-surface-card,#15120A)]"
+        className="fixed inset-0 overflow-hidden vv-dark bg-[var(--space-surface-card,var(--vg-surface))]"
         style={rootStyle}
         data-testid="tenant-delegation-canvas"
       >
@@ -1038,14 +1103,14 @@ export default function SpaceDesktop({
       {/* Fonts load once at the shell. `display=swap` keeps first paint usable. */}
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-      <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet" />
+      <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Geist:wght@400..700&display=swap" rel="stylesheet" />
 
       {/* Dark ground, dark scrollbars and the light-utility neutraliser that
           finishes the dark conversion inside apps written before it. */}
       <GlobalStyles />
 
       <div
-        className="h-screen overflow-hidden pt-[60px] vv-dark transition-[padding] duration-200 md:pt-0"
+        className="isolate h-screen overflow-hidden pt-[60px] vv-dark transition-[padding] duration-200 md:pt-0"
         style={{ ...rootStyle, paddingLeft: isMobile ? 0 : 'var(--vv-sidebar-width, 244px)' }}
       >
         {/* The one header and the one dock, mounted once for the whole shell so
@@ -1057,13 +1122,13 @@ export default function SpaceDesktop({
           sectionLabel={sectionLabel}
           jobsSlot={<BackgroundJobsTray variant="compact" />}
           creditsSlot={<CreditBalance variant="text" />}
-          onHome={() => changeWorkspaceMode('agent')}
+          onHome={goHome}
           onSettings={() => setActiveWindowId('settings')}
           ownerLinks={ownerLinks}
           onOpenOwnerLink={selectNavTarget}
           onPlans={() => setPricingRequest({ trigger: 'nav' })}
           planLabel={planLabel}
-          onCloseSection={activeWindowId && activeWindowId !== 'vidverge-agent' ? () => setActiveWindowId(workspaceMode === 'manual' ? null : 'vidverge-agent') : undefined}
+          onCloseSection={activeWindowId && activeWindowId !== landingAppId ? goHome : undefined}
           onOpenDrawer={() => setNavDrawerOpen(true)}
           drawerOpen={navDrawerOpen}
           mode={workspaceMode}
@@ -1076,7 +1141,7 @@ export default function SpaceDesktop({
           homeItem={dockHomeItem}
           activeId={activeWindowId}
           onSelect={selectNavTarget}
-          onHome={() => changeWorkspaceMode('agent')}
+          onHome={goHome}
           drawerOpen={navDrawerOpen}
           onDrawerClose={() => setNavDrawerOpen(false)}
           mode={workspaceMode}
@@ -1220,7 +1285,7 @@ export default function SpaceDesktop({
           {/* App Window - LEFT side, slides in when selected */}
           {activeWindowId && (
             <div className="min-w-0 h-full flex-1 transition-all duration-500 ease-in-out">
-              <div className="w-full h-full flex flex-col bg-[var(--space-surface-card)] overflow-hidden">
+              <div className="w-full h-full flex flex-col bg-transparent overflow-hidden">
                 {/* No per-window header bar: the shell's ShellHeader already
                     names this section in the breadcrumb and carries Close, so a
                     second title row here would be a second header. */}
@@ -1234,7 +1299,7 @@ export default function SpaceDesktop({
                     app inherits the dark ground, dark scrollbars and the
                     light-utility neutraliser whether or not it opted into the
                     design system itself. */}
-                <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark">
+                <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark" style={{ background: 'transparent' }}>
                   {activeWindowId === 'files' && (
                     <FileBrowser fileAccessLogs={fileAccessLogs} />
                   )}
@@ -1276,10 +1341,10 @@ export default function SpaceDesktop({
 
           {/* App View */}
           {activeWindowId && isMobile && (
-            <div className="h-full flex flex-col bg-[var(--space-surface-card)]">
+            <div className="h-full flex flex-col bg-transparent">
               {/* Same reasoning as the desktop branch: the shell header is the
                   only header, and it carries this section's name and Close. */}
-              <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark">
+              <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark" style={{ background: 'transparent' }}>
                 {activeWindowId === 'files' && (
                   <FileBrowser fileAccessLogs={fileAccessLogs} />
                 )}
@@ -1399,7 +1464,7 @@ export default function SpaceDesktop({
               title="Settings"
               className={`p-1.5 rounded-xl transition-all ${
                 activeWindowId === 'settings'
-                  ? 'bg-[var(--space-brand-primary)] text-white'
+                  ? 'bg-[var(--vg-btn)] text-[var(--vg-on-btn)]'
                   : 'bg-[var(--space-surface-muted)] text-[var(--space-text-secondary)]'
               }`}
             >
@@ -1417,7 +1482,11 @@ export default function SpaceDesktop({
           navigation surfaces on screen at once. Credits, Jobs and Plans moved
           into ShellHeader, so nothing it carried was dropped. */}
 
+      <FirstRun sessionId={sessionId} />
       <CreditAuthNotice />
+      <CreditActivityToast />
+      <CreditConfirmDialog />
+      <BrandContextLayer />
 
       {pricingRequest && (
         <PricingScreen

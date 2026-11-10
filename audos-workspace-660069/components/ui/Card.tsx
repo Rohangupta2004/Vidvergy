@@ -64,7 +64,7 @@ const Card: React.FC<CardProps> = function Card({
       style={{
         position: 'relative',
         background: active ? GRADIENT.selected : COLORS.surface,
-        border: '1px solid ' + (lit ? COLORS.controlBorder : COLORS.border),
+        border: '1px solid ' + (active ? COLORS.accent : lit ? COLORS.controlBorder : COLORS.border),
         borderRadius: RADIUS.card,
         padding,
         color: COLORS.text,

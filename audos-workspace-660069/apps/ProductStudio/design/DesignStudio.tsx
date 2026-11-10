@@ -35,14 +35,14 @@ import DesignEditor from './DesignEditor';
 interface Note { at: number; text: string }
 
 const statusChip: Record<string, { label: string; color: string; bg: string }> = {
-  draft: { label: 'DRAFT', color: T.muted, bg: 'rgba(122,96,48,0.12)' },
-  transcribing: { label: 'TRANSCRIBING', color: T.gold, bg: 'rgba(180,83,9,0.12)' },
-  planning: { label: 'PLANNING', color: T.gold, bg: 'rgba(180,83,9,0.12)' },
-  generating: { label: 'DESIGNING', color: T.gold, bg: 'rgba(180,83,9,0.12)' },
-  syncing: { label: 'SYNCING', color: T.gold, bg: 'rgba(180,83,9,0.12)' },
-  checking: { label: 'QUALITY CHECK', color: T.gold, bg: 'rgba(180,83,9,0.12)' },
-  ready: { label: 'READY', color: T.done, bg: 'rgba(22,101,52,0.12)' },
-  error: { label: 'NEEDS ATTENTION', color: T.fault, bg: 'rgba(153,27,27,0.1)' },
+  draft: { label: 'DRAFT', color: T.muted, bg: 'var(--vg-raised)' },
+  transcribing: { label: 'TRANSCRIBING', color: T.gold, bg: 'var(--vg-warning-bg)' },
+  planning: { label: 'PLANNING', color: T.gold, bg: 'var(--vg-warning-bg)' },
+  generating: { label: 'DESIGNING', color: T.gold, bg: 'var(--vg-warning-bg)' },
+  syncing: { label: 'SYNCING', color: T.gold, bg: 'var(--vg-warning-bg)' },
+  checking: { label: 'QUALITY CHECK', color: T.gold, bg: 'var(--vg-warning-bg)' },
+  ready: { label: 'READY', color: T.done, bg: 'var(--vg-success-bg)' },
+  error: { label: 'NEEDS ATTENTION', color: T.fault, bg: 'var(--vg-danger-bg)' },
 };
 
 const PIPELINE_STATUSES = ['planning', 'generating', 'syncing', 'checking'];
@@ -209,10 +209,10 @@ export default function DesignStudio() {
     void refresh();
   }
 
-  const btn = (primary = false, disabled = false): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 7, background: primary ? T.coral : 'transparent', color: primary ? '#1A0E08' : T.muted, border: primary ? 'none' : `1px solid ${T.line}`, borderRadius: 10, padding: primary ? '11px 22px' : '8px 14px', fontSize: primary ? 13 : 12, fontWeight: 800, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1 });
+  const btn = (primary = false, disabled = false): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 7, background: primary ? T.coral : 'transparent', color: primary ? 'var(--vg-on-btn)' : T.muted, border: primary ? 'none' : `1px solid ${T.line}`, borderRadius: 10, padding: primary ? '11px 22px' : '8px 14px', fontSize: primary ? 13 : 12, fontWeight: 800, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.55 : 1 });
   const inputStyle: React.CSSProperties = { width: '100%', background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 10, color: T.bone, fontSize: 13, padding: '11px 13px', fontFamily: T.sans, boxSizing: 'border-box' };
   const stepBadge = (n: string, done: boolean, active: boolean) => (
-    <span style={{ width: 24, height: 24, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11.5, fontWeight: 800, background: done ? 'rgba(22,101,52,0.12)' : active ? 'rgba(200,146,10,0.16)' : 'rgba(122,96,48,0.1)', color: done ? T.done : active ? T.coral : T.dim, border: `1px solid ${done ? 'rgba(22,101,52,0.4)' : active ? 'rgba(200,146,10,0.45)' : T.line}` }}>{done ? <Check size={12} /> : n}</span>
+    <span style={{ width: 24, height: 24, borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 11.5, fontWeight: 800, background: done ? 'var(--vg-success-bg)' : active ? 'var(--vg-gold-tint)' : 'var(--vg-raised)', color: done ? T.done : active ? T.coral : T.dim, border: `1px solid ${done ? 'color-mix(in srgb, var(--vg-success) 40%, transparent)' : active ? 'var(--vg-accent)' : T.line}` }}>{done ? <Check size={12} /> : n}</span>
   );
 
   // -------------------------------------------------------------- gallery
@@ -221,7 +221,7 @@ export default function DesignStudio() {
       <div style={{ maxWidth: 1120, margin: '0 auto', padding: 'clamp(16px, 3vw, 30px)', fontFamily: T.sans }}>
         <div style={{ background: T.raised, border: `1px solid ${T.line}`, borderRadius: 18, padding: 'clamp(18px, 3vw, 28px)', marginBottom: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: 'rgba(200,146,10,0.12)', border: '1px solid rgba(200,146,10,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: 'var(--vg-gold-tint)', border: '1px solid var(--line-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Wand2 size={17} color={T.coral} />
             </div>
             <div>
@@ -309,7 +309,7 @@ export default function DesignStudio() {
       </div>
 
       {open.error ? (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: T.fault, fontSize: 12, background: 'rgba(153,27,27,0.08)', border: '1px solid rgba(153,27,27,0.25)', borderRadius: 10, padding: '10px 13px', marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: T.fault, fontSize: 12, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 35%, transparent)', borderRadius: 10, padding: '10px 13px', marginBottom: 14 }}>
           <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{open.error}</span>
         </div>
       ) : null}
@@ -321,8 +321,8 @@ export default function DesignStudio() {
             {DESIGN_STAGES.map((s, i) => {
               const state = open.status === 'ready' || i < stageIdx ? 'done' : i === stageIdx ? 'live' : 'todo';
               return (
-                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, border: `1px solid ${state === 'live' ? T.gold : state === 'done' ? 'rgba(22,101,52,0.4)' : T.line}`, background: state === 'live' ? 'rgba(180,83,9,0.1)' : state === 'done' ? 'rgba(22,101,52,0.08)' : 'transparent' }}>
-                  {state === 'done' ? <Check size={12} color={T.done} /> : state === 'live' ? <Loader2 size={12} color={T.gold} className={running ? 'animate-spin' : ''} /> : <span style={{ width: 12 }} />}
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 13px', borderRadius: 999, border: `1px solid ${state === 'live' ? T.coral : state === 'done' ? 'color-mix(in srgb, var(--vg-success) 40%, transparent)' : T.line}`, background: state === 'live' ? 'var(--vg-gold-tint)' : state === 'done' ? 'var(--vg-success-bg)' : 'transparent' }}>
+                  {state === 'done' ? <Check size={12} color={T.done} /> : state === 'live' ? <Loader2 size={12} color={T.coral} className={running ? 'animate-spin' : ''} /> : <span style={{ width: 12 }} />}
                   <span style={{ color: state === 'todo' ? T.dim : T.bone, fontSize: 11.5, fontWeight: 700 }}>{s.label}</span>
                 </div>
               );
@@ -372,7 +372,7 @@ export default function DesignStudio() {
               <div style={{ maxHeight: 190, overflowY: 'auto', marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {open.transcript!.segments.slice(0, 60).map((s) => (
                   <div key={s.id} style={{ display: 'flex', gap: 8, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>
-                    <span style={{ color: T.gold, fontFamily: T.mono, fontSize: 10, minWidth: 44, textAlign: 'right', paddingTop: 2 }}>{fmtTime(s.start)}</span>
+                    <span style={{ color: T.coral, fontFamily: T.mono, fontSize: 10, minWidth: 44, textAlign: 'right', paddingTop: 2 }}>{fmtTime(s.start)}</span>
                     <span>{s.speaker ? <b style={{ color: T.bone }}>{s.speaker}: </b> : null}{s.text}</span>
                   </div>
                 ))}
@@ -388,7 +388,7 @@ export default function DesignStudio() {
             </div>
             <div style={{ display: 'inline-flex', gap: 4, padding: 4, borderRadius: 10, border: `1px solid ${T.line}`, flexWrap: 'wrap' }}>
               {([['auto_brand', 'Auto Brand'], ['minimal', 'Minimal'], ['cinematic', 'Cinematic']] as [StylePref, string][]).map(([id, lbl]) => (
-                <button key={id} type="button" onClick={() => void applyPatch({ style: id })} style={{ padding: '7px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: (open.style || 'auto_brand') === id ? T.coral : 'transparent', color: (open.style || 'auto_brand') === id ? '#1A0E08' : T.muted }} data-testid={`button-style-${id}`}>{lbl}</button>
+                <button key={id} type="button" onClick={() => void applyPatch({ style: id })} style={{ padding: '7px 14px', borderRadius: 7, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, background: (open.style || 'auto_brand') === id ? T.coral : 'transparent', color: (open.style || 'auto_brand') === id ? 'var(--vg-on-btn)' : T.muted }} data-testid={`button-style-${id}`}>{lbl}</button>
               ))}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginTop: 14 }}>
@@ -419,7 +419,7 @@ export default function DesignStudio() {
           {formError ? <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: T.fault, fontSize: 12 }}><AlertTriangle size={13} /> {formError}</div> : null}
 
           <div>
-            <button type="button" disabled={!hasTranscript || transcribing} onClick={designMyVideo} style={{ ...btn(true, !hasTranscript || transcribing), padding: '13px 30px', fontSize: 14, boxShadow: '0 2px 10px rgba(200,146,10,0.3)' }} data-testid="button-design-my-video">
+            <button type="button" disabled={!hasTranscript || transcribing} onClick={designMyVideo} style={{ ...btn(true, !hasTranscript || transcribing), padding: '13px 30px', fontSize: 14, boxShadow: '0 2px 10px rgba(212,175,55,0.3)' }} data-testid="button-design-my-video">
               <Sparkles size={15} /> Design My Video
             </button>
             <div style={{ color: T.dim, fontSize: 11.5, marginTop: 8 }}>Opus 5 will plan graphics per timestamp, build them with GSAP + SVG, sync them to your words, and quality-check its own work — then everything is editable.</div>

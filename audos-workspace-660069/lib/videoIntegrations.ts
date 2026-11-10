@@ -278,7 +278,7 @@ export async function generateVideoClip(params: GenerateVideoClipParams): Promis
       modelName: label, prompt: params.prompt, duration,
       onAdopted: params.onAdopted,
     });
-    return adopted?.videoUrl || pollKling(kickoff.taskId, { onProgress: params.onProgress });
+    return adopted?.videoUrl || pollKling(kickoff.taskId, { onProgress: params.onProgress, creditKey: kickoff.creditKey });
   }
 
   if (integration === 'higgsfield-media') {

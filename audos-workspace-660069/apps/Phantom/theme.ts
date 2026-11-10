@@ -106,7 +106,7 @@ export function tileColor(name: unknown): string {
   // Deliberately varied rather than on-brand: these tiles stand in for OTHER
   // companies, so they have to be told apart at a glance. Each one is picked
   // to stay legible against the dark card it sits on.
-  const palette = ['#3b82f6', '#D4920A', '#d946a8', '#22c55e', '#F0B429', '#ef4444', '#06b6d4', '#f59e0b'];
+  const palette = ['#D4AF37', '#C3C7D1', '#E6C45A', '#9AA0AE', '#A8861F', '#F5F6F8', '#DCCB8A', '#B8BDC8'];
   return palette[hash % palette.length];
 }
 

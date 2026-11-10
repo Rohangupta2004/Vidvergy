@@ -9,6 +9,8 @@
  * of the two configured does not pay for a double round trip on every call.
  */
 
+import { workspaceFetch } from '../../../lib/workspace';
+
 export const HEYGEN_NOT_CONNECTED = 'HeyGen not connected — skipping avatar options.';
 
 /** Proxy rejections that mean the key is unusable as configured, not that the request was wrong. */
@@ -58,7 +60,7 @@ function upstreamMessage(body: any, status: number): string {
 
 async function viaSecretsProxy({ path, method = 'GET', json }: HeygenRequest): Promise<any> {
   const { workspaceId, token } = runtime();
-  if (!workspaceId || !token) throw new HeygenUnavailableError('missing', HEYGEN_NOT_CONNECTED);
+  if (!workspaceId) throw new HeygenUnavailableError('missing', HEYGEN_NOT_CONNECTED);
 
   const payload: Record<string, unknown> = {
     method,
@@ -67,9 +69,9 @@ async function viaSecretsProxy({ path, method = 'GET', json }: HeygenRequest): P
   };
   if (method !== 'GET' && json !== undefined) payload.json = json;
 
-  const response = await fetch(`/api/workspaces/${workspaceId}/secrets/proxy`, {
+  const response = await workspaceFetch(`/api/workspaces/${workspaceId}/secrets/proxy`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   const envelope = await response.json().catch(() => null);
@@ -103,7 +105,7 @@ async function viaPlatformProxy({ path, method = 'GET', json }: HeygenRequest): 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['X-Workspace-DB-Token'] = token;
 
-  const response = await fetch(
+  const response = await workspaceFetch(
     `/api/workspaces/${workspaceId}/provider-credentials/heygen/proxy/${path.replace(/^\/+/, '')}`,
     {
       method,

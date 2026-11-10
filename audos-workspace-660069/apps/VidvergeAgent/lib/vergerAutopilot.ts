@@ -1,3 +1,5 @@
+import { pricingRuleText } from '../../../lib/pricing';
+
 /**
  * VERGER AUTOPILOT — fully autonomous production on gpt-6.1-sol.
  *
@@ -21,6 +23,7 @@ import { friendlyAppName, mountEmbeddedApp, openApp, resolveAppId, type AppContr
 import { saveVidvergeHandoff } from '../../../lib/vidvergeHandoff';
 import { emptyBrandKit, fetchBrandFromWebsite, makeBrandRecord, parseBrandKitDocument } from '../../../components/brandKitStore';
 import type { BrandKitDocument, BrandRecord } from '../../../components/brandKitStore';
+import { brandDocFacts, rememberBrandDocument, resolveBrandForRequest } from '../../../lib/brandDoc';
 
 export interface AutopilotStep { id: string; label: string; tool: string; status: 'running' | 'done' | 'failed'; evidence: string; }
 export interface AutopilotAsk { purpose: 'brand' | 'budget'; label: string; question: string; options: string[]; multi?: boolean; }
@@ -33,18 +36,47 @@ export interface AutopilotCallbacks {
 
 const RESULT_LIMIT = 1900;
 const MAX_TURNS = 60;
+const WAIT_MIN_S = 30;
+const WAIT_MAX_S = 600;
+const WAIT_FIRST_POLL_MS = 3000;
+const WAIT_MAX_POLL_MS = 15000;
+const WAIT_REPORT_EVERY_MS = 30_000;
+const RETRYABLE_FREE_ACTIONS = new Set(['writeScript', 'useScript', 'makePlan', 'approveCast']);
+
+/** Failed read-only or free steps that the step card's Retry can re-run in place. */
+const retryableSteps = new Map<string, { step: AutopilotStep; rerun: (step: AutopilotStep) => Promise<void> }>();
+const retryingSteps = new Set<string>();
+
+function isRetryable(name: string, input: Record<string, any>): boolean {
+  return name === 'wait_for' || name === 'get_state' || (name === 'run_free' && RETRYABLE_FREE_ACTIONS.has(String(input.action)));
+}
+
+export function canRetryAutopilotStep(stepId: string): boolean {
+  return retryableSteps.has(stepId);
+}
+
+/** Re-run one failed Autopilot step (resume a wait, rebuild a plan) without restarting the run. */
+export async function retryAutopilotStep(stepId: string): Promise<boolean> {
+  const entry = retryableSteps.get(stepId);
+  if (!entry) return false;
+  if (retryingSteps.has(stepId)) return true;
+  retryingSteps.add(stepId);
+  try { await entry.rerun(entry.step); } finally { retryingSteps.delete(stepId); }
+  return true;
+}
 
 const TOOL_DOC = `TOOLS — call one by adding {"name": "...", "input": {...}} to "calls" (up to 3 per turn, run in order):
-• read_brand_kit {} — load the saved Brand Kit. Always do this first.
-• create_brand_from_website {"url": string} — read a public website and save a Brand Kit from it.
-• save_brand_kit {"businessName": string, "tagline"?: string, "website"?: string, "audience"?: string, "tone"?: string, "summary"?: string, "colors"?: string[], "logoUrl"?: string} — save brand intake answers as the Brand Kit.
+• read_brand_kit {"brand"?: string} — load what is saved in the Brand doc (name, products, audience, voice, tone, colours, fonts, logos, characters/mascots, do/don't) so you can OFFER it as "Use my saved Brand Kit". Nothing in it is applied until the user confirms it. Pass "brand" when the request names a company or product; it returns that saved brand, else the default.
+• lookup_brand {"url"?: string, "name"?: string} — read-only: read the website and search the web for the brand's real logo, name and colours. Returns unconfirmed candidates only; nothing is saved or applied.
+• create_brand_from_website {"url": string} — read a public website and save a Brand Kit from it. Only when the user explicitly asked to save their brand.
+• save_brand_kit {"businessName": string, "tagline"?: string, "website"?: string, "audience"?: string, "tone"?: string, "summary"?: string, "colors"?: string[], "logoUrl"?: string} — save brand answers as the Brand Kit. Only when the user explicitly asked to save their brand.
 • list_library {"query"?: string} — list saved finished videos.
-• open_app {"appId": string} — mount one studio invisibly and return its live field/action schema. Registered ids: script-to-video, ugc-studio, faceless, sceneforge, ads-studio, video-enhancer, cineagent, brand-context.
+• open_app {"appId": string} — mount one studio invisibly and return its live field/action schema. Registered ids: script-to-video, video-provider-lab, ugc-studio, faceless, sceneforge, ads-studio, video-enhancer, cineagent, brand-context.
 • fill {"appId": string, "values": object} — fill studio fields through the bridge.
 • run_free {"appId": string, "action": string} — run one free action.
 • run_paid {"appId": string, "action": string, "note"?: string} — run one paid action; refused when its live estimate would break the budget.
 • get_state {"appId": string} — read the connected studio state.
-• wait_for {"appId": string, "event": string, "timeoutS"?: number} — wait for a real studio event (progress, shot, gate, finished…).
+• wait_for {"appId": string, "event": string, "timeoutS"?: number} — wait for a real studio event (progress, shot, gate, finished…). It keeps checking with backoff for up to timeoutS (30–600, default 300). It returns {"type": "still_working"} when the studio is active but that event has not arrived yet; then wait again — never restart or re-plan.
 • check_frames {"videoUrl": string, "timestamps": number[], "criteria": string} — extract frames and vision-check them.
 • route_brief {"appId": string, "brief": string} — when open_app cannot connect, hand a complete self-contained brief straight to that studio's intake instead. Never ask the user to open anything.
 • ask_user {"purpose": "brand" | "budget", "label": string, "question": string, "options": string[], "multi"?: boolean, "requiredCredits"?: number} — ONLY brand intake ("brand") or budget approval ("budget"). Any other purpose is refused.
@@ -56,10 +88,16 @@ function systemPrompt(budget: number): string {
     '',
     'HARD AUTONOMY RULES:',
     '- NEVER ask the user to create, open, click, configure, retry, sign in to, or check anything. You perform every step yourself.',
-    '- ask_user exists for exactly two things: purpose "brand" (short brand intake, ONLY when read_brand_kit returns no saved brand and the request contains no website URL to learn from) and purpose "budget" (approving credits beyond the stated budget). Everything else you decide yourself with sensible defaults: 30 seconds unless stated, 9:16 for social and 16:9 for product/web, tone and colours from the Brand Kit.',
-    '- BRAND FIRST: read_brand_kit at the start. If a brand exists, use it. If not and the request has a website URL, create_brand_from_website. Otherwise ask ONE grouped intake question (purpose "brand") covering the business/product, audience, tone of voice, and optional website or colours — then save_brand_kit and continue without asking anything more.',
-    '- If open_app fails or a studio will not connect, do NOT surface that and do NOT ask the user — call route_brief with a complete self-contained brief (goal, audience, script or direction, seconds, ratio, voice/music), or use another registered studio.',
-    `- BUDGET: 1 credit = 1 second of finished video; only generation spends credits. Total budget for this run: ${budget} credits. run_paid is refused when a live estimate would break it; if the plan truly needs more, ask_user with purpose "budget", a requiredCredits number, and plain words (e.g. "This video needs 90 credits; your budget is 60.").`,
+    '- ask_user exists for exactly two things: purpose "brand" (ONE grouped brand confirmation of name, website, logo and colours, whenever the video is for their own brand, company or product, skipping only what the request already states) and purpose "budget" (approving credits beyond the stated budget). Everything else you decide yourself with sensible defaults: 30 seconds unless stated, 9:16 for social and 16:9 for product/web; tone and colours only from what the user confirmed, never silently from the saved Brand Kit.',
+    '- BRAND DOC: when the request says "for my brand", "our company", "on-brand" or names a company/product, the saved Brand doc is only a suggestion, never the source of truth. Copy its briefBlock into a brief you fill or route only after the user picked "Use my saved Brand Kit" and confirmed it (name, colours, tone, voice, logo, audience, products, characters, do/don\'t) and never invent a logo, name, colour or company fact that was not confirmed.',
+    '- BRAND FIRST (hard): never assume or invent brand details. read_brand_kit at the start only shows what is saved; nothing in it is applied until the user confirms it. When the video is for their own brand, company or product, ask ONE grouped question (purpose "brand") that confirms brand name, website, logo and brand colours, skipping only what the request already states, and offer "Use my saved Brand Kit" as an option when one exists. If a website or name is known, call lookup_brand first to find the real logo, name and colours and put them in that question for the user to confirm. A logo is only ever their real logo (a confirmed candidate or their upload), never a guess; if none is confirmed, leave the logo out. Do not call create_brand_from_website or save_brand_kit unless the user asked to save their brand. Once answered, do not ask again.',
+    '- ROUTING: an ad or video is production, not research. Use Script-to-Video for every scripted, story-led, voiceover, multi-scene, or 30-second ad; say that you chose it. Use Video Provider Lab only for a quick single model clip with no multi-scene script. Use Ads Studio only when the user explicitly asks for competitor research, ad research, evidence, angles, or concepts — never as the final renderer.',
+    '- Once the route is chosen, open it, fill the complete brief plus only the brand details the user confirmed, start its real generation action within budget, then wait for real status and deliver the real result.',
+    '- SCRIPT-TO-VIDEO ORDER: after fill, an idea MUST run writeScript and useScript before makePlan; a supplied script runs useScript before makePlan. Then run approveCast, then start. Never call makePlan while can.makePlan is false, and never wait for a gate before a plan exists.',
+    '- makePlan answers only once the plan is saved, and a character-free plan is confirmed automatically. After makePlan succeeds, never call fill, writeScript, useScript or makePlan again in this run; continue with approveCast and start.',
+    '- MODEL DEFAULT: use internal model value "omni-1.1-flash" for Script-to-Video. If any requested model is rejected or missing, continue on Omni Flash automatically and mention the switch only as a short plain-language status.',
+    '- If open_app fails after its one automatic remount, do NOT call open_app for that app again in this run. Do NOT surface a technical instruction — immediately call route_brief with a complete self-contained brief (goal, audience, brand facts, script or direction, seconds, ratio, voice/music), or choose the other suitable production app.',
+    `- BUDGET: ${pricingRuleText()} Total budget for this run: ${budget} credits. run_paid is refused when a live estimate would break it; if the plan truly needs more, ask_user with purpose "budget", a requiredCredits number, and plain words (e.g. "This video needs 90 credits; your budget is 60.").`,
     '- QUALITY: after each finished shot, check three frames (same character, story beats, readable text, no extra people); re-render one shot at most twice. Before delivery probe duration and check six frames. Never invent progress, never automatically retry a paid submit, and finish only after a real finished event.',
     '- LANGUAGE: anything the user could read (ask_user label/question/options, summary) is warm plain language — never app ids, slugs, tool or model names, JSON, or error text.',
     '',
@@ -125,16 +163,142 @@ function compact(value: unknown): string {
   return text.length > RESULT_LIMIT ? `${text.slice(0, RESULT_LIMIT)}…` : text;
 }
 
+function toolLabel(name: string, input: Record<string, any>): string {
+  const app = resolveAppId(input.appId) ? friendlyAppName(resolveAppId(input.appId) as AppId) : 'the studio';
+  if (name === 'read_brand_kit') return 'Checking your Brand Kit';
+  if (name === 'lookup_brand') return 'Looking up your website and logo';
+  if (name === 'create_brand_from_website') return 'Learning your brand from its website';
+  if (name === 'save_brand_kit') return 'Saving your Brand Kit';
+  if (name === 'list_library') return 'Checking your video library';
+  if (name === 'open_app') return `Opening ${app}`;
+  if (name === 'get_state') return 'Checking your project settings';
+  if (name === 'fill') return 'Filling in your production brief';
+  if (name === 'run_free') {
+    if (input.action === 'writeScript') return 'Turning your idea into a production script';
+    if (input.action === 'useScript') return 'Accepting the production script';
+    if (input.action === 'makePlan') return 'Building the production plan';
+    if (input.action === 'approveCast') return 'Checking and approving the cast';
+    return 'Preparing the next production step';
+  }
+  if (name === 'run_paid') return 'Starting video production';
+  if (name === 'wait_for') return 'Waiting for the next saved production update';
+  if (name === 'check_frames') return 'Reviewing the finished frames';
+  if (name === 'route_brief') return `Sending the complete brief to ${app}`;
+  if (name === 'ask_user') return input.purpose === 'budget' ? 'Checking the production budget' : 'Confirming your brand details';
+  if (name === 'deliver') return 'Preparing your finished video';
+  return 'Working on your video';
+}
+
+function toolSuccess(name: string, input: Record<string, any>, result: any): string {
+  if (name === 'read_brand_kit') return result?.saved ? `A saved Brand Kit exists for ${result.businessName || 'your project'}; waiting for you to confirm it.` : 'No saved Brand Kit found yet.';
+  if (name === 'lookup_brand') return Array.isArray(result?.logoCandidates) && result.logoCandidates.length ? `Found ${result.logoCandidates.length} possible logo${result.logoCandidates.length === 1 ? '' : 's'} to confirm.` : 'No logo found; you can share it or skip it.';
+  if (name === 'open_app') return `${friendlyAppName((resolveAppId(input.appId) || input.appId) as AppId)} is ready.`;
+  if (name === 'get_state') {
+    const values = result?.values || {};
+    const parts = [values.length ? `${values.length}s` : '', values.shape || '', values.model ? 'Omni Flash' : ''].filter(Boolean);
+    return parts.length ? `Project settings checked: ${parts.join(' · ')}.` : 'Project settings checked.';
+  }
+  if (name === 'fill') {
+    const values = input.values || {};
+    const parts = [values.idea || values.script ? 'your idea' : 'the brief', values.length ? `length ${values.length}s` : '', values.shape ? `${values.shape} format` : ''].filter(Boolean);
+    if (result?.planReused) return 'The saved production plan for this video was kept.';
+    return result?.modelFallback ? `Filled in ${parts.join(', ')}. That model was unavailable, so I switched to Omni Flash.` : `Filled in ${parts.join(', ')}.`;
+  }
+  if (name === 'run_free') {
+    if (input.action === 'writeScript') return 'Production script written from your idea.';
+    if (input.action === 'useScript') return 'Production script accepted.';
+    if (input.action === 'makePlan') {
+      const planned = result?.result || {};
+      const base = planned.reused ? 'The saved production plan was reused.' : 'Production plan created and saved.';
+      return planned.castConfirmed ? `${base} No recurring character is needed, so the character-free plan was confirmed.` : base;
+    }
+    if (input.action === 'approveCast') return 'Cast check complete.';
+    return 'Production step completed.';
+  }
+  if (name === 'run_paid') return 'Production started from the saved plan.';
+  if (name === 'wait_for') return result?.type === 'still_working' ? 'Production is still working. Your project is saved, and I will keep checking.' : 'A new production update arrived.';
+  if (name === 'check_frames') return result?.pass === false ? 'Quality review found something to correct.' : 'Frame quality check passed.';
+  if (name === 'route_brief') return 'The complete brief is saved in the selected studio.';
+  if (name === 'deliver') return 'Finished video ready.';
+  if (name === 'list_library') return 'Video library checked.';
+  return 'Completed.';
+}
+
+function toolFailure(name: string, message: string): string {
+  const text = String(message || '');
+  if (/production script and accept|make the plan first/i.test(text)) return name === 'run_free' ? 'The script must be accepted before the production plan can be built.' : 'The production plan is not ready yet.';
+  if (/model.*not currently available|not configured/i.test(text)) return 'That model is unavailable, so this step will continue with Omni Flash.';
+  if (/update was saved in the last/i.test(text)) return 'No new saved update arrived in the last few minutes. The project is still saved — Retry keeps checking without restarting.';
+  if (/Another studio step is still finishing/i.test(text)) return 'Another studio step was still finishing. Retry builds the plan once it is free.';
+  if (/No .* event arrived before the wait ended/i.test(text)) return 'No new saved update arrived yet. The project is still saved and can be checked again.';
+  if (/connect|not connected|taking a moment/i.test(text)) return 'The studio did not connect in time. The brief is saved so it can continue without losing your work.';
+  if (/session|unauthori[sz]ed|\b401\b|\b403\b/i.test(text)) return 'Your session needs to be refreshed before this step can continue.';
+  if (/timeout|timed out|took too long/i.test(text)) return 'This step took longer than expected. Your saved work is safe; retry it once.';
+  return 'That step did not finish. Your saved work is safe; retry it once.';
+}
+
 function toList(value: unknown, limit = 12): string[] {
   if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean).slice(0, limit);
   if (typeof value === 'string') return value.split(/[;,\n]/).map((item) => item.trim()).filter(Boolean).slice(0, limit);
   return [];
 }
 
-async function waitFor(controller: AppController, type: string, timeoutS: number): Promise<AppEvent> {
+function studioSnapshot(controller: AppController): { screen: string; busy: boolean; values: Record<string, unknown> } | null {
+  try {
+    const state = controller.getState();
+    return { screen: state.screen, busy: state.busy, values: state.values };
+  } catch {
+    return null;
+  }
+}
+
+function formatWait(ms: number): string {
+  return ms < 90_000 ? `${Math.max(1, Math.round(ms / 1000))}s` : `${Math.round(ms / 60_000)} min`;
+}
+
+/**
+ * Bounded polling for the next saved studio update. The requested event ends
+ * the wait at once. Any other studio activity in the window (progress, shots,
+ * a state change) means production is alive, so the wait ends neutrally as
+ * still_working; only a window with no activity at all is an error.
+ */
+function waitFor(controller: AppController, type: string, options: { timeoutS: number; stopped(): boolean; onStill(elapsedMs: number): void }): Promise<unknown> {
+  const limitMs = Math.min(WAIT_MAX_S, Math.max(WAIT_MIN_S, Number(options.timeoutS) || 300)) * 1000;
+  const started = Date.now();
+  let activity = 0;
+  let signature = JSON.stringify(studioSnapshot(controller));
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => { off(); reject(new Error(`No ${type} event arrived before the wait ended.`)); }, Math.min(300, Math.max(1, timeoutS)) * 1000);
-    const off = controller.subscribe((event) => { if (event.type === type) { window.clearTimeout(timer); off(); resolve(event); } });
+    let settled = false;
+    let timer = 0;
+    let delay = WAIT_FIRST_POLL_MS;
+    const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      off();
+      settle();
+    };
+    const off = controller.subscribe((event) => {
+      if (event.type === type) finish(() => resolve(event));
+      else if (event.type !== 'field_changed' && event.type !== 'error') activity += 1;
+    });
+    const tick = () => {
+      if (options.stopped()) { finish(() => reject(new Error('Stopped by the user.'))); return; }
+      const next = JSON.stringify(studioSnapshot(controller));
+      if (next !== signature) { activity += 1; signature = next; }
+      const elapsed = Date.now() - started;
+      if (elapsed >= limitMs) {
+        const minutes = Math.max(1, Math.round(limitMs / 60_000));
+        finish(() => activity > 0
+          ? resolve({ type: 'still_working', waitedFor: type, waitedS: Math.round(elapsed / 1000), studio: studioSnapshot(controller) })
+          : reject(new Error(`No ${type} update was saved in the last ${minutes} minute${minutes === 1 ? '' : 's'}.`)));
+        return;
+      }
+      options.onStill(elapsed);
+      delay = Math.min(WAIT_MAX_POLL_MS, Math.round(delay * 1.5));
+      timer = window.setTimeout(tick, Math.min(delay, limitMs - elapsed));
+    };
+    timer = window.setTimeout(tick, delay);
   });
 }
 
@@ -181,15 +345,26 @@ function brandFromIntake(input: Record<string, any>): BrandRecord {
 
 export async function runAutopilot(goal: string, budget: number, callbacks: AutopilotCallbacks): Promise<{ spent: number; delivered?: AppEvent & { type: 'finished' } }> {
   const controllers = new Map<AppId, AppController>();
+  const failedConnections = new Set<AppId>();
   const unsubscribers: Array<() => void> = [];
   let spent = 0;
   let approvedBudget = budget;
   let delivered: (AppEvent & { type: 'finished' }) | undefined;
   let stepCounter = 0;
+  let active = true;
+  const runId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  const runStartedAt = Date.now();
+  // Studio events that land between tool turns are kept so the next wait_for
+  // sees them instead of reporting that nothing arrived.
+  const seenEvents = new Map<string, { event: AppEvent; at: number }>();
+  const lastWaitAt = new Map<string, number>();
+  const pendingNotes: string[] = [];
+  retryableSteps.clear();
 
   const connect = (appId: AppId, controller: AppController) => {
     controllers.set(appId, controller);
     unsubscribers.push(controller.subscribe((event) => {
+      seenEvents.set(`${appId}:${event.type}`, { event, at: Date.now() });
       callbacks.onEvent(appId, event);
       if (event.type === 'finished') delivered = event;
     }));
@@ -200,16 +375,33 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
     return controller;
   };
 
-  const execute = async (name: string, input: Record<string, any>): Promise<unknown> => {
+  const execute = async (name: string, input: Record<string, any>, step?: AutopilotStep): Promise<unknown> => {
     const appId = (resolveAppId(input.appId) || String(input.appId || '')) as AppId;
     switch (name) {
       case 'read_brand_kit': {
         const loaded = await callHook<any>('brand-kit-store', { op: 'load' });
         const document = parseBrandKitDocument(loaded?.document);
-        const brand = document ? document.brands.find((item) => item.id === document.defaultBrandId) || document.brands[0] || null : null;
+        if (document) rememberBrandDocument(document);
+        const named = document ? resolveBrandForRequest(document, `${String(input.brand || '')}\n${goal}`) : null;
+        const brand = document ? named || document.brands.find((item) => item.id === document.defaultBrandId) || document.brands[0] || null : null;
         return brand
-          ? { saved: true, businessName: brand.identity.businessName, tagline: brand.identity.tagline, audience: brand.audienceTone.audience, tone: brand.audienceTone.tone, website: brand.websiteUrl, colors: brand.visuals.colors.slice(0, 6), summary: brand.offer.summary }
-          : { saved: false, note: 'No Brand Kit yet. Use create_brand_from_website when the request has a URL; otherwise ask ONE grouped brand intake question (purpose "brand"), then save_brand_kit.' };
+          ? { ...brandDocFacts(brand), otherSavedBrands: document ? document.brands.filter((item) => item.id !== brand.id).map((item) => item.identity.businessName).filter(Boolean).slice(0, 6) : [] }
+          : { saved: false, note: 'No Brand Kit yet. Use lookup_brand when a website or name is known, then ask ONE grouped brand confirmation question (purpose "brand"). Never invent brand details.' };
+      }
+      case 'lookup_brand': {
+        const name = String(input.name || '').trim().slice(0, 80);
+        const url = String(input.url || '').trim().slice(0, 200);
+        if (!name && !url) throw new Error('lookup_brand needs a brand name or a website.');
+        const found = await callHook<any>('sceneforge-brand-lookup', { name, url });
+        if (!found?.ok) throw new Error(String(found?.error || 'The brand lookup did not answer.'));
+        return {
+          unconfirmed: true,
+          name: found.name || '',
+          website: found.website ? { url: found.website.url, read: found.website.read === true, name: found.website.name || '', colors: found.website.colors || [] } : null,
+          logoCandidates: (found.candidates || []).slice(0, 4).map((item: any) => ({ url: item.url, label: item.label, lowRes: item.lowRes === true })),
+          possibleWebsites: (found.siteSuggestions || []).slice(0, 3).map((item: any) => item.url),
+          notes: (found.notes || []).slice(0, 2),
+        };
       }
       case 'create_brand_from_website': {
         const brand = await fetchBrandFromWebsite(String(input.url || ''));
@@ -223,17 +415,37 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
           .filter((video) => !input.query || video.title.toLowerCase().includes(String(input.query).toLowerCase()))
           .map((video) => ({ id: video.id, title: video.title, length: video.duration_sec }));
       case 'open_app': {
-        const controller = await openApp(appId, 'hidden');
-        connect(controller.appId, controller);
-        return controller.schema();
+        if (failedConnections.has(appId)) throw new Error(`${friendlyAppName(appId)} already used its one bounded connection attempt. Use route_brief now; do not call open_app again.`);
+        try {
+          const controller = await openApp(appId, 'hidden');
+          connect(controller.appId, controller);
+          return controller.schema();
+        } catch (error) {
+          failedConnections.add(appId);
+          throw error;
+        }
       }
-      case 'fill':
-        return requireController(appId).fill(input.values || {}, { animate: false });
+      case 'fill': {
+        const controller = requireController(appId);
+        const values = { ...(input.values || {}) };
+        if (values.model) values.model = resolveVideoModelAlias(String(values.model));
+        const result = await controller.fill(values, { animate: false, autopilotRunId: runId });
+        const rejected = Array.isArray(result?.rejected) ? result.rejected : [];
+        if (rejected.some((item: any) => item?.key === 'model')) {
+          return {
+            ...result,
+            rejected: rejected.filter((item: any) => item?.key !== 'model'),
+            modelFallback: true,
+            effectiveModel: 'omni-1.1-flash',
+          };
+        }
+        return result;
+      }
       case 'run_free': {
         const controller = requireController(appId);
         const action = controller.schema().actions.find((item) => item.key === input.action);
         if (!action || action.paid) throw new Error('That action is not free.');
-        const result = await controller.run(action.key);
+        const result = await controller.run(action.key, { autopilotRunId: runId });
         if (!result.ok) throw new Error(result.error || 'The action failed.');
         return result;
       }
@@ -243,22 +455,50 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
         if (!action?.paid || !action.estimate) throw new Error('That paid action has no live estimate.');
         const estimate = (await action.estimate(controller.getState().values)).credits;
         if (spent + estimate > approvedBudget) throw new Error(`Budget blocked: ${estimate} credits would take this run past ${approvedBudget}. If the plan truly needs it, ask_user with purpose "budget" and requiredCredits ${spent + estimate}.`);
-        const result = await controller.run(action.key, { approvedCredits: estimate, note: input.note });
+        const result = await controller.run(action.key, { approvedCredits: estimate, note: input.note, autopilotRunId: runId });
         if (!result.ok) throw new Error(result.error || 'The paid action failed.');
         spent += estimate;
         return result;
       }
       case 'get_state':
         return requireController(appId).getState();
-      case 'wait_for':
-        return waitFor(requireController(appId), String(input.event), Number(input.timeoutS || 300));
+      case 'wait_for': {
+        const controller = requireController(appId);
+        const type = String(input.event || 'progress');
+        const key = `${appId}:${type}`;
+        const seen = seenEvents.get(key);
+        if (seen && seen.at > (lastWaitAt.get(key) || runStartedAt)) {
+          lastWaitAt.set(key, Date.now());
+          return seen.event;
+        }
+        let reportedAt = 0;
+        const result = await waitFor(controller, type, {
+          timeoutS: Number(input.timeoutS || 300),
+          stopped: () => callbacks.stopped(),
+          onStill: (elapsed) => {
+            if (!step || elapsed - reportedAt < WAIT_REPORT_EVERY_MS) return;
+            reportedAt = elapsed;
+            callbacks.onStep({ ...step, status: 'running', evidence: `Still working — checked for ${formatWait(elapsed)}. Your project is saved.` });
+          },
+        });
+        lastWaitAt.set(key, Date.now());
+        return result;
+      }
       case 'check_frames':
         return checkFrames(String(input.videoUrl), input.timestamps || [0], String(input.criteria || 'Match the approved plan.'));
       case 'route_brief': {
         if (!resolveAppId(input.appId)) throw new Error('Name one registered studio id for route_brief.');
-        saveVidvergeHandoff({ appId, prompt: String(input.brief || goal) });
+        const brief = String(input.brief || goal).trim();
+        if (appId === 'script-to-video') {
+          const duration = Math.max(2, Math.min(600, Math.round(Number(brief.match(/\b(\d{1,3})\s*(?:seconds?|secs?|s)\b/i)?.[1]) || 30)));
+          const aspect = /\b(?:9:16|vertical|portrait|reel|shorts?|tiktok)\b/i.test(brief) ? '9:16' : /\b(?:1:1|square)\b/i.test(brief) ? '1:1' : '16:9';
+          const routed = await callHook<any>('s2v-agent-handoff', { op: 'create_handoff', source: 'verger', brief, entry_type: /\bscript\b/i.test(brief) ? 'script' : 'idea', duration_seconds: duration, aspect_ratio: aspect });
+          if (!routed?.success) throw new Error(String(routed?.error || 'Script-to-Video could not save the brief.'));
+        } else {
+          saveVidvergeHandoff({ appId, prompt: brief });
+        }
         mountEmbeddedApp(appId, 'hidden', true);
-        return { routed: true, studio: friendlyAppName(appId), note: 'The brief was handed to the studio intake. Track it with list_library, or open_app again later for live state.' };
+        return { routed: true, studio: friendlyAppName(appId), note: 'The complete brief was saved to the studio intake. Track real progress with get_state when connected, or list_library for the finished video. Do not call open_app again after a connection failure.' };
       }
       case 'ask_user': {
         const purpose = String(input.purpose || '');
@@ -289,9 +529,52 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
     }
   };
 
+  const resolveVideoModelAlias = (value: string): string => {
+    const key = String(value || '').trim().toLowerCase();
+    if (!key || key === 'auto' || key.includes('omni') || key.includes('gemini')) return 'omni-1.1-flash';
+    if (key.includes('seedance-2.5')) return 'seedance-2.5';
+    if (key.includes('kling-3.0-omni')) return 'kling-3.0-omni';
+    return 'omni-1.1-flash';
+  };
+
+  const runTool = async (call: { name: string; input: Record<string, any> }, step: AutopilotStep): Promise<Record<string, unknown>> => {
+    callbacks.onStep({ ...step });
+    try {
+      const result = await execute(call.name, call.input, step);
+      step.status = 'done';
+      step.evidence = toolSuccess(call.name, call.input, result);
+      callbacks.onStep({ ...step });
+      retryableSteps.delete(step.id);
+      return { tool: call.name, ok: true, result: compact(result) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/Stopped by the user/i.test(message)) throw error;
+      step.status = 'failed';
+      step.evidence = toolFailure(call.name, message);
+      callbacks.onStep({ ...step });
+      if (isRetryable(call.name, call.input)) {
+        retryableSteps.set(step.id, {
+          step,
+          rerun: async (target) => {
+            target.status = 'running';
+            target.evidence = 'Checking again…';
+            const outcome = await runTool(call, target).catch(() => {
+              target.status = 'failed';
+              target.evidence = 'Stopped before this check finished. Your project is saved.';
+              callbacks.onStep({ ...target });
+              return null;
+            });
+            if (outcome && active) pendingNotes.push(`[creator retried "${target.label}"] ${JSON.stringify(outcome)}`);
+          },
+        });
+      }
+      return { tool: call.name, ok: false, error: compact(message) };
+    }
+  };
+
   const messages: any[] = [
     { role: 'system', content: systemPrompt(budget) },
-    { role: 'user', content: `${goal}\n\nHard total budget: ${budget} credits. Choose only live model options. Start by reading the Brand Kit.` },
+    { role: 'user', content: `${goal}\n\nHard total budget: ${budget} credits. Choose only live model options. Start by checking what is saved, then confirm the brand details with the user before filling any brief.` },
   ];
   try {
     for (let turn = 0; turn < MAX_TURNS; turn += 1) {
@@ -321,28 +604,16 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
       for (const call of calls) {
         if (callbacks.stopped()) throw new Error('Stopped by the user.');
         stepCounter += 1;
-        const step: AutopilotStep = { id: `autopilot-${stepCounter}`, label: call.name.replace(/_/g, ' '), tool: call.name, status: 'running', evidence: '' };
-        callbacks.onStep({ ...step });
-        try {
-          const result = await execute(call.name, call.input);
-          step.status = 'done';
-          step.evidence = compact(result);
-          callbacks.onStep({ ...step });
-          results.push({ tool: call.name, ok: true, result: compact(result) });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (/Stopped by the user/i.test(message)) throw error;
-          step.status = 'failed';
-          step.evidence = message;
-          callbacks.onStep({ ...step });
-          results.push({ tool: call.name, ok: false, error: compact(message) });
-        }
+        const step: AutopilotStep = { id: `autopilot-${runId}-${stepCounter}`, label: toolLabel(call.name, call.input), tool: call.name, status: 'running', evidence: 'Working…' };
+        results.push(await runTool(call, step));
       }
       if (plan?.done === true && delivered) return { spent, delivered };
-      messages.push({ role: 'user', content: `[tool results]\n${JSON.stringify(results)}` });
+      const notes = pendingNotes.splice(0);
+      messages.push({ role: 'user', content: `[tool results]\n${JSON.stringify(results)}${notes.length ? `\n${notes.join('\n')}` : ''}` });
     }
     throw new Error('Autopilot reached its safety limit before finishing.');
   } finally {
+    active = false;
     unsubscribers.forEach((unsubscribe) => unsubscribe());
   }
 }

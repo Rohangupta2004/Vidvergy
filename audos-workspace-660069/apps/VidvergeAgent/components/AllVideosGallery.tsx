@@ -82,7 +82,7 @@ export default function AllVideosGallery({ refreshSignal }: AllVideosGalleryProp
     return (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
         {SKELETON_KEYS.map((key) => (
-          <div key={key} className="vv-skeleton aspect-video rounded-2xl border border-[var(--vv-border)]" />
+          <div key={key} className="vv-skeleton aspect-video rounded-2xl border border-[var(--vg-border)]" />
         ))}
       </div>
     );
@@ -90,10 +90,10 @@ export default function AllVideosGallery({ refreshSignal }: AllVideosGalleryProp
 
   if (rows.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[var(--vv-border)] bg-[var(--vv-surface)] px-6 py-12 text-center">
-        <Film size={20} className="text-[#6E5F38]" />
-        <p className="text-[13px] text-[#F5E9C8]">Your finished videos will appear here</p>
-        <p className="text-[11px] text-[var(--vv-text-dim)]">
+      <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-[var(--vg-border)] bg-[var(--vg-surface)] px-6 py-12 text-center">
+        <Film size={20} className="text-[var(--vg-muted)]" />
+        <p className="text-[13px] text-[var(--vg-text)]">Your finished videos will appear here</p>
+        <p className="text-[11px] text-[var(--vg-muted)]">
           Finish a render in any studio and it lands in this gallery automatically.
         </p>
       </div>
@@ -105,7 +105,7 @@ export default function AllVideosGallery({ refreshSignal }: AllVideosGalleryProp
       {rows.map((row) => (
         <article
           key={row.id}
-          className="overflow-hidden rounded-2xl border border-[var(--vv-border)] bg-[var(--vv-surface)] transition-colors hover:border-[var(--vv-border-hover)]"
+          className="overflow-hidden rounded-2xl border border-[var(--vg-border)] bg-[var(--vg-surface)] transition-colors hover:border-[var(--vg-accent)]"
         >
           <a
             href={row.video_url}
@@ -122,24 +122,21 @@ export default function AllVideosGallery({ refreshSignal }: AllVideosGalleryProp
           </a>
 
           <div className="p-3">
-            <p className="truncate text-[12.5px] text-[#F5E9C8]" title={row.title}>
+            <p className="truncate text-[12.5px] text-[var(--vg-text)]" title={row.title}>
               {row.title}
             </p>
             <div className="mt-1.5 flex items-center justify-between gap-2">
-              <span className="truncate rounded-full border border-[color-mix(in_srgb,var(--vv-gold)_35%,transparent)] bg-[color-mix(in_srgb,var(--vv-gold)_10%,transparent)] px-2 py-[2px] text-[10px] font-medium text-[var(--vv-gold)]">
+              <span className="truncate rounded-full border border-[color-mix(in_srgb,var(--vg-accent)_35%,transparent)] bg-[color-mix(in_srgb,var(--vg-accent)_10%,transparent)] px-2 py-[2px] text-[10px] font-medium text-[var(--vg-accent)]">
                 {appLabel(row.app_id)}
               </span>
-              <span className="shrink-0 text-[10.5px] text-[var(--vv-text-dim)]">{dateLabel(row.created_at)}</span>
+              <span className="shrink-0 text-[10.5px] text-[var(--vg-muted)]">{dateLabel(row.created_at)}</span>
             </div>
             <a
               href={row.video_url}
               download
               target="_blank"
               rel="noreferrer"
-              className="mt-2.5 inline-flex w-full items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[#0A0905] transition-opacity hover:opacity-90"
-              style={{
-                background: 'linear-gradient(135deg, var(--vv-gold-light, #F0B429), var(--vv-gold, #D4920A))',
-              }}
+              className="mt-2.5 inline-flex w-full items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-[var(--vg-on-btn)] transition-colors bg-[var(--vg-btn)] hover:bg-[var(--vg-btn-hover)] active:bg-[var(--vg-btn-pressed)]"
             >
               <Download size={12} />
               Download

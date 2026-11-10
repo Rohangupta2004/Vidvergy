@@ -7,6 +7,8 @@
  * parseable text.
  */
 
+import { workspaceFetch } from './workspace';
+
 export const CREATIVE_PLANNER_MODEL = 'gpt-6.1-sol';
 export const CREATIVE_PLANNER_REASONING = 'medium' as const;
 export const CREATIVE_PLANNER_MAX_TOKENS = 6000;
@@ -32,9 +34,6 @@ function workspaceToken(): string {
 
 /** One non-streaming interactive planning call. */
 export async function askCreativePlanner(call: CreativePlannerCall): Promise<CreativePlannerReply> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
-
   const images = (call.images || [])
     .filter((url) => typeof url === 'string' && url.startsWith('https://'))
     .slice(0, 10);
@@ -45,12 +44,9 @@ export async function askCreativePlanner(call: CreativePlannerCall): Promise<Cre
       ]
     : call.user;
 
-  const res = await fetch('/proxy/openai/v1/chat/completions', {
+  const res = await workspaceFetch('/proxy/openai/v1/chat/completions', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Workspace-DB-Token': token,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: CREATIVE_PLANNER_MODEL,
       reasoning_effort: CREATIVE_PLANNER_REASONING,

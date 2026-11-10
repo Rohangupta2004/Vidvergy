@@ -5,7 +5,7 @@ const ACTIVITY_CSS = `
   display: block;
   width: 2.5px;
   border-radius: 2px;
-  background: var(--vv-gold, #D4920A);
+  background: var(--vg-gold, #D4AF37);
   transform-origin: center bottom;
   animation: vva-eq 2.6s ease-in-out infinite;
 }
@@ -13,7 +13,7 @@ const ACTIVITY_CSS = `
 .vva-eq span:nth-child(3) { animation-delay: 0.44s; }
 .vva-eq span:nth-child(4) { animation-delay: 0.12s; }
 .vva-activity[data-state='working'] .vva-eq span { animation-duration: 0.9s; }
-.vva-activity[data-state='error'] .vva-eq span { background: var(--vv-error, #f87171); }
+.vva-activity[data-state='error'] .vva-eq span { background: var(--vg-danger, #f87171); }
 .vva-line { animation: vva-line-in 420ms ease-out both; }
 @keyframes vva-eq {
   0%, 100% { transform: scaleY(0.3); opacity: 0.45; }
@@ -46,7 +46,7 @@ export default function AgentActivity({ state, lines }: AgentActivityProps) {
   return (
     <div
       data-state={state}
-      className="vva-activity rounded-xl border border-[var(--vv-border)] bg-[var(--vv-surface)] px-3.5 py-3"
+      className="vva-activity rounded-xl border border-[var(--vg-border)] bg-[var(--vg-surface)] px-3.5 py-3"
     >
       <style>{ACTIVITY_CSS}</style>
 
@@ -57,7 +57,7 @@ export default function AgentActivity({ state, lines }: AgentActivityProps) {
           <span style={{ height: '85%' }} />
           <span style={{ height: '50%' }} />
         </span>
-        <span className="text-[11px] uppercase tracking-[0.3em] text-[var(--vv-text-dim)]">{headline}</span>
+        <span className="text-[11px] uppercase tracking-[0.3em] text-[var(--vg-muted)]">{headline}</span>
       </div>
 
       <ul className="mt-3 space-y-1.5">
@@ -65,11 +65,11 @@ export default function AgentActivity({ state, lines }: AgentActivityProps) {
           <li
             key={`${line}-${index}`}
             className="vva-line flex items-start gap-2 text-[12px] leading-snug"
-            style={{ color: index === 0 ? '#F5E9C8' : 'var(--vv-text-dim)' }}
+            style={{ color: index === 0 ? 'var(--vg-text)' : 'var(--vg-muted)' }}
           >
             <span
               className="mt-[6px] h-1 w-1 shrink-0 rounded-full"
-              style={{ background: index === 0 ? 'var(--vv-gold, #D4920A)' : 'rgba(255,255,255,0.18)' }}
+              style={{ background: index === 0 ? 'var(--vg-gold, #D4AF37)' : 'rgba(255,255,255,0.18)' }}
             />
             <span>{line}</span>
           </li>

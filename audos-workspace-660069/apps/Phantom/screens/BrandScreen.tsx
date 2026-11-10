@@ -268,7 +268,7 @@ export default function BrandScreen({
                     style={{
                       width: 38, height: 38, borderRadius: 11, cursor: 'pointer',
                       background: hex,
-                      border: `2px solid ${selected ? '#1A1000' : 'transparent'}`,
+                      border: `2px solid ${selected ? TEXT : 'transparent'}`,
                       boxShadow: selected ? `0 0 0 3px ${rgba(hex, 0.45)}` : 'none',
                       color: readableOn(hex), fontSize: 11, fontWeight: 800,
                     }}

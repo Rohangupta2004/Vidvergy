@@ -60,7 +60,7 @@ export function useToasts(): ToastController {
 function toneColour(tone: ToastTone): string {
   if (tone === 'warn') return 'var(--space-semantic-warning-500, #fbbf24)';
   if (tone === 'success') return 'var(--space-semantic-success-500, #22c55e)';
-  return 'var(--space-brand-primary-500, #D4920A)';
+  return 'var(--vg-accent)';
 }
 
 function ToneIcon({ tone }: { tone: ToastTone }) {

@@ -550,7 +550,7 @@ function PillGroup({
                   ? 'color-mix(in srgb, var(--space-brand-primary-500) 18%, transparent)'
                   : 'transparent',
                 border: `1px solid ${active ? 'var(--space-brand-primary-500)' : 'var(--space-border-default)'}`,
-                color: active ? 'var(--space-brand-highlight)' : 'var(--space-text-secondary)',
+                color: active ? 'var(--vg-text)' : 'var(--space-text-secondary)',
               }}
             >
               {option}

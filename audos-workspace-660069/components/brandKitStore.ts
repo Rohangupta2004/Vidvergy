@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { callHook, getSessionId, getWorkspaceToken, WORKSPACE_ID } from '../lib/workspace';
+import { callHook, getSessionId, workspaceFetch, WORKSPACE_ID } from '../lib/workspace';
 
 export type BrandPageStatus = 'read' | 'limited' | 'not found';
 export interface BrandPage { url: string; label: string; status: BrandPageStatus; title?: string; note?: string; durationMs?: number; readableChars?: number }
 export interface BrandImage { url: string; alt: string; sourceUrl: string }
 export interface BrandClip { id: string; url: string; key?: string; name: string; type: string; bytes?: number; createdAt: string }
 export interface BrandSocialProfile { platform: 'instagram' | 'tiktok' | 'youtube' | 'facebook' | 'x' | 'linkedin' | 'threads' | string; handle: string; url: string; verified: boolean }
+/** Free-form sections of the Brand doc that have no structured home elsewhere on the record. */
+export interface BrandDocNotes {
+  voice: string;
+  products: string;
+  characters: string;
+  dos: string[];
+  donts: string[];
+  /** Extra logo variants; the primary logo stays in visuals.logoUrl. */
+  logoUrls: string[];
+}
 export interface BrandRecord {
   id: string;
   websiteUrl: string;
@@ -20,6 +30,7 @@ export interface BrandRecord {
   confirmedAt: string;
   updatedAt: string;
   limited: boolean;
+  doc?: BrandDocNotes;
 }
 export interface BrandKitDocument {
   kind: 'vidverge-brand-kit';
@@ -66,6 +77,12 @@ export function getDefaultBrand(document: BrandKitDocument): BrandRecord | null 
   return document.brands.find((brand) => brand.id === document.defaultBrandId) || document.brands[0] || null;
 }
 export function readActiveBrandKit(): BrandKitDocument { return activeDocument; }
+/** Best local copy: the in-memory document when loaded, else this session's cached copy. */
+export function readCachedBrandKit(): BrandKitDocument {
+  if (activeDocument.brands.length) return activeDocument;
+  return readCache() || activeDocument;
+}
+export function rememberBrandKit(document: BrandKitDocument): void { cache(document); }
 export function normalizeBrandUrl(value: string): string {
   try {
     const withProtocol = /^https?:\/\//i.test(value.trim()) ? value.trim() : `https://${value.trim()}`;
@@ -82,6 +99,8 @@ export function matchSavedBrand(document: BrandKitDocument, value: string): Bran
     || null;
 }
 export function brandToContextText(brand: BrandRecord): string {
+  const doc = brand.doc;
+  const products = doc?.products?.trim() && doc.products.trim() !== brand.offer.summary.trim() ? doc.products.trim() : '';
   const lines = [
     `Brand Name: ${brand.identity.businessName}`,
     `Website: ${brand.websiteUrl}`,
@@ -89,13 +108,19 @@ export function brandToContextText(brand: BrandRecord): string {
     `What it offers: ${brand.offer.summary}`,
     `Features: ${brand.offer.features.join('; ')}`,
     `Benefits: ${brand.offer.benefits.join('; ')}`,
+    `Products: ${products}`,
     `Audience: ${brand.audienceTone.audience}`,
     `Tone: ${brand.audienceTone.tone}`,
+    `Voice: ${doc?.voice || ''}`,
     `Pricing: ${brand.offer.pricing.join('; ')}`,
     `Offers / CTA: ${brand.offer.offersCtas.join('; ')}`,
     `Logo: ${brand.visuals.logoUrl}`,
+    `Other logos: ${(doc?.logoUrls || []).join(', ')}`,
     `Colors: ${brand.visuals.colors.join(', ')}`,
     `Fonts: ${brand.visuals.fonts.join(', ')}`,
+    `Characters / mascots: ${doc?.characters || ''}`,
+    `Do: ${(doc?.dos || []).join('; ')}`,
+    `Don't: ${(doc?.donts || []).join('; ')}`,
     `Social profiles: ${(brand.visuals.socialProfiles || []).map((profile) => `${profile.platform}:${profile.handle}${profile.verified ? ' ✓' : ''} (${profile.url})`).join('; ')}`,
     `Founder clips: ${(brand.visuals.clips || []).map((clip) => `${clip.name} (${clip.url})`).join('; ')}`,
   ];
@@ -109,15 +134,12 @@ export function makeBrandRecord(input: Omit<BrandRecord, 'id' | 'confirmedAt' | 
 export async function uploadBrandClip(file: File): Promise<BrandClip> {
   if (!file.type.startsWith('video/')) throw new Error('Choose a video clip.');
   if (file.size > 50 * 1024 * 1024) throw new Error('Brand clips must be 50 MB or smaller.');
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading.');
   const form = new FormData();
   form.append('file', file);
   form.append('workspaceId', WORKSPACE_ID);
   form.append('folder', 'brand-kit-clips');
-  const response = await fetch('/api/upload/file', {
+  const response = await workspaceFetch('/api/upload/file', {
     method: 'POST',
-    headers: { 'X-Workspace-DB-Token': token },
     body: form,
   });
   const result = await response.json().catch(() => null);
@@ -134,14 +156,12 @@ export async function uploadBrandClip(file: File): Promise<BrandClip> {
 }
 
 export async function deleteBrandClip(clip: BrandClip): Promise<void> {
-  const token = await getWorkspaceToken();
   const appId = String((window as any).__APP_ID__ || (window as any).__SPACE_ID__ || 'workspace-660069');
-  const response = await fetch('/api/upload/delete', {
+  const response = await workspaceFetch('/api/upload/delete', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-App-Id': appId,
-      ...(token ? { 'X-Workspace-DB-Token': token } : {}),
     },
     body: JSON.stringify(clip.key ? { key: clip.key } : { url: clip.url }),
   });

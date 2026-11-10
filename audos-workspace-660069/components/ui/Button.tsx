@@ -1,5 +1,5 @@
 import React from 'react';
-import { COLORS, GRADIENT, RADIUS } from '../theme';
+import { COLORS, RADIUS } from '../theme';
 
 /**
  * Vidverge button. Four variants, three sizes, optional inline spinner.
@@ -59,26 +59,29 @@ const Button: React.FC<ButtonProps> = function Button({
   style,
   onMouseEnter,
   onMouseLeave,
+  onMouseDown,
+  onMouseUp,
   ...rest
 }) {
   const [hover, setHover] = React.useState(false);
+  const [pressed, setPressed] = React.useState(false);
   const dims = SIZES[size];
   const off = Boolean(disabled) || loading;
 
   let visual: React.CSSProperties;
   if (variant === 'primary') {
     visual = {
-      background: hover && !off ? GRADIENT.actionHover : GRADIENT.action,
-      color: COLORS.onAccent,
+      background: off ? COLORS.btn : pressed ? COLORS.btnPressed : hover ? COLORS.btnHover : COLORS.btn,
+      color: COLORS.onBtn,
       border: '1px solid transparent',
-      boxShadow: hover && !off ? '0 10px 34px rgba(212,166,74,0.25)' : '0 8px 28px rgba(212,166,74,0.18)',
+      boxShadow: hover && !off ? '0 10px 30px rgba(0,0,0,0.20)' : '0 8px 24px rgba(0,0,0,0.16)',
       fontWeight: 600,
     };
   } else if (variant === 'secondary') {
     visual = {
-      background: hover && !off ? COLORS.hover : COLORS.surface,
-      color: COLORS.text,
-      border: '1px solid ' + COLORS.controlBorder,
+      background: hover && !off ? COLORS.goldTint : 'transparent',
+      color: hover && !off ? COLORS.accentHover : COLORS.accent,
+      border: '1px solid ' + (hover && !off ? COLORS.accentHover : COLORS.accent),
       boxShadow: 'none',
       fontWeight: 600,
     };
@@ -92,8 +95,8 @@ const Button: React.FC<ButtonProps> = function Button({
     };
   } else {
     visual = {
-      background: hover && !off ? COLORS.hover : 'transparent',
-      color: hover && !off ? COLORS.text : COLORS.secondary,
+      background: 'transparent',
+      color: hover && !off ? COLORS.accent : COLORS.text,
       border: '1px solid transparent',
       boxShadow: 'none',
       fontWeight: 500,
@@ -110,7 +113,16 @@ const Button: React.FC<ButtonProps> = function Button({
       }}
       onMouseLeave={function onLeave(e) {
         setHover(false);
+        setPressed(false);
         if (onMouseLeave) onMouseLeave(e);
+      }}
+      onMouseDown={function onDown(e) {
+        setPressed(true);
+        if (onMouseDown) onMouseDown(e);
+      }}
+      onMouseUp={function onUp(e) {
+        setPressed(false);
+        if (onMouseUp) onMouseUp(e);
       }}
       {...rest}
       style={{

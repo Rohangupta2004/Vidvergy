@@ -377,7 +377,7 @@ export default function SoundStudio({ target, onBack }: { target: SoundTarget; o
       </section>
 
       {/* Render */}
-      <section style={{ ...panelStyle, border: `1px solid color-mix(in srgb, ${S.success} 40%, transparent)` }} data-testid="panel-launch-render">
+      <section style={{ ...panelStyle, border: '1px solid color-mix(in srgb, var(--vg-accent) 40%, transparent)' }} data-testid="panel-launch-render">
         <button type="button" onClick={() => void runRender()} disabled={busy !== '' || nothingToAdd} className="ps-btn" style={{ ...primaryBtn, width: '100%', justifyContent: 'center', opacity: busy !== '' || nothingToAdd ? 0.6 : 1 }} data-testid="button-launch-render">
           {busy === 'render' ? <Loader2 size={15} className="rc-spin" /> : <Volume2 size={15} />}
           {busy === 'render' ? 'Rendering…' : 'Add the sound to this video'}

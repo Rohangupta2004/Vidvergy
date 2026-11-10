@@ -3,6 +3,7 @@ import { Check, Loader2, Mic, Pencil, Square, Trash2, Upload } from 'lucide-reac
 import { COLORS, FONT, RADIUS } from '../../../components/theme';
 import { createClonedVoice, deleteClonedVoice, listClonedVoices, renameClonedVoice } from '../lib/forgeClient';
 import type { ForgeClonedVoice } from '../lib/forgeTypes';
+import { safeErrorText } from '../lib/safeError';
 
 const AUDIO_TYPES = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/flac', 'audio/x-flac'];
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -11,7 +12,7 @@ const MIN_SECONDS = 30;
 const MAX_SECONDS = 180;
 
 function message(error: any): string {
-  return String(error?.message || error || 'Voice cloning failed.');
+  return safeErrorText(String(error?.message || error || ''), 'Voice cloning failed — please try again.', { context: 'voice clone error' });
 }
 
 async function durationOf(file: File): Promise<number> {

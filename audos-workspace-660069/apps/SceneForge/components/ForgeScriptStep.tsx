@@ -4,7 +4,7 @@
  * generation; below it the ElevenLabs voice list with play-preview.
  */
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Loader2, Pause, Play, Search, Sparkles, Wand2 } from 'lucide-react';
+import { Clapperboard, Loader2, Pause, Play, Search, Sparkles, Wand2 } from 'lucide-react';
 import { COLORS, FONT, RADIUS } from '../../../components/theme';
 import {
   filterVoices,
@@ -15,7 +15,10 @@ import {
   type Voice,
 } from '../../../lib/elevenLabsVoices';
 import { ideaToScript, listClonedVoices } from '../lib/forgeClient';
+import { formatTimeRange, parseStructuredScript, spokenLinesFromStructured } from '../lib/scriptFormat';
+import { safeErrorText } from '../lib/safeError';
 import VoiceClonePanel from './VoiceClonePanel';
+import { HELPER_TEXT } from './optionPreviews';
 
 export interface ScriptStepValue {
   topic: string;
@@ -23,6 +26,8 @@ export interface ScriptStepValue {
   niche: string;
   voiceId: string;
   voiceName: string;
+  /** Structured scripts only: false voices the whole text instead of just the quoted dialogue. */
+  speakDialogueOnly?: boolean;
 }
 
 export default function ForgeScriptStep({
@@ -47,13 +52,16 @@ export default function ForgeScriptStep({
   const [playingId, setPlayingId] = useState('');
   const [loadingVoiceId, setLoadingVoiceId] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const structured = useMemo(() => parseStructuredScript(value.script), [value.script]);
+  const spokenLines = useMemo(() => spokenLinesFromStructured(structured), [structured]);
+  const spokenWords = spokenLines.join(' ').split(/\s+/).filter(Boolean).length;
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([loadAllVoices(), listClonedVoices().catch(() => [])])
       .then(([list, localClones]) => {
         if (cancelled) return;
-        const localNames = new Map(localClones.map((voice) => [voice.voiceId, voice.name]));
+        const localNames = new Map<string, string>(localClones.map((voice) => [String(voice.voiceId), String(voice.name || 'Cloned voice')]));
         setVoices(list
           .filter((voice) => voice.category !== 'cloned' || localNames.has(voice.id))
           .map((voice) => localNames.has(voice.id) ? { ...voice, name: localNames.get(voice.id) || voice.name, category: 'cloned' } : voice));
@@ -155,13 +163,13 @@ export default function ForgeScriptStep({
               style={{ ...inputStyle, resize: 'vertical' }}
               data-testid="input-idea"
             />
-            {ideaError ? <div style={{ color: COLORS.danger, fontSize: 13 }}>{ideaError}</div> : null}
+            {ideaError ? <div style={{ color: COLORS.danger, fontSize: 13 }}>{safeErrorText(ideaError, 'The script could not be written right now — please try again.', { context: 'idea-to-script error' })}</div> : null}
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 type="button"
                 onClick={generate}
                 disabled={ideaBusy || !idea.trim()}
-                style={{ alignItems: 'center', background: ideaBusy ? COLORS.raised : 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', border: 'none', borderRadius: RADIUS.sm, color: ideaBusy ? COLORS.muted : COLORS.onAccent, cursor: ideaBusy ? 'wait' : 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 14, fontWeight: 600, gap: 8, minHeight: 44, padding: '0 18px' }}
+                style={{ alignItems: 'center', background: ideaBusy ? COLORS.raised : 'var(--vg-gradient-action)', border: 'none', borderRadius: RADIUS.sm, color: ideaBusy ? COLORS.muted : COLORS.onAccent, cursor: ideaBusy ? 'wait' : 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 14, fontWeight: 600, gap: 8, minHeight: 44, padding: '0 18px' }}
                 data-testid="button-idea-generate"
               >
                 {ideaBusy ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
@@ -181,14 +189,55 @@ export default function ForgeScriptStep({
         <textarea
           value={value.script}
           onChange={(e) => onChange({ ...value, script: e.target.value })}
-          placeholder="Paste or write the exact words your presenter will say…"
+          placeholder="Paste or write the exact words your presenter will say… Structured Act / Scene scripts with timecodes are detected automatically."
           rows={10}
           style={{ ...inputStyle, fontSize: 15, lineHeight: '24px', minHeight: 220, resize: 'vertical' }}
           data-testid="input-script"
         />
         <div style={{ color: COLORS.muted, fontSize: 12.5 }}>
-          {value.script.trim() ? `${value.script.trim().split(/\s+/).length} words ≈ ${Math.round(value.script.trim().split(/\s+/).length / 2.4)}s spoken` : 'The avatar speaks these words exactly — an agent only adds delivery emotion.'}
+          {structured && spokenLines.length && value.speakDialogueOnly !== false
+            ? `${spokenLines.length} dialogue lines · ${spokenWords} spoken words ≈ ${Math.round(spokenWords / 2.4)}s · planned timeline ${formatTimeRange(structured.start, structured.end)}`
+            : value.script.trim() ? `${value.script.trim().split(/\s+/).length} words ≈ ${Math.round(value.script.trim().split(/\s+/).length / 2.4)}s spoken` : 'The avatar speaks these words exactly — an agent only adds delivery emotion.'}
         </div>
+        {structured ? (
+          <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: RADIUS.card, display: 'grid', gap: 10, padding: 12 }} data-testid="sceneforge-structured-outline">
+            <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <Clapperboard size={15} color={COLORS.accent} />
+              <strong style={{ color: COLORS.text, fontFamily: FONT.heading, fontSize: 13.5 }}>Structured script detected</strong>
+              <span style={{ color: COLORS.muted, fontSize: 12 }}>{structured.acts.length ? `${structured.acts.length} act${structured.acts.length === 1 ? '' : 's'} · ` : ''}{structured.scenes.length} scenes · {formatTimeRange(structured.start, structured.end)}</span>
+            </div>
+            <div style={{ display: 'grid', gap: 10, maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
+              {(structured.acts.length ? structured.acts : [{ index: 0, title: '', start: structured.start, end: structured.end, summary: '', scenes: structured.scenes }]).map((act) => (
+                <div key={`act-${act.index}-${act.start}`} style={{ display: 'grid', gap: 4 }}>
+                  {act.title ? <div style={{ color: COLORS.text, fontFamily: FONT.heading, fontSize: 13, fontWeight: 600 }}>Act {act.index} — {act.title} <span style={{ color: COLORS.muted, fontWeight: 400 }}>({formatTimeRange(act.start, act.end)})</span></div> : null}
+                  {act.summary ? <div style={{ color: COLORS.muted, fontSize: 12, lineHeight: '17px' }}>{act.summary}</div> : null}
+                  <ol style={{ display: 'grid', gap: 5, listStyle: 'none', margin: 0, padding: 0 }}>
+                    {act.scenes.map((scene) => (
+                      <li key={`scene-${scene.index}-${scene.start}`} style={{ color: COLORS.secondary, fontSize: 12.5, lineHeight: '18px' }}>
+                        <span style={{ color: COLORS.accent, fontVariantNumeric: 'tabular-nums' }}>Scene {scene.index} · {formatTimeRange(scene.start, scene.end)}</span> · {scene.title || 'Untitled scene'}
+                        {scene.dialogue.length ? <span style={{ color: COLORS.muted, display: 'block' }}>“{scene.dialogue.map((entry) => entry.line).join(' ')}”</span> : null}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </div>
+            {structured.productionTips.length || structured.musicPrompt || structured.musicCues.length ? (
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>
+                Also kept with the project: {[structured.productionTips.length ? `${structured.productionTips.length} production tips` : '', structured.musicPrompt || structured.musicCues.length ? `music prompt${structured.musicCues.length ? ` with ${structured.musicCues.length} timed cues` : ''}` : ''].filter(Boolean).join(' · ')}
+              </div>
+            ) : null}
+            {structured.warnings.length ? <div style={{ color: COLORS.warning, fontSize: 12, lineHeight: '17px' }}>{structured.warnings.slice(0, 3).join(' ')}{structured.warnings.length > 3 ? ` (+${structured.warnings.length - 3} more)` : ''}</div> : null}
+            {spokenLines.length ? (
+              <label style={{ alignItems: 'flex-start', color: COLORS.secondary, cursor: 'pointer', display: 'flex', fontSize: 13, gap: 8, lineHeight: '19px' }}>
+                <input type="checkbox" checked={value.speakDialogueOnly !== false} onChange={(event) => onChange({ ...value, speakDialogueOnly: event.target.checked })} style={{ accentColor: '#D4AF37', marginTop: 3 }} data-testid="toggle-speak-dialogue-only" />
+                <span>The presenter speaks only the {spokenLines.length} quoted dialogue lines. Shots, prompts and music notes are not read aloud; the full script is saved with the project.</span>
+              </label>
+            ) : (
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>No quoted dialogue lines were found, so the whole text will be voiced as written.</div>
+            )}
+          </div>
+        ) : null}
         <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
           <div>
             <label style={{ color: COLORS.secondary, display: 'block', fontFamily: FONT.body, fontSize: 13, marginBottom: 6 }}>Working title</label>
@@ -208,6 +257,7 @@ export default function ForgeScriptStep({
           if (voice) onChange({ ...value, voiceId: voice.voiceId, voiceName: voice.name });
         }} />
         <label style={{ color: COLORS.text, fontFamily: FONT.heading, fontSize: 15, fontWeight: 600 }}>Voice (ElevenLabs)</label>
+        <div style={{ color: COLORS.muted, fontSize: 12.5 }}>{HELPER_TEXT.voice}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           <div style={{ flex: 1, minWidth: 220, position: 'relative' }}>
             <Search size={15} color={COLORS.muted} style={{ left: 12, position: 'absolute', top: 14 }} />
@@ -219,7 +269,7 @@ export default function ForgeScriptStep({
         </div>
         {voices.length ? <div style={{ color: COLORS.muted, fontSize: 12.5 }}>Showing {shownVoices.length} of {voices.length} voices · Indian matches are listed first</div> : null}
         {indiaOnly && voices.length > 0 && shownVoices.length === 0 ? <div style={{ color: COLORS.muted, fontSize: 13 }}>No Indian accent or language metadata was returned by ElevenLabs. Clear the filter to browse all voices.</div> : null}
-        {voicesError ? <div style={{ color: COLORS.danger, fontSize: 13 }}>{voicesError}</div> : null}
+        {voicesError ? <div style={{ color: COLORS.danger, fontSize: 13 }}>{safeErrorText(voicesError, 'The voice catalog could not load right now — please refresh to try again.', { context: 'voice catalog error' })}</div> : null}
         {!voices.length && !voicesError ? (
           <div style={{ alignItems: 'center', color: COLORS.muted, display: 'flex', fontSize: 13.5, gap: 8, padding: '12px 0' }}>
             <Loader2 size={15} className="animate-spin" /> Loading the voice catalog…
@@ -233,7 +283,7 @@ export default function ForgeScriptStep({
                 key={voice.id}
                 style={{
                   alignItems: 'center',
-                  background: selected ? 'linear-gradient(100deg, #2B2418 0%, #202126 100%)' : COLORS.surface,
+                  background: selected ? 'var(--vg-gold-tint)' : COLORS.surface,
                   border: `1px solid ${selected ? COLORS.accent : COLORS.border}`,
                   borderRadius: RADIUS.card,
                   display: 'flex',

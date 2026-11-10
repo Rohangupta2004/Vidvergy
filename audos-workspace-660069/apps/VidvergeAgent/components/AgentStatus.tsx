@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { AgentState } from '../types';
 
 const DOT_COLOR: Record<AgentState, string> = {
-  idle: 'var(--vv-success, #4ade80)',
-  working: 'var(--vv-gold, #D4920A)',
-  completed: 'var(--vv-success, #4ade80)',
-  error: 'var(--vv-error, #f87171)',
+  idle: 'var(--vg-success, #4ade80)',
+  working: 'var(--vg-gold, #D4AF37)',
+  completed: 'var(--vg-success, #4ade80)',
+  error: 'var(--vg-danger, #f87171)',
 };
 
 const STATUS_CSS = `
@@ -48,7 +48,7 @@ export default function AgentStatus({ state, label, name = 'VIDVERGE', className
   return (
     <div data-state={state} className={`vva-status select-none text-center ${className}`}>
       <style>{STATUS_CSS}</style>
-      <div className="text-[10px] font-medium uppercase tracking-[0.42em] text-[var(--vv-text-dim)]">{name}</div>
+      <div className="text-[10px] font-medium uppercase tracking-[0.42em] text-[var(--vg-muted)]">{name}</div>
       <div
         className="mt-2 flex items-center justify-center gap-2 transition-opacity duration-200"
         style={{ opacity: visible ? 1 : 0 }}
@@ -57,7 +57,7 @@ export default function AgentStatus({ state, label, name = 'VIDVERGE', className
           className="vva-status-dot h-1.5 w-1.5 rounded-full"
           style={{ background: DOT_COLOR[state], boxShadow: `0 0 10px ${DOT_COLOR[state]}` }}
         />
-        <span className="text-[13px] text-[#9E8B55]">{shown}</span>
+        <span className="text-[13px] text-[var(--vg-muted)]">{shown}</span>
       </div>
     </div>
   );

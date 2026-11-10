@@ -16,19 +16,19 @@ import { AlertTriangle, Download, ImageIcon, Loader2, Play, RefreshCw, Sparkles,
 import { callHook } from '../../lib/workspace';
 
 const T = {
-  canvas: '#FFFDF4',
-  raised: '#FFFFFF',
-  raisedHover: '#FFFAEB',
-  line: 'rgba(180,120,0,0.14)',
-  lineStrong: 'rgba(180,120,0,0.36)',
-  bone: '#1A1000',
-  muted: '#7A6030',
-  dim: '#9A8450',
-  coral: '#C8920A',
-  coralHover: '#B4720A',
-  done: '#166534',
-  fault: '#991B1B',
-  gold: '#B45309',
+  canvas: 'var(--vg-bg)',
+  raised: 'var(--vg-surface)',
+  raisedHover: 'var(--vg-hover)',
+  line: 'var(--vg-border)',
+  lineStrong: 'var(--vg-control-border)',
+  bone: 'var(--vg-text)',
+  muted: 'var(--vg-secondary)',
+  dim: 'var(--vg-muted)',
+  coral: 'var(--vg-accent)',
+  coralHover: 'var(--vg-accent-hover)',
+  done: 'var(--vg-success)',
+  fault: 'var(--vg-danger)',
+  gold: 'var(--vg-accent)',
   mono: "'JetBrains Mono', 'SF Mono', ui-monospace, monospace",
   sans: "'Inter', system-ui, sans-serif",
 } as const;
@@ -37,13 +37,13 @@ const CSS = `
   .ag-root * { box-sizing: border-box; }
   .ag-root button { transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease; }
   .ag-root button:focus-visible, .ag-root a:focus-visible, .ag-root [role="button"]:focus-visible { outline: 2px solid ${T.coral}; outline-offset: 2px; border-radius: 10px; }
-  .ag-primary-btn:hover:not(:disabled) { background: ${T.coralHover} !important; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(200,146,10,0.3); }
-  .ag-primary-btn:active:not(:disabled) { transform: translateY(0); box-shadow: 0 2px 8px rgba(200,146,10,0.25); }
+  .ag-primary-btn:hover:not(:disabled) { background: ${T.coralHover} !important; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(212,175,55,0.3); }
+  .ag-primary-btn:active:not(:disabled) { transform: translateY(0); box-shadow: 0 2px 8px rgba(212,175,55,0.25); }
   .ag-ghost-btn:hover:not(:disabled) { border-color: ${T.lineStrong} !important; color: ${T.bone} !important; background: ${T.raised} !important; }
   .ag-card { transition: border-color 0.18s ease, background-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease; }
-  .ag-card:hover { background: ${T.raisedHover} !important; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(120,80,0,0.12); }
+  .ag-card:hover { background: ${T.raisedHover} !important; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.35); }
   .ag-card:focus-visible { outline: 2px solid ${T.coral}; outline-offset: 2px; }
-  .ag-download:hover { background: ${T.coralHover} !important; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(200,146,10,0.3); }
+  .ag-download:hover { background: ${T.coralHover} !important; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(212,175,55,0.3); }
   .ag-preview-img { animation: ag-fade-in 0.35s ease; }
   @keyframes ag-fade-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: scale(1); } }
   .ag-progress-fill { transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -171,18 +171,18 @@ export default function App() {
   const doneCount = SCENES.filter((s) => status[s.id] === 'DONE').length;
 
   const badgeStyle: Record<SceneStatus, { color: string; bg: string }> = {
-    WAITING: { color: T.muted, bg: 'rgba(180,120,0,0.08)' },
-    GENERATING: { color: T.gold, bg: 'rgba(200,146,10,0.16)' },
-    DONE: { color: T.done, bg: 'rgba(22,101,52,0.12)' },
-    ERROR: { color: T.fault, bg: 'rgba(153,27,27,0.1)' },
+    WAITING: { color: T.muted, bg: 'rgba(212,175,55,0.08)' },
+    GENERATING: { color: T.gold, bg: 'rgba(212,175,55,0.16)' },
+    DONE: { color: T.done, bg: 'var(--vg-success-bg)' },
+    ERROR: { color: T.fault, bg: 'var(--vg-danger-bg)' },
   };
 
   return (
     <div className="ag-root" style={{ width: '100%', height: '100%', minHeight: 480, display: 'flex', flexDirection: 'column', background: T.canvas, fontFamily: T.sans, overflow: 'hidden' }}>
       <style>{CSS}</style>
       {/* header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', borderBottom: `1px solid ${T.line}`, flexShrink: 0, background: 'linear-gradient(180deg, rgba(200,146,10,0.05), transparent)' }}>
-        <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(200,146,10,0.12)', border: '1px solid rgba(200,146,10,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', borderBottom: `1px solid ${T.line}`, flexShrink: 0, background: 'linear-gradient(180deg, rgba(212,175,55,0.05), transparent)' }}>
+        <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <ImageIcon size={16} color={T.coral} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
@@ -193,8 +193,8 @@ export default function App() {
           {runningAll ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 150, height: 6, borderRadius: 999, background: T.raised, overflow: 'hidden', border: `1px solid ${T.line}` }}>
-                  <div className="ag-progress-fill" style={{ width: `${Math.round((progress / SCENES.length) * 100)}%`, height: '100%', background: `linear-gradient(90deg, ${T.coral}, ${T.coralHover})`, borderRadius: 999 }} />
+                <div style={{ width: 150, height: 6, borderRadius: 999, background: 'var(--vg-raised)', overflow: 'hidden', border: `1px solid ${T.line}` }}>
+                  <div className="ag-progress-fill" style={{ width: `${Math.round((progress / SCENES.length) * 100)}%`, height: '100%', background: T.coral, borderRadius: 999 }} />
                 </div>
                 <span style={{ color: T.muted, fontSize: 11.5, fontFamily: T.mono, minWidth: 30 }}>{progress}/{SCENES.length}</span>
               </div>
@@ -203,7 +203,7 @@ export default function App() {
               </button>
             </>
           ) : (
-            <button className="ag-primary-btn" onClick={() => void generateAll()} style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.coral, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(200,146,10,0.25)' }}>
+            <button className="ag-primary-btn" onClick={() => void generateAll()} style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.coral, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 10, padding: '10px 20px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 10px rgba(212,175,55,0.25)' }}>
               <Sparkles size={13} /> Generate All
             </button>
           )}
@@ -230,7 +230,7 @@ export default function App() {
                 tabIndex={0}
                 onClick={() => setSelected(sc.id)}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(sc.id); } }}
-                style={{ display: 'flex', gap: 12, background: T.raised, border: `1px solid ${on ? T.coral : st === 'ERROR' ? T.fault : T.line}`, borderRadius: 14, padding: 13, cursor: 'pointer', boxShadow: on ? '0 0 0 1px rgba(200,146,10,0.3), 0 8px 24px rgba(120,80,0,0.12)' : 'none' }}
+                style={{ display: 'flex', gap: 12, background: T.raised, border: `1px solid ${on ? T.coral : st === 'ERROR' ? T.fault : T.line}`, borderRadius: 14, padding: 13, cursor: 'pointer', boxShadow: on ? '0 0 0 1px rgba(212,175,55,0.3), 0 8px 24px rgba(0,0,0,0.35)' : 'none' }}
               >
                 <div style={{ width: 62, height: 100, borderRadius: 9, background: '#000', flexShrink: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${T.line}` }}>
                   {urls[sc.id] ? <img src={urls[sc.id]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -244,7 +244,7 @@ export default function App() {
                   </div>
                   <div style={{ color: T.muted, fontSize: 11.5, lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const }}>🗣 {sc.voiceLine}</div>
                   {errors[sc.id] ? (
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5, color: T.fault, fontSize: 10.5, lineHeight: 1.45, background: 'rgba(153,27,27,0.07)', border: '1px solid rgba(153,27,27,0.22)', borderRadius: 7, padding: '5px 8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5, color: T.fault, fontSize: 10.5, lineHeight: 1.45, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 35%, transparent)', borderRadius: 7, padding: '5px 8px' }}>
                       <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 1 }} />
                       <span>{errors[sc.id]} — hit Retry to try again.</span>
                     </div>
@@ -254,7 +254,7 @@ export default function App() {
                       className={st === 'DONE' ? 'ag-ghost-btn' : 'ag-primary-btn'}
                       disabled={st === 'GENERATING' || runningAll}
                       onClick={(e) => { e.stopPropagation(); setSelected(sc.id); void generateOne(sc); }}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: st === 'DONE' ? 'transparent' : T.coral, border: st === 'DONE' ? `1px solid ${T.line}` : '1px solid transparent', color: st === 'DONE' ? T.muted : '#FFFFFF', borderRadius: 8, padding: '7px 13px', fontSize: 11.5, fontWeight: 600, cursor: st === 'GENERATING' || runningAll ? 'default' : 'pointer', opacity: st === 'GENERATING' || runningAll ? 0.55 : 1 }}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: st === 'DONE' ? 'transparent' : T.coral, border: st === 'DONE' ? `1px solid ${T.line}` : '1px solid transparent', color: st === 'DONE' ? T.muted : 'var(--vg-on-btn)', borderRadius: 8, padding: '7px 13px', fontSize: 11.5, fontWeight: 600, cursor: st === 'GENERATING' || runningAll ? 'default' : 'pointer', opacity: st === 'GENERATING' || runningAll ? 0.55 : 1 }}
                     >
                       {st === 'GENERATING' ? <Loader2 size={11} className="animate-spin" /> : st === 'DONE' ? <RefreshCw size={11} /> : <Play size={11} />}
                       {st === 'GENERATING' ? 'Generating…' : st === 'DONE' ? 'Regenerate' : st === 'ERROR' ? 'Retry' : 'Generate'}
@@ -270,10 +270,10 @@ export default function App() {
         <div className="ag-scroll" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 28, gap: 18, minWidth: 0, overflowY: 'auto' }}>
           {selUrl ? (
             <>
-              <img key={selUrl} className="ag-preview-img" src={selUrl} alt={sel.title} style={{ maxHeight: 'calc(100% - 140px)', maxWidth: '100%', borderRadius: 16, border: `1px solid ${T.lineStrong}`, objectFit: 'contain', boxShadow: '0 24px 60px rgba(120,80,0,0.12)' }} />
+              <img key={selUrl} className="ag-preview-img" src={selUrl} alt={sel.title} style={{ maxHeight: 'calc(100% - 140px)', maxWidth: '100%', borderRadius: 16, border: `1px solid ${T.lineStrong}`, objectFit: 'contain', boxShadow: '0 24px 60px rgba(0,0,0,0.35)' }} />
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
                 <div style={{ color: T.bone, fontSize: 14.5, fontWeight: 700, letterSpacing: -0.2 }}>{sel.title}</div>
-                <a className="ag-download" href={selUrl} download={`${sel.id}.png`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: T.coral, color: '#FFFFFF', borderRadius: 10, padding: '10px 20px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none', boxShadow: '0 2px 10px rgba(200,146,10,0.25)', transition: 'background-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease' }}>
+                <a className="ag-download" href={selUrl} download={`${sel.id}.png`} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: T.coral, color: 'var(--vg-on-btn)', borderRadius: 10, padding: '10px 20px', fontSize: 12.5, fontWeight: 700, textDecoration: 'none', boxShadow: '0 2px 10px rgba(212,175,55,0.25)', transition: 'background-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease' }}>
                   <Download size={13} /> Download
                 </a>
               </div>
@@ -284,7 +284,7 @@ export default function App() {
             </>
           ) : (
             <div style={{ textAlign: 'center', maxWidth: 440, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(200,146,10,0.08)', border: '1px solid rgba(180,120,0,0.24)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+              <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(212,175,55,0.08)', border: '1px solid rgba(212,175,55,0.24)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
                 {status[sel.id] === 'GENERATING' ? <Loader2 size={26} color={T.gold} className="animate-spin" /> : <ImageIcon size={26} color={T.coral} />}
               </div>
               <div style={{ color: T.bone, fontSize: 16, fontWeight: 700, letterSpacing: -0.2, marginBottom: 8 }}>{sel.title}</div>

@@ -24,6 +24,7 @@
  */
 
 import { workspaceUuid, wsToken } from './api';
+import { workspaceFetch } from '../../lib/workspace';
 
 function proxyUrl(path: string): string {
   return `/api/workspaces/${workspaceUuid()}/provider-credentials/heygen/proxy/${String(path).replace(/^\/+/, '')}`;
@@ -48,7 +49,7 @@ export const HEYGEN_OFFLINE_TOOLTIP =
  */
 export async function checkHeygenHealth(): Promise<HeygenHealthResult> {
   try {
-    const res = await fetch(proxyUrl('v3/avatars/looks?limit=1'), {
+    const res = await workspaceFetch(proxyUrl('v3/avatars/looks?limit=1'), {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',

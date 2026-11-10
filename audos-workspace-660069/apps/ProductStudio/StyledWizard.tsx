@@ -460,12 +460,15 @@ export default function StyledWizard({ initialStyle, onExit }: { initialStyle?: 
     if (!project || project.status !== 'in_progress') return;
     let stopped = false;
     const poll = async () => {
+      if (stopped) return;
       try {
         const st = await clipStyleRun<StatusPayload>({ op: 'status', project_id: project.id });
         if (stopped) return;
         setProject(st.project);
         setClips(st.clips || []);
-      } catch { /* the next interval retries */ }
+      } catch (error) {
+        if (/HTTP\s+(401|403)|verified session/i.test(String(error instanceof Error ? error.message : error))) stopped = true;
+      }
     };
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { stopped = true; window.clearInterval(timer); };
@@ -874,7 +877,7 @@ export default function StyledWizard({ initialStyle, onExit }: { initialStyle?: 
                 </div>
               ))}
 
-              <div style={{ borderRadius: 12, border: `1px solid color-mix(in srgb, ${S.success} 40%, transparent)`, background: `color-mix(in srgb, ${S.success} 8%, transparent)`, padding: '11px 13px' }} data-testid="card-script-cta">
+              <div style={{ borderRadius: 12, border: '1px solid color-mix(in srgb, var(--vg-accent) 40%, transparent)', background: 'color-mix(in srgb, var(--vg-accent) 8%, transparent)', padding: '11px 13px' }} data-testid="card-script-cta">
                 <span style={{ ...labelStyle, marginBottom: 6 }}>Call to action · the closing line</span>
                 <textarea value={script.cta} onChange={(e) => { setScriptApproved(false); setScript((c) => ({ ...c, cta: e.currentTarget.value })); }} rows={2} className="ps-input" style={{ ...inputStyle, fontSize: 13.5, fontWeight: 700, lineHeight: 1.5, resize: 'vertical' }} data-testid="input-script-cta" />
               </div>
@@ -933,7 +936,7 @@ export default function StyledWizard({ initialStyle, onExit }: { initialStyle?: 
                     <span style={{ fontSize: 11.5, fontWeight: 800, color: S.brand }}>[{b.code}]</span>
                     <span style={{ fontSize: 10.5, fontWeight: 800, padding: '2px 7px', borderRadius: 999, background: S.panelStrong, color: S.muted }}>{beatSceneLabel(b)}</span>
                     <span style={{ fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 100 }}>{b.text}</span>
-                    <span style={{ fontSize: 10.5, color: countWords(prompts[i]) < 25 || countWords(prompts[i]) > 44 ? '#B45309' : S.muted }}>{countWords(prompts[i])} words</span>
+                    <span style={{ fontSize: 10.5, color: countWords(prompts[i]) < 25 || countWords(prompts[i]) > 44 ? 'var(--vg-warning)' : S.muted }}>{countWords(prompts[i])} words</span>
                   </div>
                   <textarea value={prompts[i]} onChange={(e) => setPrompts((cur) => cur.map((p, j) => (j === i ? e.currentTarget.value : p)))} rows={2} className="ps-input" style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.55, resize: 'vertical' }} data-testid={`input-prompt-${b.code}`} />
                 </div>

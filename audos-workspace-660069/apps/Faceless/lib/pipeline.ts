@@ -1,5 +1,5 @@
 import { authorizeCredits, newChargeKey, quoteCredits, refundCreditsStrict } from '../../../lib/credits';
-import { callHook, WORKSPACE_ID, workspaceTokenNow } from '../../../lib/workspace';
+import { callHook, HookError, WORKSPACE_ID, workspaceFetch, workspaceTokenNow } from '../../../lib/workspace';
 import { adoptExternalOperation, resumeExternalOperation } from '../../VideoProviderLab/labClient';
 
 export type PipelineStep = 'brief' | 'script' | 'voiceover' | 'timing' | 'storyboard' | 'images' | 'clips' | 'finishing' | 'review' | 'export';
@@ -71,6 +71,10 @@ export interface FacelessProject {
 
 type Checkpoint = (project: FacelessProject) => Promise<void> | void;
 const BEAT_VIDEO_MODEL = 'gemini-omni-flash-preview';
+const VOICEOVER_MODEL = 'eleven_v4';
+const VOICEOVER_FALLBACK_MODEL = 'eleven_v3';
+// eleven_v4 runs on ElevenLabs Text-to-Dialogue, which the platform caps at 2,000 characters per call.
+const VOICEOVER_MODEL_MAX_CHARS = 2000;
 const FPS = 30;
 
 function token(): string {
@@ -79,7 +83,7 @@ function token(): string {
   return value;
 }
 function jsonHeaders(): Record<string, string> {
-  return { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token() };
+  return { 'Content-Type': 'application/json' };
 }
 async function json(response: Response): Promise<any> {
   return response.json().catch(() => null);
@@ -108,7 +112,7 @@ function parseJson<T>(raw: string): T {
 }
 
 async function gpt(system: string, user: string, maxTokens = 6000): Promise<string> {
-  const response = await fetch('/proxy/openai/v1/chat/completions', {
+  const response = await workspaceFetch('/proxy/openai/v1/chat/completions', {
     method: 'POST',
     headers: jsonHeaders(),
     body: JSON.stringify({
@@ -143,13 +147,39 @@ async function guardPaidRun(seconds: number): Promise<void> {
   }
 }
 
-async function generateVoiceover(script: string, voiceId: string): Promise<{ audioUrl: string; estimated: number }> {
-  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}/audio/voiceover`, {
+// v3 accepts only stability; v4 also accepts similarity_boost. Neither accepts style/speed/use_speaker_boost.
+const VOICEOVER_SETTINGS: Record<string, Record<string, number>> = {
+  [VOICEOVER_MODEL]: { stability: 0.5, similarity_boost: 0.75 },
+  [VOICEOVER_FALLBACK_MODEL]: { stability: 0.5 },
+};
+// Auth, wallet and rate-limit rejections fail identically on any model, so they skip the fallback.
+const VOICEOVER_NO_FALLBACK_STATUS = new Set([401, 402, 403, 429]);
+
+async function requestVoiceover(script: string, voiceId: string, modelId: string): Promise<{ ok: boolean; status: number; data: any }> {
+  const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/voiceover`, {
     method: 'POST', headers: jsonHeaders(),
-    body: JSON.stringify({ script, voiceId, modelId: 'eleven_v3', voiceSettings: { stability: 0.5 } }),
+    body: JSON.stringify({ script, voiceId, modelId, voiceSettings: VOICEOVER_SETTINGS[modelId] }),
   });
   const data = await json(response);
-  if (!response.ok || !isUrl(data?.audioUrl)) throw new Error(errorMessage(data, 'ElevenLabs returned no voiceover.'));
+  return { ok: response.ok && isUrl(data?.audioUrl), status: response.status, data };
+}
+
+async function generateVoiceover(script: string, voiceId: string): Promise<{ audioUrl: string; estimated: number }> {
+  let result: { ok: boolean; status: number; data: any } | null = null;
+  if (script.length <= VOICEOVER_MODEL_MAX_CHARS) {
+    try {
+      result = await requestVoiceover(script, voiceId, VOICEOVER_MODEL);
+    } catch (error) {
+      console.warn(`[Faceless] ${VOICEOVER_MODEL} voiceover request failed; retrying with ${VOICEOVER_FALLBACK_MODEL}.`, error);
+    }
+    if (result && !result.ok && !VOICEOVER_NO_FALLBACK_STATUS.has(result.status) && result.data?.code !== 'provider_quota_exceeded') {
+      console.warn(`[Faceless] ${VOICEOVER_MODEL} voiceover rejected (HTTP ${result.status}: ${errorMessage(result.data, 'no reason')}); retrying with ${VOICEOVER_FALLBACK_MODEL}.`);
+      result = null;
+    }
+  }
+  if (!result) result = await requestVoiceover(script, voiceId, VOICEOVER_FALLBACK_MODEL);
+  const { data } = result;
+  if (!result.ok) throw new Error(errorMessage(data, 'ElevenLabs returned no voiceover.'));
   return { audioUrl: String(data.audioUrl), estimated: Math.max(1, Number(data.estimatedDurationMs || 0) / 1000) };
 }
 
@@ -159,8 +189,8 @@ async function transcribeVoiceover(audioUrl: string): Promise<{ words: WordTimin
   const form = new FormData();
   form.append('audio', await audioResponse.blob(), 'faceless-voiceover.mp3');
   form.append('language', 'en');
-  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}/audio/transcribe-timestamped`, {
-    method: 'POST', headers: { 'X-Workspace-DB-Token': token() }, body: form,
+  const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/transcribe-timestamped`, {
+    method: 'POST', body: form,
   });
   const data = await json(response);
   if (!response.ok) throw new Error(errorMessage(data, 'Deepgram timing failed.'));
@@ -252,7 +282,7 @@ async function generateImage(project: FacelessProject, scene: StoryboardScene): 
 }
 
 async function generateMusic(project: FacelessProject): Promise<string> {
-  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}/audio/music/preset`, {
+  const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/music/preset`, {
     method: 'POST', headers: jsonHeaders(),
     body: JSON.stringify({ preset: project.settings.mode === 'news' ? 'energetic' : project.settings.mode === 'story' ? 'cinematic' : 'tech', lengthMs: Math.max(3000, Math.round((project.voiceover?.duration || project.settings.targetDuration) * 1000)) }),
   });
@@ -261,7 +291,7 @@ async function generateMusic(project: FacelessProject): Promise<string> {
   return String(data.audioUrl);
 }
 async function generateSfx(project: FacelessProject): Promise<string> {
-  const response = await fetch(`/api/workspaces/${WORKSPACE_ID}/audio/music/custom`, {
+  const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/music/custom`, {
     method: 'POST', headers: jsonHeaders(),
     body: JSON.stringify({ prompt: 'A clean cinematic transition sound design hit: airy whoosh, soft impact, no melody, no voice, no silence.', lengthMs: 3000, instrumental: true }),
   });
@@ -433,7 +463,12 @@ export function buildFinishingRenderRequest(project: FacelessProject): Finishing
       || fallbackPerScene;
     const end = start + duration;
     cursor = Math.max(cursor, end);
-    return { ...scene, start, end, duration, durationInFrames: Math.max(1, Math.round(duration * FPS)), trimStart: 0 };
+    // Only the fields the composition reads: prompts, credit keys and provider
+    // ids stay out of the render request.
+    return {
+      id: scene.id, index: scene.index, clipUrl: scene.clipUrl, overlayText: scene.overlayText,
+      start, end, duration, durationInFrames: Math.max(1, Math.round(duration * FPS)), trimStart: 0,
+    };
   });
 
   const invalidScene = scenes.findIndex((scene) => !positive(scene.duration) || !Number.isFinite(scene.start) || !Number.isFinite(scene.end));
@@ -474,36 +509,120 @@ export function buildFinishingRenderRequest(project: FacelessProject): Finishing
   };
 }
 
+// Network-level drops between the browser, the hook sandbox and the render
+// service. Anything matching is worth another attempt; validation errors are not.
+const TRANSIENT_FAILURE = /fetch failed|failed to fetch|load failed|networkerror|network error|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR|socket hang up|could not be reached|timed? ?out|HTTP 50[234]/i;
+const FINISHING_CALL_ATTEMPTS = 4;
+const MAX_STATUS_MISSES = 8;
+
+class RenderServiceFailure extends Error {
+  transient: boolean;
+  constructor(message: string, transient: boolean) {
+    super(message);
+    this.transient = transient;
+  }
+}
+
+function isTransientFailure(error: unknown): boolean {
+  if (error instanceof HookError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500 || TRANSIENT_FAILURE.test(error.message);
+  }
+  return error instanceof TypeError || TRANSIENT_FAILURE.test(String((error as any)?.message || error));
+}
+
+function describeFailure(error: unknown): string {
+  const message = clipText(String((error as any)?.message || error || 'no response'), 220);
+  return error instanceof HookError ? `HTTP ${error.status}: ${message}` : `network error: ${message}`;
+}
+
+async function callRenderHook<T = any>(label: string, body: Record<string, unknown>, attempts = FINISHING_CALL_ATTEMPTS): Promise<T> {
+  let lastError: unknown = null;
+  let made = 0;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    made = attempt;
+    try {
+      return await callHook<T>('faceless-render', body);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !isTransientFailure(error)) break;
+      console.warn(`[Faceless] ${label} attempt ${attempt}/${attempts} failed; retrying.`, error);
+      await sleep(Math.min(16000, 2000 * 2 ** (attempt - 1)));
+    }
+  }
+  throw new Error(`Remotion finishing: ${label} failed after ${made} attempt${made === 1 ? '' : 's'} (${describeFailure(lastError)}).`);
+}
+
+async function pollRender(operationId: string): Promise<string> {
+  const deadline = Date.now() + 15 * 60 * 1000;
+  let misses = 0;
+  while (Date.now() < deadline) {
+    await sleep(misses ? Math.min(20000, 5000 * (misses + 1)) : 5000);
+    let status: any;
+    try {
+      status = await callHook<any>('faceless-render', { op: 'status', operationId });
+    } catch (error) {
+      misses += 1;
+      console.warn(`[Faceless] render status check ${misses}/${MAX_STATUS_MISSES} failed; still polling.`, error);
+      if (misses >= MAX_STATUS_MISSES) {
+        throw new Error(`Remotion finishing: the render status check failed ${misses} times in a row (${describeFailure(error)}). The render may still complete — “Retry finishing only” reuses your saved clips without new generation charges.`);
+      }
+      continue;
+    }
+    misses = 0;
+    const state = String(status?.status || '').toLowerCase();
+    if ((state === 'complete' || state === 'completed') && isUrl(status?.videoUrl)) return String(status.videoUrl);
+    if (state === 'failed' || state === 'error') {
+      const reason = errorMessage(status, 'the render service gave no reason');
+      throw new RenderServiceFailure(`Remotion render failed on the render service: ${reason}`, TRANSIENT_FAILURE.test(reason));
+    }
+  }
+  throw new Error('Remotion finishing timed out. Your generated scene clips remain saved in this project.');
+}
+
+/**
+ * Remotion only renders 1920x1080, so a 9:16 film is a centred portrait frame
+ * until this crops it to a real 1080x1920 MP4. Returns the input URL when the
+ * crop service stays unavailable.
+ */
+export async function ensurePortraitMaster(videoUrl: string, attempts = 3): Promise<string> {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const portrait = await callHook<any>('faceless-portrait-export', { videoUrl });
+      if (isUrl(portrait?.videoUrl)) return String(portrait.videoUrl);
+    } catch (error) {
+      console.warn(`[Faceless] portrait export attempt ${attempt}/${attempts} failed.`, error);
+    }
+    if (attempt < attempts) await sleep(2000 * attempt);
+  }
+  return videoUrl;
+}
+
+/** One server-side status check for a finishing retry, in case its background worker was never reached. */
+export async function syncFinishing(projectId: string): Promise<void> {
+  await callHook<any>('faceless-render', { op: 'sync_finishing', filmId: projectId });
+}
+
 export async function retryFinishingOnly(project: FacelessProject): Promise<void> {
   const request = buildFinishingRenderRequest(project);
-  await callHook<any>('faceless-render', { op: 'retry_finishing', filmId: project.id, ...request });
+  await callRenderHook<any>('finishing retry', { op: 'retry_finishing', filmId: project.id, ...request }, 3);
 }
 
 async function render(project: FacelessProject): Promise<string> {
   const request = buildFinishingRenderRequest(project);
-  const submitted = await callHook<any>('faceless-render', {
-    op: 'submit',
-    ...request,
-  });
-  const operationId = String(submitted?.operationId || '');
-  if (!operationId) throw new Error(errorMessage(submitted, 'Remotion returned no render job.'));
-  const deadline = Date.now() + 15 * 60 * 1000;
-  while (Date.now() < deadline) {
-    await sleep(5000);
-    const status = await callHook<any>('faceless-render', { op: 'status', operationId });
-    const state = String(status?.status || '').toLowerCase();
-    if ((state === 'complete' || state === 'completed') && isUrl(status?.videoUrl)) {
-      if (project.settings.aspect === '9:16') {
-        try {
-          const portrait = await callHook<any>('faceless-portrait-export', { videoUrl: status.videoUrl });
-          if (isUrl(portrait?.videoUrl)) return String(portrait.videoUrl);
-        } catch { /* the review render remains usable */ }
-      }
-      return String(status.videoUrl);
+  let videoUrl = '';
+  for (let renderAttempt = 1; !videoUrl; renderAttempt += 1) {
+    const submitted = await callRenderHook<any>('render submit', { op: 'submit', ...request });
+    const operationId = String(submitted?.operationId || '');
+    if (!operationId) throw new Error(errorMessage(submitted, 'Remotion returned no render job.'));
+    try {
+      videoUrl = await pollRender(operationId);
+    } catch (error) {
+      if (!(error instanceof RenderServiceFailure) || !error.transient || renderAttempt >= 2) throw error;
+      console.warn('[Faceless] render failed on a transient fetch; resubmitting once with the same saved assets.', error);
+      await sleep(3000);
     }
-    if (state === 'failed') throw new Error(errorMessage(status, 'Remotion finishing failed.'));
   }
-  throw new Error('Remotion finishing timed out. Your generated scene clips remain saved in this project.');
+  return project.settings.aspect === '9:16' ? ensurePortraitMaster(videoUrl) : videoUrl;
 }
 
 async function checkpoint(project: FacelessProject, onCheckpoint: Checkpoint, step: PipelineStep, notice: string): Promise<void> {

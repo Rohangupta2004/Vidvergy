@@ -49,12 +49,12 @@ const CHIP_BASE =
 
 function chipClass(on: boolean): string {
   return on
-    ? `${CHIP_BASE} border-[color-mix(in_srgb,var(--space-brand-primary-500)_55%,transparent)] bg-[color-mix(in_srgb,var(--space-brand-primary-500)_16%,transparent)] text-[var(--space-text-brand)]`
+    ? `${CHIP_BASE} border-[var(--vg-accent)] bg-[var(--vg-gold-tint)] text-[var(--vg-accent)]`
     : `${CHIP_BASE} border-[var(--space-border-default)] bg-[var(--space-surface-muted)] text-[var(--space-text-muted)] hover:text-[var(--space-text-secondary)]`;
 }
 
 const INPUT_CLASS =
-  'w-full rounded-lg border border-[var(--space-border-default)] bg-[var(--space-surface-card)] px-2.5 py-1.5 text-xs text-[var(--space-text-primary)] placeholder-[var(--space-text-muted)] focus:outline-none focus:border-[var(--space-brand-primary-200)]';
+  'w-full rounded-lg border border-[var(--space-border-default)] bg-[var(--space-surface-card)] px-2.5 py-1.5 text-xs text-[var(--space-text-primary)] placeholder-[var(--space-text-muted)] focus:outline-none focus:border-[var(--vg-focus)]';
 
 /** "Google Omni Flash · With sound" reads as "Google Omni Flash" on a chip. */
 function shortModelLabel(label: string): string {
@@ -348,7 +348,7 @@ export default function GenerationOptionsBar({
                 step={1}
                 value={manual.sceneCount}
                 onChange={(e) => patchManual({ sceneCount: Number(e.target.value) })}
-                className="min-w-0 flex-1 accent-[var(--space-brand-primary-500)]"
+                className="min-w-0 flex-1 accent-[var(--vg-accent)]"
                 data-testid="input-scene-count"
               />
               <span className="min-w-8 rounded-lg border border-[var(--space-border-default)] bg-[var(--space-surface-muted)] px-2 py-1 text-center text-xs text-[var(--space-text-primary)]">

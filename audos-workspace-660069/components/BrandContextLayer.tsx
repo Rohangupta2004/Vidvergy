@@ -1,6 +1,7 @@
 import { useEffect, useState, type ComponentType } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import { readActiveBrandContext, useBrandContext } from './brandContextStore';
+import { BRAND_DOC_MARKER, brandBriefBlock, currentBrandDocument, primeBrandDocument, resolveConfirmedBrand } from '../lib/brandDoc';
 
 interface BrandStyle { styleKeywords: string[]; toneSentence: string; }
 const STYLE_EVENT = 'vidverge:brand-style-change';
@@ -45,6 +46,37 @@ function promptPrefix(): string {
   return parts.join(' ');
 }
 
+const PROMPT_KEYS = new Set(['prompt', 'textPrompt', 'text_prompt', 'userPrompt', 'user_prompt', 'description', 'visualPrompt', 'visual_prompt', 'motionPrompt', 'motion_prompt']);
+
+/** The customer-authored text of a request: prompt fields and the latest user message. */
+function requestText(value: unknown, depth = 0): string {
+  if (!value || typeof value !== 'object' || depth > 4) return '';
+  if (Array.isArray(value)) return value.map((item) => requestText(item, depth + 1)).join('\n');
+  const parts: string[] = [];
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (PROMPT_KEYS.has(key) && typeof item === 'string') parts.push(item);
+    else if (key === 'messages' && Array.isArray(item)) {
+      const last = item[item.length - 1] as any;
+      if (last?.role === 'user' && typeof last.content === 'string') parts.push(last.content);
+      else if (last?.role === 'user' && Array.isArray(last.content)) parts.push(last.content.map((part: any) => (part?.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n'));
+    } else if (item && typeof item === 'object') parts.push(requestText(item, depth + 1));
+  }
+  return parts.join('\n').slice(0, 6000);
+}
+
+/**
+ * The saved Brand doc never rides along on its own. Its facts are added to a
+ * request only after the user picked "Use my saved Brand Kit" (or confirmed
+ * details from a website lookup) and the request is about that brand.
+ */
+function autoBrandPrefix(parsed: unknown, raw: string, url: string): string {
+  if (raw.includes(BRAND_DOC_MARKER)) return '';
+  const brand = resolveConfirmedBrand(currentBrandDocument(), requestText(parsed));
+  if (!brand) return '';
+  const block = brandBriefBlock(brand);
+  return /chat\/completions|\/messages/i.test(url) ? block : block.slice(0, 900);
+}
+
 function addPrefix(value: unknown, prefix: string): { value: unknown; changed: boolean } {
   if (!value || typeof value !== 'object') return { value, changed: false };
   if (Array.isArray(value)) {
@@ -66,7 +98,13 @@ function addPrefix(value: unknown, prefix: string): { value: unknown; changed: b
       changed = true;
     } else if (key === 'messages' && Array.isArray(item)) {
       next[key] = item.map((message: any, index) => {
-        if (index !== item.length - 1 || message?.role !== 'user' || typeof message.content !== 'string' || message.content.startsWith(prefix)) return message;
+        if (index !== item.length - 1 || message?.role !== 'user') return message;
+        if (Array.isArray(message.content)) {
+          if (message.content.some((part: any) => part?.type === 'text' && typeof part.text === 'string' && part.text.startsWith(prefix))) return message;
+          changed = true;
+          return { ...message, content: [{ type: 'text', text: prefix }, ...message.content] };
+        }
+        if (typeof message.content !== 'string' || message.content.startsWith(prefix)) return message;
         changed = true;
         return { ...message, content: `${prefix} ${message.content}` };
       });
@@ -84,12 +122,14 @@ function installPromptBridge(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const prefix = promptPrefix();
     const extraction = new Headers(init?.headers).get('X-Vidverge-Brand-Extraction') === '1';
-    const generation = /(?:generate|video|image|veo|kling|runway|higgsfield|heygen|remotion|chat\/completions)/i.test(url);
-    if (!prefix || extraction || !generation || typeof init?.body !== 'string') return originalFetch(input, init);
+    const generation = /(?:generate|video|image|veo|kling|runway|higgsfield|heygen|remotion|chat\/completions|anthropic\/v1\/messages)/i.test(url);
+    if (extraction || !generation || typeof init?.body !== 'string') return originalFetch(input, init);
     try {
-      const enriched = addPrefix(JSON.parse(init.body), prefix);
+      const parsed = JSON.parse(init.body);
+      const prefix = promptPrefix() || autoBrandPrefix(parsed, init.body, url);
+      if (!prefix) return originalFetch(input, init);
+      const enriched = addPrefix(parsed, prefix);
       if (enriched.changed) return originalFetch(input, { ...init, body: JSON.stringify(enriched.value) });
     } catch { /* pass opaque bodies through */ }
     return originalFetch(input, init);
@@ -174,6 +214,7 @@ export function UseBrandToggle() {
 export default function BrandContextLayer() {
   useEffect(() => {
     installPromptBridge();
+    void primeBrandDocument().catch(() => undefined);
     // Retire the one legacy saved-video key once; no feature reads or writes it.
     try { window.localStorage.removeItem(`vidverge_brand_ref_${brandWorkspaceId()}`); } catch { /* storage may be unavailable */ }
   }, []);

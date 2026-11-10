@@ -57,8 +57,8 @@ interface ProductMotionEmbedProps {
 const WORKSPACE_ID = 'f24710e5-7c6d-4db4-92b4-c2c235877575';
 const MAX_IMAGES = 5;
 const MAX_FILE_BYTES = 12 * 1024 * 1024;
-const ACCENT = 'var(--space-brand-primary-500, #f59e0b)';
-const ACCENT_DARK = 'var(--space-brand-primary-600, #d97706)';
+const ACCENT = 'var(--vg-accent)';
+const ACCENT_DARK = 'var(--vg-gold-deep)';
 const MOODS: BrandMood[] = [
   'bold/energetic',
   'premium/minimal',
@@ -74,13 +74,13 @@ const APP_CSS = `
 .pm-rise { animation:pm-rise .42s cubic-bezier(.16,1,.3,1) both }
 .pm-dot { animation:pm-pulse 1.2s ease-in-out infinite }
 .pm-cursor { animation:pm-blink .8s steps(1) infinite }
-.pm-sheen::after { content:''; position:absolute; inset:0 auto 0 0; width:34%; background:linear-gradient(90deg,transparent,rgba(180,120,0,.22),transparent); animation:pm-slide 1.8s linear infinite }
+.pm-sheen::after { content:''; position:absolute; inset:0 auto 0 0; width:34%; background:linear-gradient(90deg,transparent,rgba(212,175,55,.22),transparent); animation:pm-slide 1.8s linear infinite }
 .pm-button { transition:transform .18s ease, filter .18s ease, box-shadow .18s ease }
-.pm-button:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.08); box-shadow:0 16px 44px -18px rgba(200,146,10,.9) }
+.pm-button:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.08); box-shadow:0 16px 44px -18px rgba(212,175,55,.5) }
 .pm-button:active:not(:disabled) { transform:scale(.985) }
 .pm-drop { transition:border-color .2s ease, background .2s ease, transform .2s ease }
-.pm-drop:hover { border-color:rgba(200,146,10,.7); background:rgba(200,146,10,.08) }
-.pm-focus:focus-visible { outline:2px solid #C8920A; outline-offset:3px }
+.pm-drop:hover { border-color:var(--vg-accent); background:var(--vg-gold-tint) }
+.pm-focus:focus-visible { outline:2px solid var(--vg-focus); outline-offset:3px }
 @media (prefers-reduced-motion:reduce) { .pm-rise,.pm-dot,.pm-cursor,.pm-sheen::after { animation:none !important } .pm-button:hover:not(:disabled) { transform:none } }
 `;
 
@@ -476,8 +476,8 @@ function ProgressSteps({ phase, engine }: { phase: GenerationPhase; engine: 'rem
               gap: 13,
               padding: '14px 16px',
               borderRadius: 14,
-              border: `1px solid ${active ? 'rgba(200,146,10,.55)' : 'rgba(180,120,0,0.14)'}`,
-              background: active ? 'rgba(200,146,10,.10)' : 'rgba(180,120,0,0.05)',
+              border: `1px solid ${active ? 'var(--vg-accent)' : 'var(--vg-border)'}`,
+              background: active ? 'var(--vg-gold-tint)' : 'var(--vg-surface)',
               opacity: active || complete ? 1 : 0.5,
             }}
           >
@@ -490,23 +490,23 @@ function ProgressSteps({ phase, engine }: { phase: GenerationPhase; engine: 'rem
                 height: 30,
                 flexShrink: 0,
                 borderRadius: 999,
-                color: complete || active ? '#fff' : '#7A6030',
-                background: complete ? '#166534' : active ? ACCENT : 'rgba(180,120,0,0.1)',
+                color: complete || active ? 'var(--vg-on-btn)' : 'var(--vg-muted)',
+                background: complete ? 'var(--vg-success)' : active ? ACCENT : 'var(--vg-raised)',
               }}
             >
               {complete ? <Check size={15} /> : active ? <Loader2 size={15} /> : index + 1}
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <strong style={{ display: 'block', fontSize: 14, color: active ? '#1A1000' : '#3D2800' }}>
+              <strong style={{ display: 'block', fontSize: 14, color: active ? 'var(--vg-text)' : 'var(--vg-secondary)' }}>
                 {step.label}{active && step.key === 'writing' ? <span className="pm-cursor">▋</span> : null}
               </strong>
-              <span style={{ display: 'block', marginTop: 2, fontSize: 11, color: '#7A6030' }}>{step.note}</span>
+              <span style={{ display: 'block', marginTop: 2, fontSize: 11, color: 'var(--vg-muted)' }}>{step.note}</span>
             </span>
           </div>
         );
       })}
-      <div className="pm-sheen" style={{ position: 'relative', height: 4, overflow: 'hidden', borderRadius: 999, background: 'rgba(180,120,0,0.12)' }}>
-        <div style={{ width: `${Math.max(12, (Math.max(0, current) + 1) * 33.333)}%`, height: '100%', borderRadius: 999, background: `linear-gradient(90deg, ${ACCENT_DARK}, #E8B737)` }} />
+      <div className="pm-sheen" style={{ position: 'relative', height: 4, overflow: 'hidden', borderRadius: 999, background: 'var(--vg-raised)' }}>
+        <div style={{ width: `${Math.max(12, (Math.max(0, current) + 1) * 33.333)}%`, height: '100%', borderRadius: 999, background: ACCENT }} />
       </div>
     </div>
   );
@@ -524,25 +524,25 @@ function VisionCard({ vision }: { vision: VisionResult }) {
         flexWrap: 'wrap',
         padding: '15px 17px',
         borderRadius: 14,
-        border: '1px solid rgba(180,120,0,0.14)',
-        background: 'rgba(180,120,0,0.06)',
+        border: '1px solid var(--vg-border)',
+        background: 'var(--vg-raised)',
       }}
     >
       <div>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: '#7A6030', textTransform: 'uppercase', letterSpacing: '.09em' }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--vg-muted)', textTransform: 'uppercase', letterSpacing: '.09em' }}>
           <Sparkles size={12} /> Direction detected
         </span>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 7, flexWrap: 'wrap' }}>
-          <span style={{ padding: '5px 9px', borderRadius: 999, background: 'rgba(200,146,10,.15)', color: '#1A1000', fontSize: 12, fontWeight: 700 }}>
+          <span style={{ padding: '5px 9px', borderRadius: 999, background: 'var(--vg-gold-tint)', color: 'var(--vg-text)', fontSize: 12, fontWeight: 700 }}>
             {vision.mood}
           </span>
-          <span style={{ fontSize: 12, color: '#7A6030' }}>{vision.textEffect}</span>
+          <span style={{ fontSize: 12, color: 'var(--vg-muted)' }}>{vision.textEffect}</span>
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} aria-label={`Palette: ${vision.palette.join(', ')}`}>
-        <Palette size={15} color="#7A6030" />
+        <Palette size={15} color="var(--vg-muted)" />
         {vision.palette.map((color) => (
-          <span key={color} title={color} style={{ width: 24, height: 24, borderRadius: 8, background: color, border: '1px solid rgba(180,120,0,0.2)', boxShadow: '0 5px 16px rgba(120,80,0,0.12)' }} />
+          <span key={color} title={color} style={{ width: 24, height: 24, borderRadius: 8, background: color, border: '1px solid var(--vg-border)', boxShadow: '0 5px 16px rgba(0,0,0,0.35)' }} />
         ))}
       </div>
     </div>
@@ -820,8 +820,8 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
         width: '100%',
         minHeight: compact ? 540 : '100%',
         boxSizing: 'border-box',
-        background: '#FFFDF4',
-        color: '#1A1000',
+        background: 'var(--vg-bg)',
+        color: 'var(--vg-text)',
         fontFamily: "'Inter', 'Geist', system-ui, -apple-system, sans-serif",
         padding: compact ? 20 : 'clamp(22px, 5vw, 64px)',
       }}
@@ -830,19 +830,19 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
       <div style={{ width: '100%', maxWidth: compact ? 760 : 1020, margin: '0 auto' }}>
         {!compact ? (
           <header style={{ marginBottom: 34 }} className="pm-rise">
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: '#C8920A', fontSize: 12, fontWeight: 700, letterSpacing: '.11em', textTransform: 'uppercase' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--vg-accent)', fontSize: 12, fontWeight: 700, letterSpacing: '.11em', textTransform: 'uppercase' }}>
               <Film size={15} /> {motionEngine === 'hyperframes' ? 'HyperFrames' : 'Remotion'}
             </div>
             <h1 style={{ margin: '12px 0 0', maxWidth: 780, fontSize: 'clamp(34px, 6vw, 64px)', lineHeight: 1.02, letterSpacing: '-.045em', fontWeight: 760 }}>
-              Your product shots,<br /><span style={{ color: '#C8920A' }}>directed frame by frame.</span>
+              Your product shots,<br /><span style={{ color: 'var(--vg-accent)' }}>directed frame by frame.</span>
             </h1>
-            <p style={{ margin: '16px 0 0', maxWidth: 620, color: '#7A6030', lineHeight: 1.65, fontSize: 15 }}>
+            <p style={{ margin: '16px 0 0', maxWidth: 620, color: 'var(--vg-muted)', lineHeight: 1.65, fontSize: 15 }}>
               Choose the existing Remotion flow or opt into HyperFrames HTML motion rendered by HeyGen's managed cloud.
             </p>
           </header>
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 18 }}>
-            <Sparkles size={17} color="#C8920A" />
+            <Sparkles size={17} color="var(--vg-accent)" />
             <strong style={{ fontSize: 16 }}>Generate a motion video</strong>
           </div>
         )}
@@ -850,22 +850,22 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
         {phase !== 'done' ? (
           <div style={{ display: 'grid', gap: 18 }}>
             {!busy ? (
-              <div className="pm-rise" style={{ padding: 'clamp(14px,3vw,20px)', borderRadius: 18, border: '1px solid rgba(180,120,0,0.14)', background: '#FFFFFF' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: '#1A1000' }}>
+              <div className="pm-rise" style={{ padding: 'clamp(14px,3vw,20px)', borderRadius: 18, border: '1px solid var(--vg-border)', background: 'var(--vg-surface)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, color: 'var(--vg-text)' }}>
                   <Film size={15} />
                   <strong style={{ fontSize: 14 }}>Motion engine</strong>
                 </div>
                 <div role="radiogroup" aria-label="Motion engine" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 8, marginBottom: 16 }}>
                   {([['remotion', 'Remotion', 'Existing default'], ['hyperframes', 'HyperFrames', 'HeyGen cloud · opt in']] as const).map(([id, label, note]) => {
                     const active = motionEngine === id;
-                    return <button key={id} type="button" role="radio" aria-checked={active} onClick={() => setMotionEngine(id)} style={{ minHeight: 58, textAlign: 'left', borderRadius: 12, border: `1px solid ${active ? '#C8920A' : 'rgba(180,120,0,0.18)'}`, background: active ? 'rgba(200,146,10,.12)' : '#FFFDF4', color: '#1A1000', padding: '10px 12px', cursor: 'pointer' }}><strong style={{ display: 'block', fontSize: 13 }}>{label}</strong><span style={{ display: 'block', color: '#7A6030', fontSize: 11, marginTop: 3 }}>{note}</span></button>;
+                    return <button key={id} type="button" role="radio" aria-checked={active} onClick={() => setMotionEngine(id)} style={{ minHeight: 58, textAlign: 'left', borderRadius: 12, border: `1px solid ${active ? 'var(--vg-accent)' : 'var(--vg-border)'}`, background: active ? 'var(--vg-gold-tint)' : 'transparent', color: 'var(--vg-text)', padding: '10px 12px', cursor: 'pointer' }}><strong style={{ display: 'block', fontSize: 13 }}>{label}</strong><span style={{ display: 'block', color: 'var(--vg-muted)', fontSize: 11, marginTop: 3 }}>{note}</span></button>;
                   })}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, color: '#1A1000' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, color: 'var(--vg-text)' }}>
                   <Sparkles size={15} />
                   <strong style={{ fontSize: 14 }}>Choose a motion style</strong>
                 </div>
-                <p style={{ margin: '0 0 13px', color: '#7A6030', fontSize: 12, lineHeight: 1.5 }}>
+                <p style={{ margin: '0 0 13px', color: 'var(--vg-muted)', fontSize: 12, lineHeight: 1.5 }}>
                   Watch all 15 layouts move, then choose the presentation direction for your product video.
                 </p>
                 <MotionStylePicker selected={motionTemplate} onSelect={setMotionTemplate} />
@@ -894,19 +894,19 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
                 textAlign: 'center',
                 cursor: busy ? 'default' : 'pointer',
                 borderRadius: 22,
-                border: `1.5px dashed ${dragging ? '#C8920A' : 'rgba(180,120,0,0.28)'}`,
-                background: dragging ? 'rgba(200,146,10,.12)' : 'linear-gradient(145deg, rgba(200,146,10,.07), rgba(180,120,0,0.03))',
+                border: `1.5px dashed ${dragging ? 'var(--vg-accent)' : 'var(--vg-control-border)'}`,
+                background: dragging ? 'var(--vg-gold-tint)' : 'linear-gradient(145deg, rgba(212,175,55,.07), var(--vg-surface))',
                 transform: dragging ? 'scale(1.006)' : undefined,
                 padding: 26,
               }}
               data-testid="product-motion-dropzone"
             >
               <div>
-                <span style={{ width: 54, height: 54, display: 'inline-grid', placeItems: 'center', borderRadius: 17, color: '#B4720A', background: 'rgba(200,146,10,.14)', border: '1px solid rgba(200,146,10,.3)' }}>
+                <span style={{ width: 54, height: 54, display: 'inline-grid', placeItems: 'center', borderRadius: 17, color: 'var(--vg-accent)', background: 'var(--vg-gold-tint)', border: '1px solid var(--line-gold)' }}>
                   <UploadCloud size={25} />
                 </span>
                 <h2 style={{ margin: '16px 0 6px', fontSize: compact ? 20 : 25, letterSpacing: '-.02em' }}>Drop your product shots here</h2>
-                <p style={{ margin: 0, color: '#7A6030', fontSize: 13 }}>or click to choose up to five images · 12 MB each</p>
+                <p style={{ margin: 0, color: 'var(--vg-muted)', fontSize: 13 }}>or click to choose up to five images · 12 MB each</p>
               </div>
               <input
                 ref={inputRef}
@@ -925,17 +925,17 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
               <div className="pm-rise" style={{ display: 'flex', gap: 12, overflowX: 'auto', padding: '2px 2px 8px' }}>
                 {assets.map((asset) => (
                   <div key={asset.id} style={{ position: 'relative', flex: '0 0 132px' }}>
-                    <div style={{ height: 96, borderRadius: 13, overflow: 'hidden', border: '1px solid rgba(180,120,0,0.14)', background: '#FFFAEB' }}>
+                    <div style={{ height: 96, borderRadius: 13, overflow: 'hidden', border: '1px solid var(--vg-border)', background: 'var(--vg-raised)' }}>
                       <img src={asset.objectUrl} alt={asset.label} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     </div>
-                    <span style={{ display: 'block', marginTop: 7, color: '#7A6030', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.label}</span>
+                    <span style={{ display: 'block', marginTop: 7, color: 'var(--vg-muted)', fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{asset.label}</span>
                     {!busy ? (
                       <button
                         type="button"
                         onClick={() => removeAsset(asset.id)}
                         className="pm-focus"
                         aria-label={`Remove ${asset.file.name}`}
-                        style={{ position: 'absolute', top: 6, right: 6, width: 25, height: 25, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, color: '#fff', background: 'rgba(26,16,0,.55)', cursor: 'pointer' }}
+                        style={{ position: 'absolute', top: 6, right: 6, width: 25, height: 25, display: 'grid', placeItems: 'center', border: 0, borderRadius: 999, color: '#fff', background: 'rgba(0,0,0,.55)', cursor: 'pointer' }}
                       >
                         <X size={13} />
                       </button>
@@ -948,7 +948,7 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
             {vision ? <VisionCard vision={vision} /> : null}
 
             {busy ? (
-              <div className="pm-rise" style={{ padding: 'clamp(17px, 3vw, 24px)', borderRadius: 18, border: '1px solid rgba(180,120,0,0.14)', background: '#FFFFFF' }}>
+              <div className="pm-rise" style={{ padding: 'clamp(17px, 3vw, 24px)', borderRadius: 18, border: '1px solid var(--vg-border)', background: 'var(--vg-surface)' }}>
                 <ProgressSteps phase={phase} engine={motionEngine} />
               </div>
             ) : (
@@ -966,8 +966,8 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
                   width: '100%',
                   border: 0,
                   borderRadius: 15,
-                  background: assets.length ? `linear-gradient(135deg, ${ACCENT}, ${ACCENT_DARK})` : '#FFF3D6',
-                  color: assets.length ? '#fff' : '#7A6030',
+                  background: assets.length ? 'var(--vg-btn)' : 'var(--vg-raised)',
+                  color: assets.length ? 'var(--vg-on-btn)' : 'var(--vg-muted)',
                   fontSize: 16,
                   fontWeight: 750,
                   cursor: assets.length ? 'pointer' : 'not-allowed',
@@ -980,14 +980,14 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
             )}
 
             {error ? (
-              <div className="pm-rise" role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '13px 15px', borderRadius: 13, border: '1px solid rgba(153,27,27,.28)', background: 'rgba(153,27,27,.08)', color: '#991B1B', fontSize: 13, lineHeight: 1.5 }}>
+              <div className="pm-rise" role="alert" style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '13px 15px', borderRadius: 13, border: '1px solid color-mix(in srgb, var(--vg-danger) 35%, transparent)', background: 'var(--vg-danger-bg)', color: 'var(--vg-danger)', fontSize: 13, lineHeight: 1.5 }}>
                 <X size={16} style={{ marginTop: 1, flexShrink: 0 }} /> {error}
               </div>
             ) : null}
           </div>
         ) : (
           <div className="pm-rise" style={{ display: 'grid', gap: 18 }}>
-            <div style={{ padding: 'clamp(14px, 3vw, 24px)', borderRadius: 20, border: '1px solid rgba(180,120,0,0.14)', background: '#FFFFFF', boxShadow: '0 32px 90px -45px rgba(200,146,10,.65)' }}>
+            <div style={{ padding: 'clamp(14px, 3vw, 24px)', borderRadius: 20, border: '1px solid var(--vg-border)', background: 'var(--vg-surface)', boxShadow: '0 32px 90px -45px rgba(0,0,0,.6)' }}>
               <video src={videoUrl} controls playsInline style={{ display: 'block', width: '100%', aspectRatio: '16 / 9', borderRadius: 14, background: '#000' }} data-testid="product-motion-video" />
             </div>
             {vision ? <VisionCard vision={vision} /> : null}
@@ -997,7 +997,7 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
                 onClick={() => void downloadVideo()}
                 disabled={downloading}
                 className="pm-button pm-focus"
-                style={{ minHeight: 50, flex: '1 1 220px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, border: 0, borderRadius: 14, color: '#fff', cursor: downloading ? 'wait' : 'pointer', fontWeight: 750, background: `linear-gradient(135deg, ${ACCENT}, ${ACCENT_DARK})`, opacity: downloading ? .72 : 1 }}
+                style={{ minHeight: 50, flex: '1 1 220px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, border: 0, borderRadius: 14, color: 'var(--vg-on-btn)', cursor: downloading ? 'wait' : 'pointer', fontWeight: 750, background: 'var(--vg-btn)', opacity: downloading ? .72 : 1 }}
                 data-testid="product-motion-download"
               >
                 {downloading ? <Loader2 size={18} className="pm-dot" /> : <Download size={18} />}
@@ -1007,14 +1007,14 @@ export function ProductMotionEmbed({ compact = false }: ProductMotionEmbedProps)
                 type="button"
                 onClick={reset}
                 className="pm-focus"
-                style={{ minHeight: 50, flex: '1 1 180px', borderRadius: 14, border: '1px solid rgba(180,120,0,0.14)', color: '#3D2800', background: 'rgba(180,120,0,0.06)', cursor: 'pointer', fontWeight: 650 }}
+                style={{ minHeight: 50, flex: '1 1 180px', borderRadius: 14, border: '1px solid var(--vg-accent)', color: 'var(--vg-accent)', background: 'transparent', cursor: 'pointer', fontWeight: 650 }}
               >
                 Generate another
               </button>
             </div>
-            {logWarning ? <p style={{ margin: 0, color: '#B45309', fontSize: 12 }}>{logWarning}</p> : null}
+            {logWarning ? <p style={{ margin: 0, color: 'var(--vg-warning)', fontSize: 12 }}>{logWarning}</p> : null}
             {compositionCode ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#7A6030', fontSize: 11 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: 'var(--vg-muted)', fontSize: 11 }}>
                 <ImageIcon size={13} /> Unique {motionEngine === 'hyperframes' ? 'HyperFrames HTML' : 'TSX'} composition · {compositionCode.length.toLocaleString()} characters
               </div>
             ) : null}

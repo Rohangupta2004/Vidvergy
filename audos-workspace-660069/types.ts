@@ -32,7 +32,7 @@ export interface DesktopTheme {
 }
 
 export interface DesktopThemeTokens {
-  palette?: BrandPalette;
+  palette?: BrandPalette.BrandPalette;
   typography?: {
     headingFont?: string;
     bodyFont?: string;
@@ -101,7 +101,7 @@ export interface SpaceConfig {
   apps: AppConfig[];
   terminology?: TerminologyConfig;
   desktop: DesktopConfig;
-  memberAccess?: SpaceMemberAccess;
+  memberAccess?: SpaceMemberAccess.SpaceMemberAccess;
 }
 
 export function resolveGenesisRuntimeTheme(

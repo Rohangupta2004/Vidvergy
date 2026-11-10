@@ -32,7 +32,7 @@ const inputStyle: React.CSSProperties = {
   padding: '10px 12px',
   borderRadius: 10,
   border: '1px solid var(--space-border-default)',
-  background: 'rgba(180,120,0,0.06)',
+  background: 'var(--vg-raised)',
   color: 'var(--space-text-primary)',
   fontSize: 13.5,
   outline: 'none',

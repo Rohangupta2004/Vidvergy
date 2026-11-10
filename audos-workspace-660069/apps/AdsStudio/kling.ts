@@ -28,6 +28,7 @@
  */
 
 import { wsToken } from './api';
+import { workspaceFetch } from '../../lib/workspace';
 import { EngineError, describeHttpError, isPublicHttpsUrl } from '../../lib/videoEngineClient';
 import { adoptExternalOperation } from '../VideoProviderLab/labClient';
 
@@ -93,7 +94,7 @@ export function checkKlingAvailability(force = false): Promise<KlingAvailability
   if (availabilityPromise && !force) return availabilityPromise;
   availabilityPromise = (async () => {
     try {
-      const res = await fetch('/api/generate/kling/models', { headers: klingHeaders() });
+      const res = await workspaceFetch('/api/generate/kling/models', { headers: klingHeaders() });
       const data = await res.json().catch(() => null);
       if (!res.ok) return { available: false, models: [], message: KLING_UNAVAILABLE };
       const models = (Array.isArray(data?.models) ? data.models : [])
@@ -162,7 +163,7 @@ function publicRefs(params: KlingClipParams): string[] {
 async function kickoff(path: string, body: Record<string, unknown>, context: string): Promise<string> {
   let res: Response;
   try {
-    res = await fetch(path, { method: 'POST', headers: klingHeaders(), body: JSON.stringify(body) });
+    res = await workspaceFetch(path, { method: 'POST', headers: klingHeaders(), body: JSON.stringify(body) });
   } catch (e: any) {
     throw new EngineError(`Could not reach Kling: ${String(e?.message || e)}`, { code: 'network', retryable: true });
   }
@@ -187,7 +188,7 @@ export async function pollKling(
     let data: any = null;
     let res: Response | null = null;
     try {
-      res = await fetch(`/api/generate/kling/status/${encodeURIComponent(taskId)}`, { headers: klingHeaders() });
+      res = await workspaceFetch(`/api/generate/kling/status/${encodeURIComponent(taskId)}`, { headers: klingHeaders() });
       data = await res.json().catch(() => null);
     } catch { /* a dropped status read is a miss, not an answer */ }
     if (res && res.ok) {

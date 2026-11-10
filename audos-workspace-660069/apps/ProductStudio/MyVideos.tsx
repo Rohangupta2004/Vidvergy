@@ -52,10 +52,10 @@ function relativeTime(iso?: string): string {
 function statusBadge(status?: string): { label: string; color: string; spin: boolean } {
   const s = String(status || '').toLowerCase();
   if (/rendered|delivered|qa_passed/.test(s)) return { label: 'rendered', color: S.success, spin: false };
-  if (/render|build|compos|queue|generat/.test(s)) return { label: 'rendering', color: '#B45309', spin: true };
+  if (/render|build|compos|queue|generat/.test(s)) return { label: 'rendering', color: 'var(--vg-warning)', spin: true };
   if (/fail|error/.test(s)) return { label: 'stopped', color: S.danger, spin: false };
-  if (/planned|validated/.test(s)) return { label: 'planned', color: '#7A6030', spin: false };
-  return { label: s || 'draft', color: '#7A6030', spin: false };
+  if (/planned|validated/.test(s)) return { label: 'planned', color: 'var(--vg-muted)', spin: false };
+  return { label: s || 'draft', color: 'var(--vg-muted)', spin: false };
 }
 
 const actionBtn: React.CSSProperties = {
@@ -366,7 +366,7 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
                       ) : (
                         <video src={v.videoUrl} preload="auto" muted playsInline aria-label={`${v.title} first frame`} onLoadedData={(e) => { try { e.currentTarget.currentTime = 0.05; } catch { /* first decodable frame is already visible */ } }} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                       )}
-                      <span style={{ position: 'absolute', left: 7, bottom: 7, padding: '2px 7px', borderRadius: 999, color: '#fff', background: 'rgba(26,16,0,.75)', fontSize: 9.5, fontWeight: 800 }}>{v.style}</span>
+                      <span style={{ position: 'absolute', left: 7, bottom: 7, padding: '2px 7px', borderRadius: 999, color: '#fff', background: 'rgba(0,0,0,.75)', fontSize: 9.5, fontWeight: 800 }}>{v.style}</span>
                     </div>
                     <div style={{ padding: '8px 9px', fontSize: 11.5, fontWeight: 750, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{v.title}</div>
                   </a>
@@ -376,8 +376,8 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
           ) : null}
         <div className="ps-fade-up" style={{ borderRadius: 18, border: `1px solid ${S.border}`, background: S.panel, padding: 'clamp(32px, 6vw, 56px)', textAlign: 'center' }} data-testid="empty-projects">
           <div aria-hidden="true" style={{ position: 'relative', width: 120, height: 84, margin: '0 auto 18px' }}>
-            <span style={{ position: 'absolute', inset: '8px 18px', borderRadius: 12, background: 'linear-gradient(135deg, var(--space-brand-primary-700), var(--space-brand-primary-500))', transform: 'rotate(-7deg)', opacity: 0.5 }} />
-            <span style={{ position: 'absolute', inset: '4px 10px', borderRadius: 12, background: 'linear-gradient(135deg, var(--space-brand-primary-600), var(--space-brand-highlight-600))', transform: 'rotate(4deg)', opacity: 0.75 }} />
+            <span style={{ position: 'absolute', inset: '8px 18px', borderRadius: 12, background: 'linear-gradient(135deg, var(--vg-gold-deep), var(--vg-gold))', transform: 'rotate(-7deg)', opacity: 0.5 }} />
+            <span style={{ position: 'absolute', inset: '4px 10px', borderRadius: 12, background: 'linear-gradient(135deg, var(--vg-gold), var(--vg-gold-bright))', transform: 'rotate(4deg)', opacity: 0.75 }} />
             <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 14, background: S.panelStrong, border: `1px solid ${S.borderStrong}` }}>
               <Clapperboard size={30} color="var(--space-text-brand)" />
             </span>
@@ -422,11 +422,11 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
                   ) : badge.label === 'rendering' && !hasFailure ? (
                     <div className="lb-shimmer" style={{ position: 'absolute', inset: 0, borderRadius: 0 }} aria-label="Video preview is loading" />
                   ) : (
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'linear-gradient(135deg, var(--space-brand-primary-700), var(--space-brand-primary-500) 55%, var(--space-brand-highlight-600))' }} data-testid={`video-tile-${p.id}`}>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, background: 'linear-gradient(135deg, color-mix(in srgb, var(--vg-accent) 22%, var(--vg-raised)), var(--vg-raised) 55%, var(--vg-surface))' }} data-testid={`video-tile-${p.id}`}>
                       <span style={{ fontSize: 17, fontWeight: 900, color: '#fff', textAlign: 'center', textShadow: '0 2px 10px rgba(0,0,0,0.35)', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' }}>{p.title}</span>
                     </div>
                   )}
-                  <span style={{ position: 'absolute', top: 10, left: 10, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: badge.color, background: `color-mix(in srgb, ${badge.color} 16%, rgba(26,16,0,0.72))`, border: `1px solid color-mix(in srgb, ${badge.color} 45%, transparent)` }} data-testid={`status-${p.id}`}>
+                  <span style={{ position: 'absolute', top: 10, left: 10, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.05em', textTransform: 'uppercase', color: badge.color, background: `color-mix(in srgb, ${badge.color} 16%, rgba(0,0,0,0.72))`, border: `1px solid color-mix(in srgb, ${badge.color} 45%, transparent)` }} data-testid={`status-${p.id}`}>
                     {badge.spin && !hasFailure ? <Loader2 size={10} className="rc-spin" /> : null}
                     {hasFailure ? 'stopped' : badge.label}
                   </span>
@@ -447,7 +447,7 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
                       <div style={{ height: 5, borderRadius: 999, background: `color-mix(in srgb, ${S.border} 60%, transparent)`, overflow: 'hidden' }}>
                         <div
                           className={info && info.progress != null ? undefined : 'rc-pulse'}
-                          style={{ height: '100%', width: `${info && info.progress != null ? Math.max(4, Math.min(100, info.progress)) : 8}%`, borderRadius: 999, background: 'linear-gradient(90deg, var(--space-brand-primary-500), var(--space-brand-highlight-600))', transition: 'width 0.6s ease' }}
+                          style={{ height: '100%', width: `${info && info.progress != null ? Math.max(4, Math.min(100, info.progress)) : 8}%`, borderRadius: 999, background: 'var(--vg-accent)', transition: 'width 0.6s ease' }}
                         />
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 4, fontSize: 10.5, color: S.muted, fontWeight: 700 }}>
@@ -524,7 +524,7 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
       </p>
 
       {deletePrompt ? (
-        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(26,16,0,0.35)' }}>
+        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
           <div className="ps-fade-up" style={{ width: 'min(400px, 92vw)', borderRadius: 16, border: `1px solid ${S.borderStrong}`, background: S.panelStrong, padding: 20 }} data-testid="dialog-delete">
             <h3 style={{ margin: '0 0 8px', fontSize: 15, fontWeight: 800 }}>Delete “{deletePrompt.title}”?</h3>
             <p style={{ margin: '0 0 14px', fontSize: 13, color: S.sub, lineHeight: 1.6 }}>
@@ -541,7 +541,7 @@ export default function MyVideos({ onOpen, onStartWizard, onEnhance, onAddSound 
       ) : null}
 
       {showCreate ? (
-        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(26,16,0,0.35)' }}>
+        <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}>
           <div className="ps-fade-up" style={{ width: 'min(460px, 92vw)', maxHeight: 'min(85vh, 720px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: 16, border: `1px solid ${S.borderStrong}`, background: S.panelStrong }} data-testid="dialog-create">
             <div style={{ flexShrink: 0, padding: '20px 22px 0' }}>
               <h3 style={{ margin: '0 0 6px', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16, fontWeight: 800 }}><MonitorPlay size={16} color="var(--space-text-brand)" /> New Product video</h3>

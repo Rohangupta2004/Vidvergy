@@ -1,4 +1,5 @@
 import { waitForDbSession } from '../../../lib/reelioStudio';
+import { sharedUnlessDelegated } from '../../../lib/tenant-delegation-scope';
 import type { FacelessProject, PipelineStep } from './pipeline';
 import { motionEngine, type MotionAspect } from '../../../lib/motionEngineSdk';
 
@@ -93,14 +94,14 @@ function projectFromRow(row: any): FacelessProject | null {
 
 export async function loadProject(id: string): Promise<FacelessProject | null> {
   await waitForDbSession();
-  const result = await client().from(TABLE, { shared: true }).getById(id);
+  const result = await client().from(TABLE, sharedUnlessDelegated()).getById(id);
   return projectFromRow(result?.data);
 }
 
 export async function findResumableProject(): Promise<FacelessProject | null> {
   try {
     await waitForDbSession();
-    const result = await client().from(TABLE, { shared: true })
+    const result = await client().from(TABLE, sharedUnlessDelegated())
       .orderBy('created_at', 'desc')
       .limit(30)
       .get();

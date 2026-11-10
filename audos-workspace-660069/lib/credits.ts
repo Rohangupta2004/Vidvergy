@@ -1,13 +1,14 @@
 /**
- * VidVerge credits — the client side of the locked pricing meter.
+ * VidVerge credits — the client side of the pay-per-use wallet.
  *
- * ONE RULE, EVERYWHERE: 1 credit = 1 second of finished video, on every
- * provider, no exceptions. Which engine a shot is routed to is a backend
- * decision the customer never sees and never pays differently for.
+ * PRICING lives in `lib/pricing.ts`: every generation costs our real provider
+ * cost + 30%, in $0.15 credits, per engine. Text and images are free. This
+ * module asks the wallet to quote/charge/refund for a named engine and tells
+ * every screen what moved (CREDITS_CHARGED_EVENT / CREDITS_REFUNDED_EVENT).
  *
- * FREE: every new verified user receives 60 starter credits; scripting,
- * briefing, storyboards, brand reads, and agent conversation remain free.
- * Only video GENERATION spends credits.
+ * FREE: every new verified user receives 30 starter credits; scripting,
+ * briefing, storyboards, brand reads, agent conversation and image generation
+ * remain free.
  *
  * The balance itself is server-owned. This module never computes it — it asks
  * the `vv-credits` server function, which is the only writer of
@@ -21,8 +22,11 @@
 import { useEffect, useState } from 'react';
 import { openPricing } from './plans';
 import type { PlanId } from './plans';
-import { callHook, getSessionId, getVerifiedSessionId, hookUrl, refreshWorkspaceSession, spaceId } from './workspace';
-import { scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
+import { CREDIT_VALUE_USD, DEFAULT_VIDEO_ENGINE, quote as quoteLocal, rateFor } from './pricing';
+import type { Quote, QuoteOptions } from './pricing';
+import { clearSessionIdentity, getSessionId, getVerifiedSessionId, hookUrl, refreshWorkspaceSession, spaceId } from './workspace';
+import { authedHook, waitForSession } from './session';
+import { hasTenantDelegationAuth, scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
 
 export const CREDITS_HOOK_ENDPOINT = hookUrl('vv-credits');
 
@@ -30,20 +34,22 @@ export const CREDITS_HOOK_ENDPOINT = hookUrl('vv-credits');
 export const CREDITS_EVENT = 'vidverge:credits';
 /** Opens the shell-level recovery notice after a persistent wallet 401/403. */
 export const CREDIT_AUTH_REQUIRED_EVENT = 'vidverge:credit-auth-required';
+/** Fired only after an explicit recovery refresh proves the wallet again. */
+export const CREDIT_AUTH_REFRESHED_EVENT = 'vidverge:credit-auth-refreshed';
 
-/** The locked meter. */
-export const SECONDS_PER_CREDIT = 1;
-export const FREE_TRIAL_CREDITS = 60;
-export const PAYG_BLOCK_PRICE_CENTS = 900;
-export const PAYG_BLOCK_CREDITS = 60;
+/** Fired after a successful charge: { charged, balanceBefore, balanceAfter, label, engine, costUsd, source }. */
+export const CREDITS_CHARGED_EVENT = 'vidverge:credits-charged';
+/** Fired after a refund lands: { refunded, balanceAfter, note }. */
+export const CREDITS_REFUNDED_EVENT = 'vidverge:credits-refunded';
+/** Asks the shell to show a quote + balance and wait for approval: CreditConfirmRequest. */
+export const CREDIT_CONFIRM_EVENT = 'vidverge:credit-confirm';
+/** How long "don't ask again" covers further charges from the same studio. */
+export const CREDIT_APPROVAL_WINDOW_MS = 15 * 60 * 1000;
 
-/** Monthly allowance per plan. Creator and Pro roll over; the others don't accrue. */
-export const PLAN_MONTHLY_CREDITS: Record<PlanId, number> = {
-  free: 0,
-  creator: 250,
-  pro: 500,
-  payg: 0,
-};
+export const FREE_TRIAL_CREDITS = 30;
+export const CREDIT_PRICE_CENTS = Math.round(CREDIT_VALUE_USD * 100);
+/** Credit packs offered at checkout (credits x $0.15). */
+export const CREDIT_PACK_OPTIONS = [100, 250, 500, 1000];
 
 export interface CreditState {
   email: string;
@@ -51,8 +57,8 @@ export interface CreditState {
   planLabel: string;
   /** Credits available to spend right now. */
   balance: number;
+  /** Retired with the monthly plans; always 0 / false / null. */
   monthlyCredits: number;
-  /** True on Creator/Pro, where an unspent balance carries into next month. */
   rollover: boolean;
   nextGrantAt: string | null;
   lastGrantAt: string | null;
@@ -71,10 +77,10 @@ export class InsufficientCreditsError extends Error {
   shortfall: number;
   seconds: number;
   plan: PlanId;
-  constructor(detail: { required: number; balance: number; seconds: number; plan: PlanId }) {
+  constructor(detail: { required: number; balance: number; seconds: number; plan: PlanId; label?: string }) {
     super(
-      `This video needs ${detail.required} credits (${detail.seconds}s of video) and you have ${detail.balance}. ` +
-        'Top up or upgrade to keep generating.',
+      `${detail.label || 'This generation'} needs ${detail.required} credits and you have ${detail.balance}. ` +
+        'Buy a credit pack to keep generating.',
     );
     this.name = 'InsufficientCreditsError';
     this.required = detail.required;
@@ -105,11 +111,94 @@ export function isCreditAuthorizationError(e: unknown): e is CreditAuthorization
   return e instanceof CreditAuthorizationError;
 }
 
-/** A part-second still costs a whole credit — the meter never bills fractions. */
-export function creditsForSeconds(seconds: number): number {
+/** The customer looked at the quote and chose not to spend the credits. */
+export class CreditConfirmationDeclinedError extends Error {
+  code = 'credit_confirmation_declined';
+  constructor(label: string) {
+    super(`${label || 'This generation'} was cancelled before it started. No credits were used.`);
+    this.name = 'CreditConfirmationDeclinedError';
+  }
+}
+
+export function isCreditConfirmationDeclined(e: unknown): e is CreditConfirmationDeclinedError {
+  return e instanceof CreditConfirmationDeclinedError;
+}
+
+export interface CreditConfirmRequest {
+  quote: Quote;
+  label: string;
+  source: string;
+  /** Spendable balance right now; null for unknown. */
+  balance: number | null;
+  /** approved=false cancels the generation; rememberSource skips the prompt for this studio for a while. */
+  respond: (approved: boolean, rememberSource?: boolean) => void;
+}
+
+let confirmHosts = 0;
+const confirmedEntryKeys = new Set<string>();
+const approvedSourcesUntil = new Map<string, number>();
+
+/** Mounted once by the shell. Without a host, charges proceed as before (no prompt). */
+export function registerCreditConfirmHost(): () => void {
+  confirmHosts += 1;
+  return () => {
+    confirmHosts = Math.max(0, confirmHosts - 1);
+  };
+}
+
+/**
+ * Show the quote and the current balance and wait for the customer before any
+ * credits move. A retry of an approved generation (same entryKey) and screens
+ * that already showed their own priced confirmation (`preconfirmed`) skip it.
+ */
+async function confirmCharge(request: ChargeRequest, local: Quote): Promise<void> {
+  if (typeof window === 'undefined' || !confirmHosts || request.preconfirmed) return;
+  if (confirmedEntryKeys.has(request.entryKey)) return;
+  const source = request.source || 'app';
+  if ((approvedSourcesUntil.get(source) || 0) > Date.now()) {
+    confirmedEntryKeys.add(request.entryKey);
+    return;
+  }
+  const state = cached || (await refreshCredits());
+  if (state?.unlimited) return;
+  let shown = local;
+  if (!local.priced) {
+    const { entryKey: _entryKey, ...spec } = request;
+    const server = await quoteCredits(spec).catch(() => null);
+    if (server) shown = server.quote;
+  }
+  if (!shown.credits) return;
+  const label = request.label || shown.label;
+  const approved = await new Promise<boolean>((resolve) => {
+    const detail: CreditConfirmRequest = {
+      quote: shown,
+      label,
+      source,
+      balance: state ? state.balance : null,
+      respond: (ok, rememberSource) => {
+        if (ok && rememberSource) approvedSourcesUntil.set(source, Date.now() + CREDIT_APPROVAL_WINDOW_MS);
+        resolve(ok);
+      },
+    };
+    window.dispatchEvent(new CustomEvent(CREDIT_CONFIRM_EVENT, { detail }));
+  });
+  if (!approved) throw new CreditConfirmationDeclinedError(label);
+  confirmedEntryKeys.add(request.entryKey);
+}
+
+/**
+ * Credits for `seconds` of media on `engine` (default: the canonical video
+ * engine every customer workflow resolves to). Same math the wallet charges.
+ */
+export function creditsForSeconds(seconds: number, engine: string = DEFAULT_VIDEO_ENGINE, options: QuoteOptions = {}): number {
   const s = Number(seconds);
   if (!Number.isFinite(s) || s <= 0) return 0;
-  return Math.max(1, Math.ceil(s));
+  return quoteLocal(engine, { ...options, seconds: s }).credits;
+}
+
+/** The full local quote (cost, credits, lines) for one generation. */
+export function quoteGeneration(engine: string = DEFAULT_VIDEO_ENGINE, options: QuoteOptions = {}): Quote {
+  return quoteLocal(engine, options);
 }
 
 export function formatCredits(value: number): string {
@@ -117,17 +206,29 @@ export function formatCredits(value: number): string {
   return n.toLocaleString();
 }
 
-/** "18s · 18 credits" — the line shown next to a generate button. */
-export function describeCost(seconds: number): string {
-  const cost = creditsForSeconds(seconds);
-  if (!cost) return 'No credits';
-  return `${Math.round(seconds)}s · ${formatCredits(cost)} credit${cost === 1 ? '' : 's'}`;
+/** One shared label for every balance surface; owner wallets never expose a number. */
+export function formatCreditBalance(state: Pick<CreditState, 'balance' | 'unlimited'>): string {
+  return state.unlimited ? 'Unlimited' : formatCredits(state.balance);
 }
 
-/** Whole $9 blocks needed to cover a shortfall, minimum one. */
-export function paygBlocksFor(credits: number): number {
-  const needed = Math.max(1, Math.ceil(Number(credits) || 0));
-  return Math.max(1, Math.ceil(needed / PAYG_BLOCK_CREDITS));
+/**
+ * "8s · Gemini Omni 1.1 Flash · 8 credits · balance 120" — the line shown next
+ * to a generate button. The balance is the last one this tab resolved.
+ */
+export function describeCost(seconds: number, engine: string = DEFAULT_VIDEO_ENGINE, options: QuoteOptions = {}): string {
+  const q = quoteLocal(engine, { ...options, seconds });
+  const label = rateFor(engine)?.label || q.label;
+  const balance = cached ? ` · balance ${formatCreditBalance(cached)}` : '';
+  if (!q.credits) return `${label} · ${q.priced ? 'free' : 'not charged'}${balance}`;
+  const length = Number(seconds) > 0 ? `${Math.round(seconds)}s · ` : '';
+  return `${length}${label} · ${formatCredits(q.credits)} credit${q.credits === 1 ? '' : 's'}${balance}`;
+}
+
+/** Smallest offered credit pack that covers a shortfall (or the shortfall rounded up to 50). */
+export function packCreditsFor(shortfall: number): number {
+  const needed = Math.max(1, Math.ceil(Number(shortfall) || 0));
+  const pack = CREDIT_PACK_OPTIONS.find((size) => size >= needed);
+  return pack || Math.ceil(needed / 50) * 50;
 }
 
 function normalizePlan(value: unknown): PlanId {
@@ -138,20 +239,27 @@ function normalizePlan(value: unknown): PlanId {
 function toState(data: any): CreditState | null {
   if (!data || typeof data !== 'object' || typeof data.email !== 'string') return null;
   const plan = normalizePlan(data.plan);
+  const founderExempt = data.founderExempt === true;
+  const unlimited = data.unlimited === true || founderExempt;
+  const rawBalance = Math.max(0, Math.round(Number(data.balance) || 0));
+  const overflowSentinel = rawBalance >= 2_147_483_647;
+  if (overflowSentinel && !unlimited) {
+    console.warn('[VidVerge credits] reason=invalid_32bit_balance_sentinel', { emailPresent: true, plan });
+  }
   return {
     email: data.email,
     plan,
-    planLabel: String(data.planLabel || plan),
-    balance: Math.max(0, Math.round(Number(data.balance) || 0)),
-    monthlyCredits: Math.max(0, Math.round(Number(data.monthlyCredits) || 0)),
-    rollover: data.rollover === true,
-    nextGrantAt: data.nextGrantAt ? String(data.nextGrantAt) : null,
+    planLabel: String(data.planLabel || 'Pay per use'),
+    balance: unlimited || overflowSentinel ? 0 : rawBalance,
+    monthlyCredits: 0,
+    rollover: false,
+    nextGrantAt: null,
     lastGrantAt: data.lastGrantAt ? String(data.lastGrantAt) : null,
     lifetimeGranted: Math.max(0, Math.round(Number(data.lifetimeGranted) || 0)),
     lifetimeSpent: Math.max(0, Math.round(Number(data.lifetimeSpent) || 0)),
     trialGranted: data.trialGranted === true,
-    founderExempt: data.founderExempt === true,
-    unlimited: data.unlimited === true,
+    founderExempt,
+    unlimited,
   };
 }
 
@@ -170,86 +278,190 @@ function publish(state: CreditState | null): CreditState | null {
   return state;
 }
 
-function announceCreditSignInRequired(): void {
+export interface CreditsChargedDetail {
+  charged: number;
+  balanceBefore: number | null;
+  balanceAfter: number | null;
+  label: string;
+  engine: string;
+  costUsd: number;
+  source: string;
+  unlimited: boolean;
+  unpriced: boolean;
+}
+
+function announce(name: string, detail: unknown): void {
   if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(name, { detail }));
+}
+
+type CreditAuthIssue = 'signed_out' | 'session_unverified' | 'token_unavailable' | 'session_rejected';
+
+// Each line names the thing that actually failed. "Sign in with your email"
+// belongs only on signed_out: showing it to a signed-in customer whose session
+// merely needed re-proving sent people round a loop that could not end.
+const CREDIT_AUTH_COPY: Record<CreditAuthIssue, string> = {
+  signed_out: 'You are signed out, so there is no wallet to spend from. Sign in with your email to use credits; no generation was started.',
+  session_unverified: 'You appear to be signed in, but Audos could not confirm this sign-in just now. Refresh the page and retry; nothing was charged.',
+  token_unavailable: 'This page has not finished loading your workspace credential. Wait a moment and retry; nothing was charged.',
+  session_rejected: 'Audos refused this sign-in when the charge was attempted. Refresh the page and retry — nothing was charged. If it keeps happening, sign out and back in.',
+};
+
+function announceCreditAuthorizationRequired(issue: CreditAuthIssue, message: string): void {
+  if (typeof window === 'undefined') return;
+  console.warn('[VidVerge auth] reason=credit_authorization_failed', { code: issue, requiresSignIn: issue === 'signed_out' });
   window.dispatchEvent(new CustomEvent(CREDIT_AUTH_REQUIRED_EVENT, {
-    detail: { message: 'Sign in with your email to use credits.' },
+    detail: { code: issue, message, requiresSignIn: issue === 'signed_out' },
   }));
 }
 
-function creditSessionError(notify = true): CreditAuthorizationError {
-  if (notify) announceCreditSignInRequired();
-  return new CreditAuthorizationError('Sign in with your email to use credits.', {
-    code: 'session_expired',
-    status: 401,
+function creditAuthorizationError(issue: CreditAuthIssue, notify = true): CreditAuthorizationError {
+  const message = CREDIT_AUTH_COPY[issue];
+  if (notify) announceCreditAuthorizationRequired(issue, message);
+  return new CreditAuthorizationError(message, {
+    code: issue,
+    status: issue === 'token_unavailable' ? 0 : 401,
   });
 }
 
 /** Clear only this workspace's identity, then reopen the standard email gate. */
 export function beginCreditEmailSignIn(): void {
   if (typeof window === 'undefined') return;
-  try { window.localStorage.removeItem(scopedSpaceSessionStorageKey(spaceId())); } catch { /* storage may be disabled */ }
-  try { window.sessionStorage.removeItem('space_session_id'); } catch { /* storage may be disabled */ }
-  window.__audosAcceptedSessionId = undefined;
-  window.__spaceSessionId = undefined;
-  window.__SESSION_ID__ = undefined;
-  window.__workspaceDb?.setSessionId?.('');
+  clearSessionIdentity();
+  try {
+    window.sessionStorage.removeItem('space_session_id');
+    window.sessionStorage.setItem('vidverge:force-credit-sign-in', '1');
+  } catch { /* storage may be disabled */ }
   window.location.reload();
 }
 
 async function sendCredits(payload: Record<string, unknown>): Promise<any> {
-  return callHook('vv-credits', payload, { retryOn401: false });
+  return authedHook('vv-credits', payload, { retryOn401: false });
+}
+
+/** A failure the wallet can plausibly recover from by re-acquiring the
+ * signed-in session and waiting for the runtime's workspace token. */
+function isRecoverableAuthFailure(error: unknown): boolean {
+  if (!error) return false;
+  const status = Math.round(Number((error as { status?: unknown }).status) || 0);
+  if (status === 401 || status === 403) return true;
+  if (isCreditAuthorizationError(error)) return true;
+  const text = String((error as { message?: unknown }).message || '');
+  return /no_credentials|same-origin request required|workspace session|session (?:expired|invalid)|session_expired|credit authorization/i.test(text);
+}
+
+/**
+ * Re-acquire the credit-bearing identity: the runtime's injected workspace DB
+ * token AND a verified `wses_` session. `vv-credits` needs both, and both can
+ * legitimately be absent for a moment after a tab is reopened, after a
+ * refresh, or when a saved project is resumed — which is exactly when a
+ * charge used to fail with "credit authorization is missing" and leave the
+ * creator with no way forward.
+ *
+ * Returns the accepted session id, or an empty string when the visitor really
+ * does need to sign in again.
+ */
+export interface CreditAuthorizationSnapshot {
+  sessionId: string;
+  token: string;
+  issue: CreditAuthIssue | null;
+}
+
+/** Resolve both credentials the wallet route needs and report which one failed. */
+export async function resolveCreditAuthorization(timeoutMs = 10_000): Promise<CreditAuthorizationSnapshot> {
+  if (typeof window === 'undefined') return { sessionId: '', token: '', issue: 'signed_out' };
+  const proposed = getSessionId();
+  const session = await waitForSession(timeoutMs);
+  const verified = session.sessionId && getVerifiedSessionId() ? session.sessionId : '';
+  if (!verified) {
+    return {
+      sessionId: '',
+      token: session.tokenReady ? 'ready' : '',
+      issue: proposed.startsWith('wses_') || session.email ? 'session_unverified' : 'signed_out',
+    };
+  }
+  if (!session.tokenReady) return { sessionId: verified, token: '', issue: 'token_unavailable' };
+  return { sessionId: verified, token: 'ready', issue: null };
+}
+
+export async function acquireCreditAuthorization(timeoutMs = 10_000): Promise<string> {
+  const authorization = await resolveCreditAuthorization(timeoutMs);
+  return authorization.issue ? '' : authorization.sessionId;
 }
 
 /**
  * Prove the saved `wses_` session against the platform before every charge or
  * refund. The balance preflight proves the wallet resolved the session to an
- * email; a 401 refreshes and replays exactly once. No body identity is used.
+ * email.
+ *
+ * ONE automatic recovery pass covers every way the authorization can be
+ * missing — token not injected yet, session not yet adopted on this origin, a
+ * rotated session the wallet has not seen — so the caller only ever sees an
+ * error after re-acquiring the authorization has ALSO failed. Nothing is
+ * charged on a failed pass: the wallet keys every charge on `entryKey`, so a
+ * replayed attempt settles against the same ledger entry.
  */
 async function callVerifiedCredits(
   payload: Record<string, unknown>,
   options: { preflight?: boolean; notify?: boolean } = {},
 ): Promise<any> {
   const { preflight = false, notify = true } = options;
-  if (typeof window === 'undefined') throw creditSessionError(notify);
-
-  await refreshWorkspaceSession();
-  if (!getVerifiedSessionId()) throw creditSessionError(notify);
+  if (typeof window === 'undefined') throw creditAuthorizationError('signed_out', notify);
 
   const attempt = async (): Promise<any> => {
     if (preflight && payload.op !== 'balance') {
       const balance = await sendCredits({ op: 'balance' });
       if (!balance || balance.ok !== true || typeof balance.email !== 'string' || !balance.email.includes('@')) {
-        throw creditSessionError(notify);
+        throw new CreditAuthorizationError('Credit authorization is not confirmed for this session yet.', {
+          code: 'credit_authorization_unconfirmed',
+          status: 401,
+        });
       }
     }
     return sendCredits(payload);
   };
 
-  try {
-    return await attempt();
-  } catch (error: any) {
-    const status = Math.round(Number(error?.status) || 0);
-    if (status !== 401 && status !== 403) throw error;
-    await refreshWorkspaceSession();
-    if (!getVerifiedSessionId()) throw creditSessionError(notify);
+  let lastError: unknown = null;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const authorization = await resolveCreditAuthorization(pass === 0 ? 10_000 : 6_000);
+    if (authorization.issue) {
+      lastError = creditAuthorizationError(authorization.issue, false);
+      if (pass === 0 && authorization.issue !== 'signed_out') continue;
+      break;
+    }
     try {
       return await attempt();
-    } catch (retryError: any) {
-      const retryStatus = Math.round(Number(retryError?.status) || 0);
-      if (retryStatus === 401 || retryStatus === 403) throw creditSessionError(notify);
-      throw retryError;
+    } catch (error) {
+      lastError = error;
+      if (pass === 1 || !isRecoverableAuthFailure(error)) break;
+      if (hasTenantDelegationAuth()) await waitForSession(6_000);
+      else await refreshWorkspaceSession();
     }
   }
+  if (isCreditAuthorizationError(lastError)) {
+    const issue = (lastError.code in CREDIT_AUTH_COPY ? lastError.code : 'session_rejected') as CreditAuthIssue;
+    throw creditAuthorizationError(issue, notify);
+  }
+  if (isRecoverableAuthFailure(lastError)) throw creditAuthorizationError('session_rejected', notify);
+  throw lastError;
 }
 
 /** Re-check the email session from the global recovery notice. */
 export async function refreshCreditSession(): Promise<boolean> {
   try {
+    // This button is an explicit recovery action, so do not trust only the
+    // cached local session. Re-prove the current candidate, let the runtime
+    // rotate its token when needed, then verify that vv-credits resolves the
+    // refreshed identity to an email before announcing recovery.
+    if (hasTenantDelegationAuth()) await waitForSession(10_000);
+    else await refreshWorkspaceSession();
+    const authorization = await resolveCreditAuthorization(10_000);
+    if (authorization.issue) return false;
     const data = await callVerifiedCredits({ op: 'balance' }, { notify: false });
     const state = toState(data);
     if (!state) return false;
     publish(state);
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(CREDIT_AUTH_REFRESHED_EVENT));
     return true;
   } catch {
     return false;
@@ -261,13 +473,13 @@ export async function requireVerifiedCreditSession(): Promise<CreditState> {
   try {
     const data = await callVerifiedCredits({ op: 'balance' });
     const state = toState(data);
-    if (!state) throw creditSessionError(true);
+    if (!state) throw creditAuthorizationError('session_rejected', true);
     publish(state);
     return state;
   } catch (error: any) {
     if (isCreditAuthorizationError(error)) throw error;
     const status = Math.round(Number(error?.status) || 0);
-    if (status === 401 || status === 403) throw creditSessionError(true);
+    if (status === 401 || status === 403) throw creditAuthorizationError('session_rejected', true);
     throw new CreditAuthorizationError('Credit authorization could not be confirmed. Your generation was not started.', {
       code: 'credit_authorization_unavailable',
       status,
@@ -318,13 +530,23 @@ export function newChargeKey(prefix = 'gen'): string {
 }
 
 export interface ChargeRequest {
-  /** Length of the video being generated, in seconds. */
-  seconds: number;
+  /** Length of the media being generated, in seconds (per-second engines). */
+  seconds?: number;
+  /** Rate-card engine or model id (lib/pricing.ts). Defaults to the canonical video engine. */
+  engine?: string;
+  /** Resolution, audio, mode, chars, jobs, bundle… — see QuoteOptions. */
+  options?: QuoteOptions;
+  /** A multi-engine job priced and ceiled once (e.g. avatar + B-roll + render). */
+  items?: Array<{ engine: string; options?: QuoteOptions }>;
+  /** Human label for the history, e.g. "Omni 8s clip". */
+  label?: string;
   /** Idempotency key — reuse it on a retry so the same clip is billed once. */
   entryKey: string;
   /** Which surface is spending (group-a, runway, …) — ledger context only. */
   source?: string;
   note?: string;
+  /** The screen already showed this exact credit price and the customer approved it. */
+  preconfirmed?: boolean;
 }
 
 export interface ChargeResult {
@@ -332,6 +554,50 @@ export interface ChargeResult {
   metered: boolean;
   charged: number;
   state: CreditState | null;
+  balanceBefore?: number | null;
+  balanceAfter?: number | null;
+  costUsd?: number;
+  engine?: string;
+}
+
+function localQuoteFor(request: ChargeRequest): Quote {
+  if (request.items && request.items.length) {
+    const parts = request.items.map((item) => quoteLocal(item.engine, item.options || {}));
+    const costUsd = parts.reduce((sum, p) => sum + p.costUsd, 0);
+    const any = parts.some((p) => p.credits > 0);
+    const base = parts[0];
+    return {
+      ...base,
+      engine: parts.map((p) => p.engine).join('+'),
+      label: request.label || parts.map((p) => p.label).join(' + '),
+      costUsd,
+      credits: any ? Math.ceil((costUsd * 1.3) / CREDIT_VALUE_USD - 1e-9) : 0,
+      priced: parts.every((p) => p.priced),
+      free: parts.every((p) => p.free),
+    };
+  }
+  const options = { ...(request.options || {}) };
+  if (options.seconds == null && request.seconds != null) options.seconds = Number(request.seconds);
+  return quoteLocal(request.engine || DEFAULT_VIDEO_ENGINE, options);
+}
+
+function chargePayload(request: ChargeRequest): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    entryKey: request.entryKey,
+    source: request.source || 'app',
+    note: request.note,
+    label: request.label,
+  };
+  if (request.items && request.items.length) {
+    payload.items = request.items;
+  } else {
+    payload.engine = request.engine || DEFAULT_VIDEO_ENGINE;
+    const options = { ...(request.options || {}) };
+    if (options.seconds == null && request.seconds != null) options.seconds = Math.max(0, Number(request.seconds) || 0);
+    payload.options = options;
+    if (request.seconds != null) payload.seconds = Math.max(0, Number(request.seconds) || 0);
+  }
+  return payload;
 }
 
 /**
@@ -344,24 +610,24 @@ export interface ChargeResult {
  *     generation is refused before provider submission. No anonymous or
  *     unmetered fallback is allowed for a paid render.
  */
-export async function authorizeCredits(request: ChargeRequest): Promise<ChargeResult> {
-  const cost = creditsForSeconds(request.seconds);
-  if (!cost) return { metered: false, charged: 0, state: cached };
+export async function authorizeCredits(
+  request: ChargeRequest,
+  options: { preflight?: boolean } = {},
+): Promise<ChargeResult> {
+  const local = localQuoteFor(request);
+  // Text and image generation are free: nothing to authorize.
+  if (local.free) return { metered: false, charged: 0, state: cached, costUsd: 0, engine: local.engine };
+  await confirmCharge(request, local);
+  const seconds = Math.round(Number(request.seconds ?? request.options?.seconds) || 0);
 
   let data: any;
   try {
-    data = await callVerifiedCredits({
-      op: 'charge',
-      entryKey: request.entryKey,
-      seconds: Math.round(request.seconds),
-      source: request.source || 'app',
-      note: request.note,
-    }, { preflight: true });
+    data = await callVerifiedCredits({ op: 'charge', ...chargePayload(request) }, { preflight: options.preflight !== false });
   } catch (e: any) {
     if (isCreditAuthorizationError(e)) throw e;
     const status = Math.round(Number(e?.status) || 0);
     const auth = status === 401 || status === 403;
-    if (auth) throw creditSessionError(true);
+    if (auth) throw creditAuthorizationError('session_rejected', true);
     throw new CreditAuthorizationError(
       'Credit authorization could not be confirmed. Your generation was not started.',
       { code: 'credit_authorization_unavailable', status },
@@ -370,22 +636,78 @@ export async function authorizeCredits(request: ChargeRequest): Promise<ChargeRe
 
   const state = toState(data);
   if (state) publish(state);
+  const label = String(data?.quote?.label || request.label || local.label);
   if (data?.code === 'insufficient_credits') {
     const balance = state ? state.balance : 0;
     const plan = state ? state.plan : 'free';
-    openPricing('credits', { required: cost, balance, seconds: Math.round(request.seconds) });
-    throw new InsufficientCreditsError({ required: cost, balance, seconds: Math.round(request.seconds), plan });
+    const required = Math.max(0, Math.round(Number(data.required) || local.credits));
+    openPricing('credits', { required, balance, seconds, label });
+    throw new InsufficientCreditsError({ required, balance, seconds, plan, label });
   }
   if (data?.ok !== true) {
     throw new CreditAuthorizationError(String(data?.error || 'Credit authorization was refused.'), {
       code: String(data?.code || 'credit_authorization_refused'),
     });
   }
-  return { metered: true, charged: Math.max(0, Math.round(Number(data.charged) || 0)), state };
+  const charged = Math.max(0, Math.round(Number(data.charged) || 0));
+  const result: ChargeResult = {
+    metered: true,
+    charged,
+    state,
+    balanceBefore: Number.isFinite(Number(data.balanceBefore)) ? Number(data.balanceBefore) : null,
+    balanceAfter: state ? state.balance : null,
+    costUsd: Number(data?.quote?.costUsd) || local.costUsd,
+    engine: String(data?.quote?.engine || local.engine),
+  };
+  if (!data.duplicate) {
+    announce(CREDITS_CHARGED_EVENT, {
+      charged,
+      balanceBefore: result.balanceBefore,
+      balanceAfter: result.balanceAfter,
+      label,
+      engine: result.engine,
+      costUsd: result.costUsd,
+      source: request.source || 'app',
+      unlimited: !!state?.unlimited,
+      unpriced: data.unpriced === true,
+    } as CreditsChargedDetail);
+  }
+  return result;
 }
 
 export async function chargeCredits(request: ChargeRequest): Promise<ChargeResult> {
   return authorizeCredits(request);
+}
+
+/**
+ * Publish a charge that a server function made on this wallet itself (for
+ * example UGC Studio, which re-quotes Runway server-side), so the shell shows
+ * the deduction and the new balance exactly like a browser-side charge.
+ */
+export function reportServerCharge(detail: {
+  charged: number;
+  balanceAfter: number | null;
+  label: string;
+  engine: string;
+  source: string;
+  costUsd?: number;
+  unlimited?: boolean;
+}): void {
+  const charged = Math.max(0, Math.round(Number(detail.charged) || 0));
+  if (cached && detail.balanceAfter != null && !cached.unlimited) publish({ ...cached, balance: Math.max(0, Math.round(detail.balanceAfter)) });
+  else void refreshCredits();
+  if (!charged || detail.unlimited) return;
+  announce(CREDITS_CHARGED_EVENT, {
+    charged,
+    balanceBefore: detail.balanceAfter != null ? detail.balanceAfter + charged : null,
+    balanceAfter: detail.balanceAfter,
+    label: detail.label,
+    engine: detail.engine,
+    costUsd: Number(detail.costUsd) || 0,
+    source: detail.source,
+    unlimited: false,
+    unpriced: false,
+  } as CreditsChargedDetail);
 }
 
 /** Hand credits back when the provider never actually started the render. */
@@ -405,7 +727,7 @@ export async function refundCreditsStrict(entryKey: string, note?: string): Prom
   } catch (e: any) {
     if (isCreditAuthorizationError(e)) throw e;
     const status = Math.round(Number(e?.status) || 0);
-    if (status === 401 || status === 403) throw creditSessionError(true);
+    if (status === 401 || status === 403) throw creditAuthorizationError('session_rejected', true);
     throw new CreditAuthorizationError('Credit refund could not be confirmed.', {
       code: 'credit_refund_unavailable',
       status,
@@ -414,27 +736,83 @@ export async function refundCreditsStrict(entryKey: string, note?: string): Prom
   const state = toState(data);
   if (state) publish(state);
   if (data?.ok !== true) throw new CreditAuthorizationError(String(data?.error || 'Credit refund was refused.'), { code: String(data?.code || 'credit_refund_refused') });
+  const refunded = Math.max(0, Math.round(Number(data.refunded) || 0));
+  if (refunded > 0) announce(CREDITS_REFUNDED_EVENT, { refunded, balanceAfter: state ? state.balance : null, note: note || '' });
+}
+
+export interface CreditQuoteResult {
+  cost: number;
+  balance: number;
+  affordable: boolean;
+  shortfall: number;
+  state: CreditState | null;
+  quote: Quote;
 }
 
 /**
- * Ask what a render would cost without spending anything. Returns null when
+ * Ask what a generation would cost without spending anything. Pass seconds
+ * (canonical video engine) or a full ChargeRequest-like spec. Returns null when
  * the wallet is unknown, so a caller can tell "can't afford" apart from
  * "don't know yet".
  */
 export async function quoteCredits(
-  seconds: number,
-): Promise<{ cost: number; balance: number; affordable: boolean; shortfall: number; state: CreditState | null } | null> {
-  const data = await callCredits({ op: 'quote', seconds: Math.round(seconds) });
+  spec: number | Omit<ChargeRequest, 'entryKey'>,
+  engine?: string,
+  options?: QuoteOptions,
+): Promise<CreditQuoteResult | null> {
+  const request: ChargeRequest = typeof spec === 'number'
+    ? { entryKey: 'quote', seconds: spec, engine, options }
+    : { entryKey: 'quote', ...spec };
+  const local = localQuoteFor(request);
+  const payload = chargePayload(request);
+  delete payload.entryKey;
+  const data = await callCredits({ op: 'quote', ...payload });
   if (!data || data.ok !== true) return null;
   const state = toState(data);
   if (state) publish(state);
+  const serverQuote = data.quote && typeof data.quote === 'object' ? (data.quote as Quote) : local;
   return {
     cost: Math.max(0, Math.round(Number(data.cost) || 0)),
     balance: state ? state.balance : 0,
     affordable: data.affordable === true,
     shortfall: Math.max(0, Math.round(Number(data.shortfall) || 0)),
     state,
+    quote: { ...local, ...serverQuote, lines: serverQuote.lines || local.lines },
   };
+}
+
+export interface CreditHistoryEntry {
+  id: number;
+  kind: string;
+  amount: number;
+  balanceAfter: number;
+  seconds: number | null;
+  source: string | null;
+  note: string | null;
+  engine: string | null;
+  costUsd: number | null;
+  createdAt: string;
+}
+
+/** The signed-in wallet's recent movements, newest first. */
+export async function fetchCreditHistory(limit = 30): Promise<CreditHistoryEntry[] | null> {
+  const data = await callCredits({ op: 'history', limit });
+  if (!data || data.ok !== true) return null;
+  const state = toState(data);
+  if (state) publish(state);
+  const rows: any[] = Array.isArray(data.entries) ? data.entries : [];
+  return rows.map((row) => ({
+    id: Number(row.id) || 0,
+    kind: String(row.kind || ''),
+    amount: Math.round(Number(row.amount) || 0),
+    balanceAfter: Math.round(Number(row.balance_after) || 0),
+    seconds: row.seconds == null ? null : Number(row.seconds),
+    source: row.source ? String(row.source) : null,
+    note: row.note ? String(row.note) : null,
+    engine: row.engine ? String(row.engine) : null,
+    costUsd: row.cost_usd == null ? null : Number(row.cost_usd),
+    createdAt: String(row.created_at || ''),
+  }));
 }
 
 /**
@@ -479,28 +857,22 @@ export function useCredits(): { credits: CreditState | null; loading: boolean; r
 // ---------------------------------------------------------------------------
 // Checkout — native Audos payments (`stripe-payments`)
 //
-// Subscription pricing is server-authoritative: the amount, currency and
-// cadence come from the `plans` array in data/payment-config.json, selected by
-// `billingPlanId`. Nothing the browser sends can change what is charged.
-// Pay-as-you-go is a one-time customer sale in whole $9 blocks.
-//
-// Both flows return to the app with `?vv_checkout=…&session_id=…`, which
+// Credits are sold one-time in packs at $0.15 per credit. The flow returns to
+// the app with `?vv_checkout=credits&session_id=…`, which
 // `consumeCheckoutReturn()` below hands to the wallet function — and the wallet
-// re-reads the payment from the platform before crediting anything, so a
+// re-reads the payment from the platform and credits amount / $0.15, so a
 // hand-typed return URL buys nothing.
 // ---------------------------------------------------------------------------
 
-export const BILLING_PLAN_IDS: Partial<Record<PlanId, string>> = {
-  creator: 'creator-monthly',
-  pro: 'pro-monthly',
-};
-
-function returnUrl(kind: 'subscription' | 'credits'): string {
+function returnUrl(kind: 'credits'): string {
   const base = window.location.origin + window.location.pathname;
-  // `subscription_success` is the platform's own post-checkout marker; the
-  // shell already bootstraps a session from it, so it stays on the URL.
-  const legacy = kind === 'subscription' ? 'subscription_success=true&' : '';
-  return `${base}?${legacy}vv_checkout=${kind}&session_id={CHECKOUT_SESSION_ID}`;
+  // Keep the screen the buyer was on; {CHECKOUT_SESSION_ID} must stay literal
+  // for the provider to fill in, so it is appended rather than URL-encoded.
+  const params = new URLSearchParams(window.location.search);
+  params.delete('vv_checkout');
+  params.delete('session_id');
+  const kept = params.toString();
+  return `${base}?${kept ? `${kept}&` : ''}vv_checkout=${kind}&session_id={CHECKOUT_SESSION_ID}${window.location.hash}`;
 }
 
 export interface CheckoutStart {
@@ -508,44 +880,16 @@ export interface CheckoutStart {
   error?: string;
 }
 
-/** Send the customer to checkout for Creator or Pro. */
-export async function startSubscriptionCheckout(plan: 'creator' | 'pro', email: string): Promise<CheckoutStart> {
-  const billingPlanId = BILLING_PLAN_IDS[plan];
-  if (!billingPlanId) return { ok: false, error: 'That plan is not set up for checkout yet.' };
-  if (!email || !email.includes('@')) {
-    return { ok: false, error: 'Add your email in Settings first so the subscription has an account to attach to.' };
-  }
-  try {
-    const res = await fetch('/api/payments/subscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-App-Id': spaceId() },
-      body: JSON.stringify({
-        billingPlanId,
-        customerEmail: email,
-        successUrl: returnUrl('subscription'),
-        cancelUrl: window.location.href,
-        // Stamped onto the subscription so the `subscription-events` function
-        // can find this wallet again on a renewal or a cancellation made on
-        // the provider's own billing page.
-        metadata: { vvEmail: email, vvPlan: plan, spaceId: spaceId() },
-      }),
-    });
-    const data = await res.json().catch(() => null);
-    if (data && data.checkoutUrl) {
-      window.location.href = String(data.checkoutUrl);
-      return { ok: true };
-    }
-    return { ok: false, error: String(data?.error || 'Checkout could not be opened. Try again in a moment.') };
-  } catch (e: any) {
-    return { ok: false, error: `Checkout could not be reached: ${String(e?.message || e)}` };
-  }
+/** Subscriptions were retired with pay-per-use pricing; kept so older callers compile. */
+export async function startSubscriptionCheckout(_plan: string, _email: string): Promise<CheckoutStart> {
+  return { ok: false, error: 'Vidverge is pay per use now — buy a credit pack instead.' };
 }
 
-/** Buy pay-as-you-go credits in whole $9 blocks (60 credits each). */
-export async function startCreditPackCheckout(blocks: number, email: string): Promise<CheckoutStart> {
-  const count = Math.max(1, Math.round(Number(blocks) || 1));
-  const credits = count * PAYG_BLOCK_CREDITS;
-  const amount = count * PAYG_BLOCK_PRICE_CENTS;
+/** Buy a pack of `credits` credits at $0.15 each. */
+export async function startCreditPackCheckout(credits: number, email: string): Promise<CheckoutStart> {
+  if (hasTenantDelegationAuth()) return { ok: false, error: 'Ask your agent to manage this purchase through the Audos wallet.' };
+  const count = Math.max(CREDIT_PACK_OPTIONS[0], Math.round(Number(credits) || CREDIT_PACK_OPTIONS[0]));
+  const amount = count * CREDIT_PRICE_CENTS;
   if (!email || !email.includes('@')) {
     return { ok: false, error: 'Add your email in Settings first so the credits have an account to land in.' };
   }
@@ -555,12 +899,12 @@ export async function startCreditPackCheckout(blocks: number, email: string): Pr
       headers: { 'Content-Type': 'application/json', 'X-App-Id': spaceId() },
       body: JSON.stringify({
         amount,
-        productName: `VidVerge — ${credits} credits`,
-        productDescription: `${credits} video credits (${credits} seconds of video). Credits never expire.`,
+        productName: `VidVerge — ${count} credits`,
+        productDescription: `${count} Vidverge credits at $0.15 each. Spend them on any engine; credits never expire.`,
         customerEmail: email,
         successUrl: returnUrl('credits'),
         cancelUrl: window.location.href,
-        metadata: { vvEmail: email, vvCredits: String(credits), vvBlocks: String(count) },
+        metadata: { vvEmail: email, vvCredits: String(count) },
       }),
     });
     const data = await res.json().catch(() => null);

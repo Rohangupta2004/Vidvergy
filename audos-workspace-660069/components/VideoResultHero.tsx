@@ -25,13 +25,13 @@ const HERO_CSS = `
 @keyframes vrhSpin { to { transform: rotate(360deg); } }
 @keyframes vrhRise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 @keyframes vrhReward {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(59,130,246,0.45), 0 30px 90px -40px rgba(37,99,235,0.95); }
-  50% { box-shadow: 0 0 0 1px rgba(94,234,212,0.5), 0 34px 100px -38px rgba(45,212,191,0.7); }
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--vg-accent) 45%, transparent), 0 30px 90px -40px color-mix(in srgb, var(--vg-accent) 45%, transparent); }
+  50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--vg-accent-hover) 55%, transparent), 0 34px 100px -38px color-mix(in srgb, var(--vg-accent-hover) 35%, transparent); }
 }
 @keyframes vrhSweep { 0% { background-position: -320px 0; } 100% { background-position: 320px 0; } }
 .vrh-root { animation: vrhRise .45s cubic-bezier(.16,1,.3,1) both; }
 .vrh-cta { transition: filter .15s ease, transform .18s cubic-bezier(.16,1,.3,1), box-shadow .18s ease; }
-.vrh-cta:hover { filter: brightness(1.08); transform: translateY(-2px); box-shadow: 0 18px 44px -14px rgba(37,99,235,0.85) !important; }
+.vrh-cta:hover { filter: brightness(1.08); transform: translateY(-2px); box-shadow: 0 18px 44px -14px color-mix(in srgb, var(--vg-accent) 45%, transparent) !important; }
 .vrh-cta:active { transform: translateY(0) scale(0.99); }
 /* The finished render is the payoff, so its frame glows rather than sitting
    in the same quiet border every other card uses. */
@@ -86,8 +86,8 @@ export function RanModelLine({
           borderRadius: 999,
           fontSize: 11,
           fontWeight: 600,
-          color: 'var(--space-text-secondary, #a1a1aa)',
-          border: '1px solid var(--space-border-default, rgba(255,255,255,0.1))',
+          color: 'var(--vg-secondary)',
+          border: '1px solid var(--vg-border)',
         }}
         data-testid="text-ran-model"
       >
@@ -103,9 +103,9 @@ export function RanModelLine({
             borderRadius: 10,
             fontSize: 11.5,
             lineHeight: 1.5,
-            color: 'var(--space-semantic-warning-500, #fbbf24)',
-            border: '1px solid color-mix(in srgb, var(--space-semantic-warning-500, #fbbf24) 40%, transparent)',
-            background: 'color-mix(in srgb, var(--space-semantic-warning-500, #fbbf24) 12%, transparent)',
+            color: 'var(--vg-warning)',
+            border: '1px solid color-mix(in srgb, var(--vg-warning) 40%, transparent)',
+            background: 'var(--vg-warning-bg)',
           }}
           data-testid="text-model-fallback-warning"
         >
@@ -197,12 +197,12 @@ export function DownloadVideoButton({
         fontSize: 16,
         fontWeight: 700,
         letterSpacing: 0.1,
-        color: '#fff',
+        color: 'var(--vg-on-btn)',
         textDecoration: 'none',
         border: 'none',
         cursor: 'pointer',
-        backgroundImage: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 55%, #1d4ed8 100%)',
-        boxShadow: '0 14px 38px -12px rgba(37,99,235,0.75)',
+        backgroundImage: 'var(--vg-gradient-action)',
+        boxShadow: '0 14px 38px -12px rgba(0,0,0,0.45)',
         ...style,
       }}
     >
@@ -228,7 +228,7 @@ export default function VideoResultHero({
   requestedModelId,
   ranModelId,
   stickyActions = false,
-  surface = 'var(--space-surface-card, #0a0a0c)',
+  surface = 'var(--vg-surface)',
   autoPlay = true,
   autoScroll = true,
   testId = 'video-result-hero',
@@ -298,9 +298,9 @@ export default function VideoResultHero({
             borderRadius: 999,
             fontSize: 13,
             fontWeight: 600,
-            color: 'var(--space-semantic-success, #4ade80)',
-            border: '1px solid rgba(74,222,128,0.32)',
-            backgroundColor: 'rgba(74,222,128,0.10)',
+            color: 'var(--vg-success)',
+            border: '1px solid color-mix(in srgb, var(--vg-success) 32%, transparent)',
+            backgroundColor: 'var(--vg-success-bg)',
           }}
         >
           <CheckCircle2 size={15} /> {badge}
@@ -315,7 +315,7 @@ export default function VideoResultHero({
             fontWeight: 700,
             letterSpacing: -0.3,
             lineHeight: 1.25,
-            color: 'var(--space-text-primary, #f5f5f7)',
+            color: 'var(--vg-text)',
           }}
         >
           {title}
@@ -329,7 +329,7 @@ export default function VideoResultHero({
           width: '100%',
           borderRadius: 16,
           overflow: 'hidden',
-          border: '1px solid rgba(59,130,246,0.35)',
+          border: '1px solid var(--line-gold)',
           background: '#000',
         }}
       >
@@ -360,7 +360,7 @@ export default function VideoResultHero({
       <RanModelLine requestedModelId={requestedModelId} ranModelId={ranModelId} style={{ marginTop: 10 }} />
 
       {note ? (
-        <p style={{ margin: '10px 0 0', fontSize: 12, lineHeight: 1.55, color: 'var(--space-text-muted, #71717c)' }}>
+        <p style={{ margin: '10px 0 0', fontSize: 12, lineHeight: 1.55, color: 'var(--vg-muted)' }}>
           {note}
         </p>
       ) : null}

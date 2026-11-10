@@ -19,7 +19,7 @@ import type {
   AudioPolicy, CodeMotionEngine, ControlMode, EntryType, ExecutionMode, LongFormSection,
   OrchestratorIntent, ProjectState, VideoStyleId,
 } from './v2Contracts';
-import { callHook, getSessionId, spaceId, workspaceFetch, workspaceTokenNow, WORKSPACE_ID } from '../../lib/workspace';
+import { getSessionId, spaceId, workspaceFetch, workspaceTokenNow, WORKSPACE_ID } from '../../lib/workspace';
 
 // ---------------------------------------------------------------------------
 // Session / auth plumbing
@@ -391,6 +391,14 @@ export interface VideoClipSpec {
   prompt_version?: number;
   background?: {
     idempotency_key?: string;
+    /** Current charge receipt reused by every automatic rung for this block. */
+    active_credit_key?: string;
+    /** Increments only after a prior attempt has a confirmed terminal refund. */
+    credit_attempt?: number;
+    terminal_refunded_key?: string;
+    terminal_refunded_at?: string;
+    terminal_refund_pending_key?: string;
+    terminal_refund_error?: string;
     status?: 'queued' | 'submitted' | 'processing' | 'succeeded' | 'failed' | 'cancelled' | 'retrying' | 'needs_action';
     provider_status?: string;
     provider_job_id?: string;
@@ -991,25 +999,69 @@ export async function uploadBlob(blob: Blob, fileName: string): Promise<string> 
 }
 
 // ---------------------------------------------------------------------------
-// AI image generation (asset-image-gen server function → Omni Flash → GCS)
+// AI image generation (OpenAI GPT Image → GCS)
+//
+// EVERY still this app makes — cast sheets, storyboard keyframes, scene
+// backdrops — is drawn by OpenAI image generation. The model is named
+// explicitly on every request so nothing can fall through to a Gemini image
+// model, which this pipeline deliberately does not use for stills. Gemini
+// remains in the VIDEO steps only.
 // ---------------------------------------------------------------------------
 
-/** Generate a bespoke backdrop/contextual image through the workspace's
- * cached Asset Generator server function — the same engine the other apps in
- * this workspace use. The platform AI proxy exposes no image-generation
- * endpoint (only chat and speech), so images always route through this hook,
- * which returns a durable public GCS URL. */
+/** OpenAI text-to-image model for every Script-to-Video still. */
+export const S2V_IMAGE_MODEL = 'gpt-image-2';
+/** OpenAI reference-editing model used when an identity picture exists. */
+export const S2V_IMAGE_EDIT_MODEL = 'gpt-image-1.5';
+
+const RETRYABLE_IMAGE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+
+/**
+ * One bespoke still, returned as a durable public URL.
+ *
+ * `gpt-image-2` renders 1:1, 16:9 and 9:16 exactly; the platform rejects the
+ * print ratios on an OpenAI model, so anything else is mapped to the nearest
+ * of those three rather than silently becoming a square.
+ */
+export async function generateOpenAiImage(
+  prompt: string,
+  aspect: Aspect | '1:1',
+  quality: 'draft' | 'premium' = 'draft',
+): Promise<string> {
+  const aspectRatio: Aspect = aspect === '9:16' ? '9:16' : aspect === '1:1' ? '1:1' : '16:9';
+  let lastError = 'The image engine returned no durable image.';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await workspaceFetch('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-App-Id': appId() },
+        body: JSON.stringify({
+          model: S2V_IMAGE_MODEL,
+          prompt,
+          aspectRatio,
+          quality: quality === 'premium' ? 'hd' : 'standard',
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      const url = String(data?.imageUrl || data?.url || '');
+      if (response.ok && /^https:\/\//i.test(url)) return url;
+      lastError = String(data?.error?.message || data?.error || `The image engine returned no durable image (HTTP ${response.status}).`);
+      if (!RETRYABLE_IMAGE_STATUS.has(response.status) && !/temporar|overload|timeout/i.test(lastError)) break;
+    } catch (error: any) {
+      lastError = String(error?.message || error);
+      if (!/network|fetch|temporar|overload|timeout|timed out/i.test(lastError)) break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, [700, 1800, 4000][attempt]));
+  }
+  throw new Error(`${lastError} Retry, upload your own image, or reuse an existing sheet.`);
+}
+
+/** Backdrop and keyframe stills. Same OpenAI engine as every other still. */
 export async function generateBackdropImage(
   prompt: string,
   aspect: Aspect | '1:1',
   quality: 'draft' | 'premium' = 'draft',
 ): Promise<string> {
-  const data = await callHook<{ imageUrl?: string; model?: string; error?: string }>('asset-image-gen', { op: 'generate', prompt, aspect, quality });
-  const url = data?.imageUrl;
-  if (typeof url !== 'string' || !/^https:\/\//i.test(url)) {
-    throw new Error(String(data?.error || 'The image engine returned no durable image. Retry Fast draft, upload your own, or reuse an existing sheet.'));
-  }
-  return url;
+  return generateOpenAiImage(prompt, aspect, quality);
 }
 
 // ---------------------------------------------------------------------------

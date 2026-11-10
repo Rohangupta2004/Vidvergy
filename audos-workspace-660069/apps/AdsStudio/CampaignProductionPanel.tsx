@@ -6,9 +6,9 @@ import {
 } from 'lucide-react';
 import type { CreativeBrief } from './creativeStrategy';
 import {
-  activeRevision, addReadyRevision, briefForAsset, campaignQualityChecks, downloadTextFile, emptyCampaignProduction,
+  activeRevision, addReadyRevision, briefForAsset, campaignQualityChecks, downloadTextFile,
   exportComposedImage, generateCampaignContent, generateCampaignImage, patchActiveText,
-  qualityState, reconcileCampaignAssets, usageByCategory,
+  qualityState, reconcileCampaignAssets, upgradeCampaignProduction, usageByCategory,
   type AssetLayout, type CampaignAsset, type CampaignProductionState, type CampaignRevision,
 } from './campaignProduction';
 import { uploadUserFile } from './api';
@@ -156,7 +156,7 @@ function ContentAssetCard({
 
 export default function CampaignProductionPanel({ briefs, production, onChange, onOpenApp }: Props) {
   const accent = useAccent();
-  const state = production || emptyCampaignProduction();
+  const state = upgradeCampaignProduction(production);
   const stateRef = useRef(state);
   const busyRef = useRef('');
   const [busyId, setBusyId] = useState('');

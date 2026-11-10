@@ -128,7 +128,7 @@ export default function ModeSelector({
                 letterSpacing: isAuto ? 0.4 : 0,
                 cursor: blocked ? 'not-allowed' : 'pointer',
                 opacity: blocked ? 0.42 : 1,
-                color: selected ? '#fff' : isAuto ? T.accentFg : T.sub,
+                color: selected ? 'var(--vg-on-btn)' : isAuto ? T.accentFg : T.sub,
                 // AUTO keeps a visible brand ring even when it is NOT selected,
                 // so the recommended path is legible at a glance.
                 border: selected
@@ -137,11 +137,11 @@ export default function ModeSelector({
                     ? `1px solid ${T.accentBorder}`
                     : `1px solid ${T.border}`,
                 background: selected
-                  ? 'linear-gradient(135deg, #E8B737 0%, #C8920A 60%, #B4720A 100%)'
+                  ? 'var(--vg-btn)'
                   : isAuto
                     ? T.accentSoft
                     : 'transparent',
-                boxShadow: selected ? '0 8px 24px -12px rgba(200,146,10,0.5)' : 'none',
+                boxShadow: selected ? '0 8px 24px -12px rgba(212,175,55,0.5)' : 'none',
                 transition: 'all .16s ease',
               }}
             >
@@ -174,12 +174,12 @@ export default function ModeSelector({
               fontSize: compact ? 12.5 : 13.5,
               fontWeight: 600,
               cursor: 'pointer',
-              color: sportsSelected ? '#fff' : T.sub,
+              color: sportsSelected ? 'var(--vg-on-btn)' : T.sub,
               border: sportsSelected ? `1px solid ${T.accentBorder}` : `1px solid ${T.border}`,
               background: sportsSelected
-                ? 'linear-gradient(135deg, #E8B737 0%, #C8920A 60%, #B4720A 100%)'
+                ? 'var(--vg-btn)'
                 : 'transparent',
-              boxShadow: sportsSelected ? '0 8px 24px -12px rgba(200,146,10,0.5)' : 'none',
+              boxShadow: sportsSelected ? '0 8px 24px -12px rgba(212,175,55,0.5)' : 'none',
               transition: 'all .16s ease',
             }}
           >

@@ -1,6 +1,6 @@
 /**
  * GradientOrb — the animated Vidverge agent brand icon.
- * A slowly rotating amber→pink→gold conic gradient sphere with a gentle
+ * A slowly rotating single-hue gold conic gradient sphere with a gentle
  * breathe/pulse. `thinking` adds a fast spinning dashed ring around the orb;
  * `idle` slows the breathe right down.
  */
@@ -20,7 +20,7 @@ const ORB_CSS = `
 @keyframes vvOrbRing { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .vv-orb-pulse { animation: vvOrbPulse 3s ease-in-out infinite; }
 .vv-orb-pulse-idle { animation: vvOrbPulse 5.5s ease-in-out infinite; }
-.vv-orb-core { border-radius: 50%; animation: vvOrbSpin 7s linear infinite; background: conic-gradient(from 20deg, #B87808, #EC4899, #D4920A, #EC4899, #B87808); }
+.vv-orb-core { border-radius: 50%; animation: vvOrbSpin 7s linear infinite; background: conic-gradient(from 20deg, var(--vg-gold-deep), var(--vg-gold), var(--vg-gold-bright), var(--vg-gold), var(--vg-gold-deep)); }
 .vv-orb-ring { position: absolute; inset: -17%; animation: vvOrbRing 1.4s linear infinite; }
 `;
 
@@ -41,7 +41,7 @@ export function GradientOrb({ size = 'md', thinking = false, idle = false, onCli
         style={{
           width: px,
           height: px,
-          boxShadow: `0 0 ${Math.round(px * 0.45)}px rgba(236, 72, 153, 0.45), inset 0 0 ${Math.round(px * 0.3)}px rgba(255, 255, 255, 0.22)`,
+          boxShadow: `0 0 ${Math.round(px * 0.45)}px color-mix(in srgb, var(--vg-accent) 45%, transparent), inset 0 0 ${Math.round(px * 0.3)}px rgba(255, 255, 255, 0.22)`,
         }}
       />
       {thinking ? (
@@ -49,9 +49,9 @@ export function GradientOrb({ size = 'md', thinking = false, idle = false, onCli
           <circle cx="24" cy="24" r="22" stroke="url(#vvOrbRingGrad)" strokeWidth="2.4" strokeDasharray="9 7" strokeLinecap="round" />
           <defs>
             <linearGradient id="vvOrbRingGrad" x1="0" y1="0" x2="48" y2="48">
-              <stop offset="0" stopColor="#B87808" />
-              <stop offset="0.5" stopColor="#EC4899" />
-              <stop offset="1" stopColor="#D4920A" />
+              <stop offset="0" stopColor="#A8861F" />
+              <stop offset="0.5" stopColor="#D4AF37" />
+              <stop offset="1" stopColor="#E6C45A" />
             </linearGradient>
           </defs>
         </svg>

@@ -308,9 +308,9 @@ export default function ScriptMode() {
             </a>
           </div>
 
-          <div style={{ position: 'relative', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: 'linear-gradient(160deg, #05070f, #0b1020)', border: `1px solid ${S.borderStrong}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }} data-testid="preview-stage">
+          <div style={{ position: 'relative', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: 'linear-gradient(160deg, #000, var(--vg-bg))', border: `1px solid ${S.borderStrong}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }} data-testid="preview-stage">
             {activeSegment ? (
-              <span style={{ maxWidth: '86%', padding: '14px 26px', borderRadius: 999, background: 'rgba(4, 8, 18, 0.62)', border: '1px solid rgba(255, 255, 255, 0.14)', color: '#fff', fontSize: 'clamp(17px, 2.6vw, 28px)', fontWeight: 800, textAlign: 'center', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }} data-testid="stage-element">
+              <span style={{ maxWidth: '86%', padding: '14px 26px', borderRadius: 999, background: 'rgba(0, 0, 0, 0.62)', border: '1px solid rgba(255, 255, 255, 0.14)', color: '#fff', fontSize: 'clamp(17px, 2.6vw, 28px)', fontWeight: 800, textAlign: 'center', textShadow: '0 2px 12px rgba(0,0,0,0.5)' }} data-testid="stage-element">
                 {activeSegment.element}
               </span>
             ) : (

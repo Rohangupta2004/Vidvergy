@@ -5,7 +5,7 @@ import type { HeygenAvatar } from '../lib/heygen';
 
 const ROW_CSS = `
 .vv-hero-skeleton {
-  background: linear-gradient(90deg, rgba(212,146,10,0.07), rgba(212,146,10,0.16), rgba(212,146,10,0.07));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--vg-gold) 7%, transparent), color-mix(in srgb, var(--vg-gold) 16%, transparent), color-mix(in srgb, var(--vg-gold) 7%, transparent));
   background-size: 220% 100%;
   animation: vv-hero-skeleton 1.4s ease-in-out infinite;
 }
@@ -76,21 +76,21 @@ export default function AvatarHeroRow({ selected, onSelect, onAvailability }: Av
       <style>{ROW_CSS}</style>
 
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9E8B55]">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--vg-muted)]">
           Step 1 · Pick your character
         </span>
         {selected ? (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--vv-gold)_45%,transparent)] bg-[color-mix(in_srgb,var(--vv-gold)_12%,transparent)] py-1 pl-1 pr-3 text-[11px] font-medium text-[var(--vv-gold)]">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--vg-accent)_45%,transparent)] bg-[color-mix(in_srgb,var(--vg-accent)_12%,transparent)] py-1 pl-1 pr-3 text-[11px] font-medium text-[var(--vg-accent)]">
             {selected.previewImage ? (
               <img src={selected.previewImage} alt="" className="h-5 w-5 rounded-full object-cover" />
             ) : (
               <User size={12} className="ml-1" />
             )}
             Character locked ✓
-            <span className="max-w-[140px] truncate text-[#F5E9C8]">{selected.name}</span>
+            <span className="max-w-[140px] truncate text-[var(--vg-text)]">{selected.name}</span>
           </span>
         ) : notice ? null : (
-          <span className="rounded-full border border-[var(--vv-border)] px-2 py-[2px] text-[9px] uppercase tracking-[0.18em] text-[#9E8B55]">
+          <span className="rounded-full border border-[var(--vg-border)] px-2 py-[2px] text-[9px] uppercase tracking-[0.18em] text-[var(--vg-muted)]">
             Required
           </span>
         )}
@@ -99,26 +99,26 @@ export default function AvatarHeroRow({ selected, onSelect, onAvailability }: Av
       {loading ? (
         <div className="flex gap-2 overflow-hidden pb-1">
           {SKELETON_KEYS.map((key) => (
-            <div key={key} className="vv-hero-skeleton aspect-[3/4] w-[84px] shrink-0 rounded-xl border border-[var(--vv-border)]" />
+            <div key={key} className="vv-hero-skeleton aspect-[3/4] w-[84px] shrink-0 rounded-xl border border-[var(--vg-border)]" />
           ))}
         </div>
       ) : notice ? (
-        <p className="rounded-2xl border border-[var(--vv-border)] bg-[var(--vv-surface)] px-4 py-3 text-[12px] text-[var(--vv-text-dim)]">
+        <p className="rounded-2xl border border-[var(--vg-border)] bg-[var(--vg-surface)] px-4 py-3 text-[12px] text-[var(--vg-muted)]">
           {notice} Briefs route to the studios without a character for now.
         </p>
       ) : error ? (
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--vv-border)] bg-[var(--vv-surface)] px-4 py-3">
-          <p className="text-[12px] text-[var(--vv-error)]">{error}</p>
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--vg-border)] bg-[var(--vg-surface)] px-4 py-3">
+          <p className="text-[12px] text-[var(--vg-danger)]">{error}</p>
           <button
             type="button"
             onClick={() => setAttempt((value) => value + 1)}
-            className="shrink-0 rounded-full border border-[var(--vv-border)] px-3 py-1 text-[11px] text-[#9E8B55] transition-colors hover:text-[#F5E9C8]"
+            className="shrink-0 rounded-full border border-[var(--vg-border)] px-3 py-1 text-[11px] text-[var(--vg-muted)] transition-colors hover:text-[var(--vg-accent)]"
           >
             Try again
           </button>
         </div>
       ) : avatars.length === 0 ? (
-        <p className="rounded-2xl border border-[var(--vv-border)] bg-[var(--vv-surface)] px-4 py-3 text-[12px] text-[var(--vv-text-dim)]">
+        <p className="rounded-2xl border border-[var(--vg-border)] bg-[var(--vg-surface)] px-4 py-3 text-[12px] text-[var(--vg-muted)]">
           This HeyGen account has no characters yet.
         </p>
       ) : (
@@ -134,8 +134,8 @@ export default function AvatarHeroRow({ selected, onSelect, onAvailability }: Av
                 onClick={() => onSelect(chosen ? null : avatar)}
                 className="group relative w-[84px] shrink-0 overflow-hidden rounded-xl border text-left transition-colors"
                 style={{
-                  borderColor: chosen ? 'var(--vv-gold)' : 'var(--vv-border)',
-                  boxShadow: chosen ? '0 0 0 1px var(--vv-gold), 0 0 22px -10px var(--vv-gold-glow)' : 'none',
+                  borderColor: chosen ? 'var(--vg-accent)' : 'var(--vg-border)',
+                  boxShadow: chosen ? '0 0 0 1px var(--vg-accent), 0 0 22px -10px color-mix(in srgb, var(--vg-gold) 45%, transparent)' : 'none',
                 }}
                 title={avatar.name}
               >
@@ -143,7 +143,7 @@ export default function AvatarHeroRow({ selected, onSelect, onAvailability }: Av
                   {avatar.previewImage ? (
                     <img src={avatar.previewImage} alt="" loading="lazy" className="h-full w-full object-cover" />
                   ) : (
-                    <span className="flex h-full w-full items-center justify-center text-[#6E5F38]">
+                    <span className="flex h-full w-full items-center justify-center text-[var(--vg-muted)]">
                       <User size={16} />
                     </span>
                   )}
@@ -151,8 +151,8 @@ export default function AvatarHeroRow({ selected, onSelect, onAvailability }: Av
 
                 {chosen && (
                   <span
-                    className="absolute right-1 top-1 flex items-center justify-center rounded-full text-white"
-                    style={{ background: 'var(--vv-gold)', height: 18, width: 18 }}
+                    className="absolute right-1 top-1 flex items-center justify-center rounded-full text-[var(--vg-on-accent)]"
+                    style={{ background: 'var(--vg-accent)', height: 18, width: 18 }}
                   >
                     <Check size={11} />
                   </span>

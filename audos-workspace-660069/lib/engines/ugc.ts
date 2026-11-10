@@ -1,9 +1,9 @@
 import { fetchFile } from 'https://esm.sh/@ffmpeg/util@0.12.1';
-import { callHook, getWorkspaceToken, workspaceFetch } from '../workspace';
+import { callHook, workspaceFetch } from '../workspace';
 import { runFfmpegJob } from '../ffmpeg-runtime';
 import type { ActorBlueprint } from '../../apps/UGCStudio/actorCatalog';
-import { UGC_RUNWAY_CREDITS_PER_SECOND } from '../regions';
-import { authorizeCredits, newChargeKey, refundCreditsStrict } from '../credits';
+import { newChargeKey, refundCreditsStrict, reportServerCharge } from '../credits';
+import { quote as quoteCredits } from '../pricing';
 
 export type UgcMode = 'actor-speaks' | 'voiceover';
 export type UgcFormat = 'talking-camera' | 'demo' | 'unboxing' | 'before-after' | 'problem-solution';
@@ -14,7 +14,27 @@ export type UgcPlan = { clips: UgcClip[]; totalDuration: number; language: strin
 function errorFrom(data: any, fallback: string): string { return String(data?.error?.message || data?.error || data?.message || fallback); }
 export function wordCount(value: string): number { return String(value || '').trim().split(/\s+/).filter(Boolean).length; }
 export function speechBudget(duration: number, language: string): number { return Math.max(4, Math.floor(duration * (language.startsWith('hi') ? 2.25 : 2.45))); }
-export function vvCreditsForDuration(seconds: number): number { return Math.ceil(Math.max(0, seconds) * UGC_RUNWAY_CREDITS_PER_SECOND); }
+/**
+ * Pre-quote estimate only (Runway Gen-4.5 per-second list rate). The charge
+ * itself always uses the live product_ugc quote, re-checked by the wallet.
+ */
+export function vvCreditsForDuration(seconds: number, providerUsd = 0): number {
+  if (providerUsd > 0) return quoteCredits('runway/recipe', { providerQuoteUsd: providerUsd }).credits;
+  return quoteCredits('runway/gen4.5', { seconds: Math.max(0, seconds) }).credits;
+}
+
+function reportUgcCharge(result: any, label: string, engine: string, source: string): void {
+  const credit = result?.credit;
+  if (!credit) return;
+  reportServerCharge({
+    charged: Number(credit.charged) || 0,
+    balanceAfter: credit.balanceAfter == null ? null : Number(credit.balanceAfter),
+    label,
+    engine,
+    source,
+    unlimited: credit.unlimited === true,
+  });
+}
 
 export async function seedAndLoadActors(blueprints: ActorBlueprint[]): Promise<{actors:UgcActor[];customLimit:number;customCount:number;plan:string}> {
   await callHook('ugc-actors', { op: 'seed', actors: blueprints });
@@ -23,15 +43,13 @@ export async function seedAndLoadActors(blueprints: ActorBlueprint[]): Promise<{
 }
 
 export async function planScript(input: { brand?: unknown; product: string; format: UgcFormat; length: number; language: string; actor: UgcActor; mode: UgcMode }): Promise<UgcPlan> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Workspace authentication is required to plan the script.');
   const clipCount = input.length <= 15 ? 1 : input.length <= 23 ? 2 : 3;
   const durations = Array.from({ length: clipCount }, (_, index) => {
     const left = input.length - Math.floor(input.length / clipCount) * index;
     return index === clipCount - 1 ? left : Math.floor(input.length / clipCount);
   }).map((d) => Math.max(4, Math.min(15, d)));
-  const response = await fetch('/proxy/openai/v1/chat/completions', {
-    method:'POST', headers:{'Content-Type':'application/json','X-Workspace-DB-Token':token},
+  const response = await workspaceFetch('/proxy/openai/v1/chat/completions', {
+    method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({ model:'gpt-6.1-sol', reasoning_effort:'medium', max_completion_tokens:6000, response_format:{type:'json_object'}, messages:[{role:'system',content:'You plan truthful UGC-style product presenter ads. The presenter is synthetic and may demonstrate or explain, but must never claim to be a real customer or claim personal results. Use only claims present in the supplied brand/product context. Return JSON only.'},{role:'user',content:JSON.stringify({ task:'Write one editable line and physical action per clip.', product:input.product, brand:input.brand||null, format:input.format, language:input.language, mode:input.mode, actor:{persona:input.actor.persona,look:input.actor.look}, durations, requirements:['Natural spoken language','No captions, logos, or on-screen text','Each line must fit its clip','Use Roman Hinglish for hi-Latn and Devanagari for hi-Deva'], schema:{clips:[{role:'hook|demo|cta',line:'string',action:'string',delivery:'warm|energetic|calm'}]}})}] })
   });
   const data = await response.json().catch(()=>null); if(!response.ok) throw new Error(errorFrom(data,'Script planning failed.'));
@@ -51,22 +69,34 @@ export function buildUserConcept(clip: UgcClip & {action?:string}, language: str
 export async function quoteUgc(input:{actorId:string;productImageUrl:string;language:string;mode:UgcMode;clips:UgcClip[]}):Promise<any>{
   return callHook('ugc-studio-runway',{op:'quote',actor_id:input.actorId,product_image_url:input.productImageUrl,language:input.language,audio:input.mode==='actor-speaks',ratio:'720:1280',clips:input.clips.map(c=>({...c,userConcept:buildUserConcept(c,input.language,input.mode)}))});
 }
-export async function startUgc(input:{actorId:string;productImageUrl:string;language:string;mode:UgcMode;clips:UgcClip[];quote:any;sourceBlueprint?:unknown}):Promise<any>{
+export async function startUgc(input:{actorId:string;productImageUrl:string;language:string;mode:UgcMode;clips:UgcClip[];quote:any;sourceBlueprint?:unknown;chargeKey?:string}):Promise<any>{
   const seconds = input.clips.reduce((sum, clip) => sum + Math.max(0, Number(clip.duration) || 0), 0);
-  const entryKey = newChargeKey('ugc');
-  await authorizeCredits({ seconds, entryKey, source: 'ugc-runway', note: `UGC Studio · ${seconds}s` });
+  // Studio keeps this key stable while the user retries the same approved quote.
+  // The wallet and hook can therefore replay safely after a lost response.
+  const entryKey = input.chargeKey || newChargeKey('ugc');
+  // The server charges this key itself after re-quoting the exact Runway
+  // Recipe bodies, so the price is the live provider quote + 30%.
   try {
     const result = await callHook<any>('ugc-studio-runway',{op:'start',actor_id:input.actorId,product_image_url:input.productImageUrl,language:input.language,audio:input.mode==='actor-speaks',ratio:'720:1280',clips:input.clips.map(c=>({...c,userConcept:buildUserConcept(c,input.language,input.mode)})),approved:true,approved_vidverge_credits:Number(input.quote?.vidvergeCredits),quote_fingerprint:String(input.quote?.fingerprint||''),credit_entry_key:entryKey,source_blueprint:input.sourceBlueprint||null});
-    if (result?.refunded === true) {
-      await refundCreditsStrict(entryKey, 'UGC provider work did not start');
+    reportUgcCharge(result, `UGC Studio · Runway product UGC · ${seconds}s`, 'runway/recipe', 'ugc-runway');
+    if (result?.refunded === true && result?.refundConfirmed !== true) {
+      try {
+        await refundCreditsStrict(entryKey, 'UGC provider work did not start');
+      } catch {
+        // Keep the durable failed job visible. Its refund_pending state makes
+        // reconciliation explicit instead of replacing the useful result with
+        // another raw network error.
+        result.refund_pending = true;
+        result.reason = result.reason || 'Generation did not start. Your refund is pending; retry from this saved job after reconnecting.';
+      }
     }
     return result;
   } catch (error: any) {
     const status = Math.round(Number(error?.status) || 0);
-    // Refund only a confirmed client rejection. A network-uncertain request may
-    // already have created the email-owned durable job, so it must stay charged
-    // until that job's provider outcome reconciles it.
-    if (status >= 400 && status < 500) {
+    // Client refusals and the hook's structured 503 happen before provider
+    // submission. Other server failures may be uncertain, so a retry keeps the
+    // same key and lets the durable job reconcile them.
+    if ((status >= 400 && status < 500) || status === 503) {
       await refundCreditsStrict(entryKey, 'UGC provider work did not start').catch(() => undefined);
     }
     throw error;
@@ -74,9 +104,9 @@ export async function startUgc(input:{actorId:string;productImageUrl:string;lang
 }
 export async function startOmniByChoice(jobId:number, seconds:number):Promise<any>{
   const entryKey = newChargeKey('ugc-omni');
-  await authorizeCredits({ seconds, entryKey, source: 'ugc-omni', note: `UGC Studio Omni alternative · ${seconds}s` });
   try {
     const result = await callHook<any>('ugc-studio-runway',{op:'omni_start',job_id:jobId,approved:true,credit_entry_key:entryKey});
+    reportUgcCharge(result, `UGC Studio · Omni alternative · ${seconds}s`, 'gemini-omni-1.1-flash', 'ugc-omni');
     if (result?.success === false) await refundCreditsStrict(entryKey, 'UGC Omni alternative did not start');
     return result;
   } catch (error: any) {
@@ -108,7 +138,7 @@ export async function assemblePortraitClips(jobId:number, clips:Array<{url:strin
 }
 
 export async function generateActorFaceOptions(description:string):Promise<string[]>{
-  await callHook('ugc-actors',{op:'custom_prepare',description}); const token=await getWorkspaceToken(); if(!token) throw new Error('Workspace authentication is required.'); const urls:string[]=[];
-  for(let i=0;i<4;i+=1){const response=await fetch('/api/generate/image',{method:'POST',headers:{'Content-Type':'application/json','X-Workspace-DB-Token':token},body:JSON.stringify({prompt:`Create option ${i+1} of a photorealistic fictional synthetic UGC actor. ${description}. Head and upper body, natural daylight, neutral background, natural hands, no text, no watermark, no logo, and must not resemble a public figure.`,aspectRatio:'3:4',quality:'standard'})});const data=await response.json().catch(()=>null);if(!response.ok||!data?.imageUrl)throw new Error(errorFrom(data,'Actor face generation failed.'));urls.push(String(data.imageUrl));}
+  await callHook('ugc-actors',{op:'custom_prepare',description}); const urls:string[]=[];
+  for(let i=0;i<4;i+=1){const response=await workspaceFetch('/api/generate/image',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:`Create option ${i+1} of a photorealistic fictional synthetic UGC actor. ${description}. Head and upper body, natural daylight, neutral background, natural hands, no text, no watermark, no logo, and must not resemble a public figure.`,aspectRatio:'3:4',quality:'standard'})});const data=await response.json().catch(()=>null);if(!response.ok||!data?.imageUrl)throw new Error(errorFrom(data,'Actor face generation failed.'));urls.push(String(data.imageUrl));}
   return urls;
 }

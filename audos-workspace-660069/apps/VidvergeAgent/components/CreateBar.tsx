@@ -66,13 +66,13 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
     <div className="relative w-full">
       {attachment && (
         <div className="mb-3 flex justify-center">
-          <span className="inline-flex items-center gap-2 rounded-full border border-[var(--vv-border)] bg-[var(--vv-surface)] px-3 py-1.5 text-[12px] text-[#9E8B55]">
-            <Paperclip size={12} className="text-[var(--vv-gold)]" />
+          <span className="inline-flex items-center gap-2 rounded-full border border-[var(--vg-border)] bg-[var(--vg-surface)] px-3 py-1.5 text-[12px] text-[var(--vg-muted)]">
+            <Paperclip size={12} className="text-[var(--vg-accent)]" />
             <span className="max-w-[220px] truncate">{attachment.name}</span>
             <button
               type="button"
               onClick={() => setAttachment(null)}
-              className="text-[#9E8B55] transition-colors hover:text-[#F5E9C8]"
+              className="text-[var(--vg-muted)] transition-colors hover:text-[var(--vg-text)]"
               aria-label="Remove attachment"
             >
               <X size={12} />
@@ -81,22 +81,22 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
         </div>
       )}
 
-      {submitError ? <p className="mb-2 text-center text-[11px] text-[var(--vv-error)]">{submitError}</p> : null}
+      {submitError ? <p className="mb-2 text-center text-[11px] text-[var(--vg-danger)]">{submitError}</p> : null}
 
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 rounded-[28px] border border-[var(--vv-border)] px-2 py-2 backdrop-blur-xl transition-colors focus-within:border-[var(--vv-border-hover)]"
+        className="flex items-center gap-2 rounded-[28px] border border-[var(--vg-border)] px-2 py-2 backdrop-blur-xl transition-colors focus-within:border-[var(--vg-focus)]"
         style={{
-          background: 'rgba(21,18,10,0.94)',
+          background: 'var(--vg-surface)',
           boxShadow:
-            '0 24px 60px -28px rgba(0,0,0,0.4), 0 0 28px -14px rgba(212,146,10,0.5), inset 0 1px 0 rgba(255,255,255,0.04)',
+            '0 24px 60px -28px rgba(0,0,0,0.4), 0 0 28px -14px color-mix(in srgb, var(--vg-gold) 50%, transparent), inset 0 1px 0 rgba(255,255,255,0.04)',
         }}
       >
         <input ref={fileRef} type="file" className="hidden" onChange={handleFile} />
         <button
           type="button"
           onClick={() => fileRef.current && fileRef.current.click()}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#9E8B55] transition-colors hover:bg-[rgba(255,255,255,0.04)] hover:text-[#F5E9C8]"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[var(--vg-muted)] transition-colors hover:bg-[var(--vg-hover)] hover:text-[var(--vg-text)]"
           aria-label="Attach a file"
           title="Attach a reference, script or clip"
         >
@@ -107,7 +107,7 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder="What do you want to create?"
-          className="min-w-0 flex-1 bg-transparent px-1 text-[15px] text-[#F5E9C8] outline-none placeholder:text-[#6E5F38]"
+          className="min-w-0 flex-1 bg-transparent px-1 text-[15px] text-[var(--vg-text)] outline-none placeholder:text-[var(--vg-muted)]"
           aria-label="Describe what you want to create"
         />
 
@@ -115,7 +115,7 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
           <button
             type="button"
             onClick={() => setOpen((prev) => !prev)}
-            className="flex h-9 items-center gap-1.5 rounded-full border border-[var(--vv-border)] px-3 text-[12px] text-[#9E8B55] transition-colors hover:border-[color-mix(in_srgb,var(--vv-gold)_30%,transparent)] hover:text-[#F5E9C8]"
+            className="flex h-9 items-center gap-1.5 rounded-full border border-[var(--vg-border)] px-3 text-[12px] text-[var(--vg-muted)] transition-colors hover:border-[var(--vg-accent)] hover:text-[var(--vg-accent)]"
             aria-haspopup="listbox"
             aria-expanded={open}
           >
@@ -126,8 +126,8 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
           {open && (
             <div
               role="listbox"
-              className="absolute bottom-full right-0 z-20 mb-3 w-[268px] overflow-hidden rounded-2xl border border-[var(--vv-border)] p-1.5"
-              style={{ background: 'rgba(21,18,10,0.98)', boxShadow: '0 30px 70px -30px rgba(0,0,0,0.4)' }}
+              className="absolute bottom-full right-0 z-20 mb-3 w-[268px] overflow-hidden rounded-2xl border border-[var(--vg-border)] p-1.5"
+              style={{ background: 'var(--vg-raised)', boxShadow: '0 30px 70px -30px rgba(0,0,0,0.4)' }}
             >
               {apps.map((app) => {
                 const active = app.id === selected.id;
@@ -141,13 +141,13 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
                       onSelectApp(app.id);
                       setOpen(false);
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-[rgba(255,255,255,0.04)]"
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-[var(--vg-hover)]"
                   >
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] text-[#F5E9C8]">{app.name}</span>
-                      <span className="block truncate text-[11px] text-[var(--vv-text-dim)]">{app.tagline}</span>
+                      <span className="block truncate text-[13px] text-[var(--vg-text)]">{app.name}</span>
+                      <span className="block truncate text-[11px] text-[var(--vg-muted)]">{app.tagline}</span>
                     </span>
-                    {active && <Check size={14} className="shrink-0 text-[var(--vv-gold)]" />}
+                    {active && <Check size={14} className="shrink-0 text-[var(--vg-accent)]" />}
                   </button>
                 );
               })}
@@ -157,10 +157,9 @@ export default function CreateBar({ apps, selectedAppId, onSelectApp, onSubmit, 
 
         <button
           type="submit"
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold text-[var(--vg-on-btn)] transition-colors bg-[var(--vg-btn)] hover:bg-[var(--vg-btn-hover)] active:bg-[var(--vg-btn-pressed)] disabled:cursor-not-allowed disabled:opacity-40"
           style={{
-            background: 'linear-gradient(135deg, var(--vv-gold, #D4920A), var(--vv-accent, #F0B429))',
-            boxShadow: '0 0 24px -4px var(--vv-gold-glow, rgba(212,146,10,0.45))',
+            boxShadow: '0 0 24px -4px color-mix(in srgb, var(--vg-gold) 45%, transparent)',
           }}
           disabled={!value.trim() || submitting}
         >

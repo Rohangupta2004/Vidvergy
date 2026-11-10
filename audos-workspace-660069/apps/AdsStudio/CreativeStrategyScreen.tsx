@@ -14,6 +14,7 @@ import {
   estimateCreativeCost, generateCreativeAngles, saveBriefHandoff,
 } from './creativeStrategy';
 import CampaignProductionPanel from './CampaignProductionPanel';
+import { ANGLE_TYPE_NOTES, CONTENT_TYPE_NOTES } from './optionPreviews';
 import { CARD, INK_DEEP, LINE, LINE_HI, MONO, TEXT, TEXT_DIM, TEXT_MUTED, rgba } from '../Phantom/theme';
 import { Button, Notice, Panel, Pill, Spinner, useAccent } from '../Phantom/ui';
 
@@ -93,6 +94,7 @@ function AngleCard({
           </div>
           <div style={{ marginTop: 10, color: TEXT, fontSize: 16, fontWeight: 760 }}>{angle.conceptName}</div>
           <div style={{ marginTop: 3, color: TEXT_MUTED, fontSize: 11.5, fontFamily: MONO }}>{angle.type}</div>
+          {ANGLE_TYPE_NOTES[angle.type] ? <div style={{ marginTop: 3, color: TEXT_MUTED, fontSize: 11.5, lineHeight: 1.45 }}>{ANGLE_TYPE_NOTES[angle.type]}</div> : null}
           <div style={{ marginTop: 10, color: TEXT_DIM, fontSize: 13.5, fontStyle: 'italic', lineHeight: 1.55 }}>“{angle.openingHook || 'Add an opening hook'}”</div>
           <div style={{ marginTop: 8, color: TEXT_DIM, fontSize: 12.5, lineHeight: 1.6 }}>{angle.coreMessage || 'Add the core message.'}</div>
         </div>
@@ -180,7 +182,7 @@ function ContentRow({ item, onChange }: { item: ContentSelection; onChange: (nex
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1.4fr) repeat(4, minmax(90px, .7fr))', gap: 9, alignItems: 'end', padding: 12, borderRadius: 11, border: `1px solid ${item.selected ? rgba(accent, 0.45) : LINE}`, background: item.selected ? rgba(accent, 0.055) : CARD }} className="vg-content-row">
       <label style={{ display: 'flex', alignItems: 'center', gap: 9, minHeight: 44, cursor: 'pointer' }}>
         <input type="checkbox" checked={item.selected} onChange={(event) => onChange({ ...item, selected: event.target.checked })} />
-        <span><b style={{ color: TEXT, fontSize: 13 }}>{item.subtype}</b>{item.notes ? <span style={{ display: 'block', marginTop: 3, color: TEXT_MUTED, fontSize: 10.8, lineHeight: 1.35 }}>{item.notes}</span> : null}</span>
+        <span><b style={{ color: TEXT, fontSize: 13 }}>{item.subtype}</b>{item.notes ? <span style={{ display: 'block', marginTop: 3, color: TEXT_MUTED, fontSize: 10.8, lineHeight: 1.35 }}>{item.notes}</span> : CONTENT_TYPE_NOTES[item.id] ? <span style={{ display: 'block', marginTop: 3, color: TEXT_MUTED, fontSize: 10.8, lineHeight: 1.35 }}>{CONTENT_TYPE_NOTES[item.id]}</span> : null}</span>
       </label>
       <label><span style={labelStyle()}>Quantity</span><input type="number" min={1} max={20} value={item.quantity} disabled={!item.selected} onChange={(event) => onChange({ ...item, quantity: Math.max(1, Number(event.target.value) || 1) })} style={fieldStyle()} /></label>
       <label><span style={labelStyle()}>Format</span><input value={item.format} disabled={!item.selected} onChange={(event) => onChange({ ...item, format: event.target.value })} style={fieldStyle()} /></label>
@@ -232,11 +234,14 @@ export default function CreativeStrategyScreen({ brand, competitors, insights, s
   const approvedFindings = useMemo(() => {
     const report = insights?.research;
     if (!strategy.useCompetitorResearch || !report?.approvedAt) return [];
-    return report.findings.filter((item) => item.evidenceType !== 'unavailable');
+    return (Array.isArray(report.findings) ? report.findings : []).filter((item) => item.evidenceType !== 'unavailable');
   }, [insights, strategy.useCompetitorResearch]);
-  const selectedAngles = strategy.angles.filter((item) => strategy.selectedAngleIds.includes(item.id));
-  const cost = estimateCreativeCost(strategy.contentSelections, selectedAngles.length);
-  const selectedContent = strategy.contentSelections.filter((item) => item.selected);
+  const angles = Array.isArray(strategy.angles) ? strategy.angles : [];
+  const selectedAngleIds = Array.isArray(strategy.selectedAngleIds) ? strategy.selectedAngleIds : [];
+  const contentSelections = Array.isArray(strategy.contentSelections) ? strategy.contentSelections : [];
+  const selectedAngles = angles.filter((item) => selectedAngleIds.includes(item.id));
+  const cost = estimateCreativeCost(contentSelections, selectedAngles.length);
+  const selectedContent = contentSelections.filter((item) => item.selected);
 
   const patch = (value: Partial<CreativeStrategyState>) => onChange({ ...strategy, ...value, schemaVersion: CREATIVE_STRATEGY_SCHEMA_VERSION });
   const patchAngle = (id: string, value: Partial<CreativeAngle>) => patch({ angles: strategy.angles.map((item) => item.id === id ? { ...item, ...value } : item), briefs: [] });
@@ -251,7 +256,7 @@ export default function CreativeStrategyScreen({ brand, competitors, insights, s
     try {
       const generated = await generateCreativeAngles({
         brand,
-        competitors: competitors.filter((item) => item.included && item.fetched),
+        competitors: (Array.isArray(competitors) ? competitors : []).filter((item) => item.included && item.fetched),
         findings: approvedFindings,
         campaignGoal: strategy.campaignGoal,
         direction: strategy.direction,
@@ -311,7 +316,7 @@ export default function CreativeStrategyScreen({ brand, competitors, insights, s
   };
 
   const contentGroups: Array<{ kind: ContentSelection['kind']; title: string; icon: ReactNode; description: string }> = [
-    { kind: 'video', title: 'Video', icon: <Video size={18} />, description: 'Select several production paths at once. Video credits equal finished seconds × quantity × approved angles.' },
+    { kind: 'video', title: 'Video', icon: <Video size={18} />, description: 'Select several production paths at once. Video credits are the real engine cost of finished seconds × quantity × approved angles, + 30%.' },
     { kind: 'image', title: 'Image ads', icon: <Image size={18} />, description: 'GPT Image produces imagery only. Exact copy is added later by the composition/overlay step.' },
     { kind: 'marketing', title: 'Marketing content', icon: <FileText size={18} />, description: 'SEO/AEO articles, comparisons, landing copy, captions and headline/CTA sets.' },
   ];
@@ -453,7 +458,7 @@ export default function CreativeStrategyScreen({ brand, competitors, insights, s
               <div style={{ flex: 1, minWidth: 230 }}>
                 <div style={{ color: TEXT, fontWeight: 760 }}>Expected production estimate</div>
                 <div style={{ marginTop: 5, color: TEXT_DIM, fontSize: 13 }}>{cost.summary}</div>
-                <div style={{ marginTop: 5, color: TEXT_MUTED, fontSize: 11.3, lineHeight: 1.5 }}>Vidverge video billing is locked at 1 credit per finished second. Image generation uses a provider quote in the later production step; no image call starts here. Strategy, briefs, and marketing planning spend no video credits.</div>
+                <div style={{ marginTop: 5, color: TEXT_MUTED, fontSize: 11.3, lineHeight: 1.5 }}>Paid video steps cost the real engine price + 30% in $0.15 credits, shown with your balance before anything is charged. Image generation is free, and no image call starts here. Strategy, briefs, and marketing planning spend no credits.</div>
               </div>
               <Button variant="primary" disabled={!selectedAngles.length || !selectedContent.length} onClick={buildBriefs}><Sparkles size={14} /> Emit CreativeBriefs</Button>
             </div>

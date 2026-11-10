@@ -119,11 +119,11 @@ const MINUTES_PER_CLIP = 3;
 
 function StatusPill({ run }: { run: ClipRun }) {
   const map: Record<string, { label: string; color: string; bg: string; border: string }> = {
-    pending: { label: 'Queued', color: T.muted, bg: 'rgba(180,120,0,0.06)', border: T.border },
-    submitting: { label: 'Starting', color: '#B45309', bg: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.28)' },
-    rendering: { label: 'Rendering', color: '#B45309', bg: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.28)' },
-    done: { label: 'Done', color: T.success, bg: 'rgba(22,101,52,0.1)', border: 'rgba(22,101,52,0.28)' },
-    failed: { label: 'Failed', color: T.danger, bg: 'rgba(153,27,27,0.08)', border: 'rgba(153,27,27,0.28)' },
+    pending: { label: 'Queued', color: T.muted, bg: 'var(--vg-raised)', border: T.border },
+    submitting: { label: 'Starting', color: 'var(--vg-warning)', bg: 'var(--vg-warning-bg)', border: 'color-mix(in srgb, var(--vg-warning) 35%, transparent)' },
+    rendering: { label: 'Rendering', color: 'var(--vg-warning)', bg: 'var(--vg-warning-bg)', border: 'color-mix(in srgb, var(--vg-warning) 35%, transparent)' },
+    done: { label: 'Done', color: T.success, bg: 'var(--vg-success-bg)', border: 'color-mix(in srgb, var(--vg-success) 35%, transparent)' },
+    failed: { label: 'Failed', color: T.danger, bg: 'var(--vg-danger-bg)', border: 'color-mix(in srgb, var(--vg-danger) 35%, transparent)' },
   };
   const s = map[run.status] || map.pending;
   return (
@@ -219,10 +219,10 @@ function SubjectStrip({ subject, clipCount }: { subject: SeriesSubject; clipCoun
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'linear-gradient(160deg, rgba(200,146,10,0.3), #FFF3D6)',
+              background: 'linear-gradient(160deg, rgba(212,175,55,0.3), var(--vg-raised))',
             }}
           >
-            <User size={18} color="#7A6030" />
+            <User size={18} color="var(--vg-muted)" />
           </span>
         )}
       </span>
@@ -1401,7 +1401,7 @@ export default function VideoSeries({
               marginBottom: 16,
               borderRadius: 999,
               overflow: 'hidden',
-              background: 'rgba(180,120,0,0.1)',
+              background: 'var(--vg-raised)',
             }}
             role="progressbar"
             aria-valuenow={liveDone}
@@ -1415,7 +1415,7 @@ export default function VideoSeries({
                 top: 0,
                 bottom: 0,
                 width: `${Math.round((liveDone / Math.max(1, liveTotal)) * 100)}%`,
-                background: 'linear-gradient(90deg, #E8B737, #C8920A)',
+                background: 'var(--vg-accent)',
                 transition: 'width .4s ease',
               }}
             />
@@ -1519,7 +1519,7 @@ export default function VideoSeries({
                     key={clip.key}
                     style={{
                       padding: '11px 13px',
-                      borderColor: run.status === 'failed' ? 'rgba(153,27,27,0.3)' : T.border,
+                      borderColor: run.status === 'failed' ? 'color-mix(in srgb, var(--vg-danger) 35%, transparent)' : T.border,
                     }}
                     data-testid={`series-render-${clip.index}`}
                   >
@@ -1535,11 +1535,11 @@ export default function VideoSeries({
                           borderRadius: 999,
                           fontSize: 11,
                           fontWeight: 700,
-                          color: run.status === 'done' ? '#fff' : T.muted,
+                          color: run.status === 'done' ? 'var(--vg-on-btn)' : T.muted,
                           background:
                             run.status === 'done'
-                              ? 'linear-gradient(135deg, #16A34A, #166534)'
-                              : 'rgba(180,120,0,0.1)',
+                              ? 'var(--vg-success)'
+                              : 'var(--vg-raised)',
                         }}
                       >
                         {run.status === 'done' ? <Check size={12} /> : clip.index}
@@ -1746,7 +1746,7 @@ export default function VideoSeries({
                               color: T.sub,
                               textDecoration: 'none',
                               border: `1px solid ${T.border}`,
-                              background: 'rgba(180,120,0,0.05)',
+                              background: 'var(--vg-raised)',
                             }}
                             data-testid={`link-download-clip-${clip.index}`}
                           >

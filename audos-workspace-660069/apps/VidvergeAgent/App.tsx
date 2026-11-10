@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { withBrandContext } from '../../components/BrandContextLayer';
+import BrandContextLayer from '../../components/BrandContextLayer';
 import VergerChat from './components/VergerChat';
 import AppBridgeHost from './components/AppBridgeHost';
 import { saveVidvergeHandoff, type VidvergeAttachment } from '../../lib/vidvergeHandoff';
@@ -138,15 +138,12 @@ function VergerApp() {
   }, [refreshJobs]);
 
   /**
-   * Open a studio ATTACHED to the chat — docked beside it (or hidden for
-   * Autopilot), never a separate popup and never a full-screen requirement.
-   * When the studio exposes no live controller, the brief still reaches it
-   * through the shared handoff and a fresh inline mount; the customer is
-   * never asked to do anything.
+   * Open a studio over the chat for Copilot, or hidden for Autopilot. The
+   * customer stays in one conversation and never gets redirected.
    */
   const handleRouteStudio = useCallback(async (route: { appId: string; brief: string; view?: AppView }, attachment: VidvergeAttachment | null): Promise<{ message: string; controller: AppController | null }> => {
     const appId = resolveAppId(route.appId) || 'script-to-video';
-    const view: 'side' | 'hidden' = route.view === 'hidden' ? 'hidden' : 'side';
+    const view: 'popup' | 'hidden' = route.view === 'hidden' ? 'hidden' : 'popup';
     let controller: AppController | null = null;
     try {
       controller = await openBridgedApp(appId, view);
@@ -170,7 +167,7 @@ function VergerApp() {
     return {
       message: controller
         ? `${appName(appId)} is connected to this chat.`
-        : `${appName(appId)} is open beside this chat with your brief already handed over.`,
+        : `${appName(appId)} is open over this chat with your brief already filled in.`,
       controller,
     };
   }, [refreshJobs]);
@@ -187,22 +184,16 @@ function VergerApp() {
   }, []);
 
   return (
-    <div
-      className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--vg-bg)] text-[var(--vg-text)]"
-      style={{ fontFamily: 'Manrope, "Segoe UI", sans-serif' }}
-    >
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute left-1/2 top-[-34%] h-[72%] w-[88%] -translate-x-1/2 rounded-full bg-[color-mix(in_srgb,var(--vg-accent)_9%,transparent)] blur-[120px]" />
-        <div className="absolute bottom-[-46%] right-[-18%] h-[64%] w-[58%] rounded-full bg-[color-mix(in_srgb,var(--vg-bronze)_10%,transparent)] blur-[120px]" />
-      </div>
-      <main className="relative z-10 flex min-h-0 flex-1 justify-center overflow-hidden px-3 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 sm:px-6 sm:pb-6 sm:pt-5">
-        <div className="flex h-full min-h-0 w-full max-w-[980px] flex-col justify-center">
+    <div className="absolute inset-0 flex min-h-0 flex-col overflow-hidden overscroll-none bg-[var(--vg-bg)] text-[var(--vg-text)]" style={{ fontFamily: 'var(--body)' }}>
+      <main className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
           <VergerChat jobs={jobs} onRouteStudio={handleRouteStudio} onUploadAttachment={handleUploadAttachment} />
         </div>
       </main>
       <AppBridgeHost />
+      <BrandContextLayer />
     </div>
   );
 }
 
-export default withBrandContext(VergerApp, 'Verger');
+export default VergerApp;

@@ -23,7 +23,7 @@ export const colors = {
 } as const;
 export type ColorToken = keyof typeof colors;
 export const beamVariants = {
-  info: { core: COLORS.focus, body: COLORS.info, trail: COLORS.infoBg },
+  info: { core: COLORS.focus, body: COLORS.accent, trail: COLORS.accentSoft },
   success: { core: COLORS.focus, body: COLORS.success, trail: COLORS.successBg },
   error: { core: COLORS.focus, body: COLORS.danger, trail: COLORS.dangerBg },
 } as const;

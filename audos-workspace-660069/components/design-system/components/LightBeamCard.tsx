@@ -65,8 +65,8 @@ export default function LightBeamCard({
         onKeyDown={(e) => { if (onClick && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onClick(); } }}
         className={className}
         style={{
-          background: colors.bgGlass,
-          border: '1px solid ' + (selected || active ? colors.borderActive : colors.borderSubtle),
+          background: selected ? 'linear-gradient(0deg, var(--vg-gold-tint), var(--vg-gold-tint)), ' + colors.bgGlass : colors.bgGlass,
+          border: '1px solid ' + (selected || active ? colors.borderBeam : colors.borderSubtle),
           borderRadius: radius,
           padding,
           color: colors.textPrimary,

@@ -27,7 +27,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, BarChart3, Plus, Target } from 'lucide-react';
+import { AlertTriangle, Archive, BarChart3, Plus, RefreshCw, Target, Trash2 } from 'lucide-react';
 import { ownerKey } from './api';
 import {
   Analysis, Competitor, Insights, Matrix, Profile, SavedSummary,
@@ -49,6 +49,41 @@ import CreativeStrategyScreen from '../AdsStudio/CreativeStrategyScreen';
 import { emptyCreativeStrategy, upgradeCreativeStrategy, type CreativeStrategyState } from '../AdsStudio/creativeStrategy';
 
 type ScreenId = 'brand' | 'competitors' | 'compare' | 'strategize';
+
+interface SavedProjectBoundaryProps {
+  resetKey: string;
+  projectId: number;
+  onRetry: () => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}
+
+class SavedProjectBoundary extends React.Component<SavedProjectBoundaryProps, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) { return { error }; }
+
+  componentDidUpdate(previous: Readonly<SavedProjectBoundaryProps>) {
+    if (previous.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: null });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div role="alert" style={{ padding: 24, borderRadius: 16, border: '1px solid var(--vg-danger)', background: 'color-mix(in srgb,var(--vg-danger) 8%,var(--vg-surface))' }}>
+        <AlertTriangle size={24} style={{ color: 'var(--vg-danger)' }} />
+        <h3 style={{ margin: '12px 0 6px', color: TEXT }}>This saved project couldn’t be opened</h3>
+        <p style={{ margin: 0, maxWidth: 620, color: TEXT_DIM, lineHeight: 1.6 }}>
+          Its older saved shape could not be restored safely. Retry after the migration runs, or delete only this saved project. The rest of Ads Studio is still available.
+        </p>
+        <div style={{ display: 'flex', gap: 9, marginTop: 16, flexWrap: 'wrap' }}>
+          <Button variant="primary" onClick={this.props.onRetry}><RefreshCw size={14} /> Retry</Button>
+          {this.props.projectId > 0 ? <Button onClick={this.props.onDelete}><Trash2 size={14} /> Delete saved project</Button> : null}
+        </div>
+      </div>
+    );
+  }
+}
 
 const PRODUCT_STAGES = [
   { id: 'discover', label: 'Discover', state: 'ready' },
@@ -111,6 +146,7 @@ export function VergeyeApp(_props: { onOpenCreate?: () => void } = {}) {
   const [loadingSaved, setLoadingSaved] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [openRetryKey, setOpenRetryKey] = useState(0);
   const { save: saveBrandContext } = useBrandContext();
 
   const live = useRef(analysis);
@@ -222,7 +258,8 @@ export function VergeyeApp(_props: { onOpenCreate?: () => void } = {}) {
               : 'brand',
       );
     } catch (e: any) {
-      setError(String(e?.message || e));
+      setError(`This saved project couldn’t be opened. ${String(e?.message || e)}`);
+      setShowSaved(true);
     }
   };
 
@@ -410,7 +447,22 @@ export function VergeyeApp(_props: { onOpenCreate?: () => void } = {}) {
 
           {error ? <Notice tone="bad">{error}</Notice> : null}
 
-          {body}
+          <SavedProjectBoundary
+            resetKey={`${analysis.id}:${openRetryKey}:${showSaved ? 'saved' : screen}`}
+            projectId={analysis.id}
+            onRetry={() => {
+              const id = live.current.id;
+              setOpenRetryKey((value) => value + 1);
+              if (id > 0) void openSaved(id);
+              else startNew();
+            }}
+            onDelete={() => {
+              const id = live.current.id;
+              if (id > 0) void deleteSaved(id).then(() => setShowSaved(true));
+            }}
+          >
+            {body}
+          </SavedProjectBoundary>
 
           <div style={{
             marginTop: 34, paddingTop: 16, borderTop: `1px solid ${LINE}`,

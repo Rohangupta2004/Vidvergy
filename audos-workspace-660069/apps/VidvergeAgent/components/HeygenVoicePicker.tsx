@@ -89,14 +89,14 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
   });
 
   if (notice) {
-    return <p className="text-[12px] text-[var(--vv-text-dim)]">{notice}</p>;
+    return <p className="text-[12px] text-[var(--vg-muted)]">{notice}</p>;
   }
 
   if (loading) {
     return (
       <div className="space-y-2">
         {SKELETON_KEYS.map((key) => (
-          <div key={key} className="vv-skeleton h-11 rounded-xl border border-[var(--vv-border)]" />
+          <div key={key} className="vv-skeleton h-11 rounded-xl border border-[var(--vg-border)]" />
         ))}
       </div>
     );
@@ -105,11 +105,11 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
   if (error) {
     return (
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] text-[var(--vv-error)]">{error}</p>
+        <p className="text-[12px] text-[var(--vg-danger)]">{error}</p>
         <button
           type="button"
           onClick={() => setAttempt((value) => value + 1)}
-          className="shrink-0 rounded-full border border-[var(--vv-border)] px-3 py-1 text-[11px] text-[#9E8B55] transition-colors hover:text-[#F5E9C8]"
+          className="shrink-0 rounded-full border border-[var(--vg-border)] px-3 py-1 text-[11px] text-[var(--vg-muted)] transition-colors hover:text-[var(--vg-accent)]"
         >
           Try again
         </button>
@@ -120,18 +120,18 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="flex min-w-[160px] flex-1 items-center gap-2 rounded-full border border-[var(--vv-border)] px-3 py-1.5">
-          <Search size={13} className="shrink-0 text-[#6E5F38]" />
+        <span className="flex min-w-[160px] flex-1 items-center gap-2 rounded-full border border-[var(--vg-border)] px-3 py-1.5">
+          <Search size={13} className="shrink-0 text-[var(--vg-muted)]" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search voices or language"
-            className="min-w-0 flex-1 bg-transparent text-[12px] text-[#F5E9C8] outline-none placeholder:text-[#6E5F38]"
+            className="min-w-0 flex-1 bg-transparent text-[12px] text-[var(--vg-text)] outline-none placeholder:text-[var(--vg-muted)]"
             aria-label="Search HeyGen voices"
           />
         </span>
 
-        <span className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--vv-border)] p-0.5">
+        <span className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--vg-border)] p-0.5">
           {GENDERS.map((option) => (
             <button
               key={option.id}
@@ -140,8 +140,8 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
               className="rounded-full px-2.5 py-1 text-[11px] transition-colors"
               style={
                 gender === option.id
-                  ? { background: 'color-mix(in srgb, var(--vv-gold) 18%, transparent)', color: 'var(--vv-gold)' }
-                  : { color: '#9E8B55' }
+                  ? { background: 'color-mix(in srgb, var(--vg-accent) 18%, transparent)', color: 'var(--vg-accent)' }
+                  : { color: 'var(--vg-muted)' }
               }
             >
               {option.label}
@@ -153,7 +153,7 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
           <button
             type="button"
             onClick={() => onSelect(null)}
-            className="shrink-0 rounded-full border border-[var(--vv-border)] px-3 py-1.5 text-[11px] text-[#9E8B55] transition-colors hover:text-[#F5E9C8]"
+            className="shrink-0 rounded-full border border-[var(--vg-border)] px-3 py-1.5 text-[11px] text-[var(--vg-muted)] transition-colors hover:text-[var(--vg-accent)]"
           >
             Skip voice
           </button>
@@ -161,7 +161,7 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
       </div>
 
       {visible.length === 0 ? (
-        <p className="text-[12px] text-[var(--vv-text-dim)]">
+        <p className="text-[12px] text-[var(--vg-muted)]">
           {voices.length ? 'No voice matches those filters.' : 'This HeyGen account has no voices yet.'}
         </p>
       ) : (
@@ -173,15 +173,15 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
                 <div
                   className="flex items-center gap-2 rounded-xl border px-2.5 py-2 transition-colors"
                   style={{
-                    borderColor: chosen ? 'var(--vv-gold)' : 'var(--vv-border)',
-                    background: chosen ? 'color-mix(in srgb, var(--vv-gold) 8%, transparent)' : 'transparent',
+                    borderColor: chosen ? 'var(--vg-accent)' : 'var(--vg-border)',
+                    background: chosen ? 'color-mix(in srgb, var(--vg-accent) 8%, transparent)' : 'transparent',
                   }}
                 >
                   <button
                     type="button"
                     onClick={() => togglePreview(voice)}
                     disabled={!voice.previewAudio}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--vv-border)] text-[#9E8B55] transition-colors hover:text-[#F5E9C8] disabled:opacity-25"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--vg-border)] text-[var(--vg-muted)] transition-colors hover:text-[var(--vg-accent)] disabled:opacity-25"
                     aria-label={voice.previewAudio ? `Preview ${voice.name}` : 'No preview available'}
                     title={voice.previewAudio ? `Preview ${voice.name}` : 'No preview available'}
                   >
@@ -194,15 +194,15 @@ export default function HeygenVoicePicker({ active, selected, onSelect }: Heygen
                     aria-pressed={chosen}
                     className="min-w-0 flex-1 text-left"
                   >
-                    <span className="block truncate text-[12.5px] text-[#F5E9C8]">{voice.name}</span>
-                    <span className="block truncate text-[11px] text-[var(--vv-text-dim)]">
+                    <span className="block truncate text-[12.5px] text-[var(--vg-text)]">{voice.name}</span>
+                    <span className="block truncate text-[11px] text-[var(--vg-muted)]">
                       {voice.language}
                       {voice.gender ? ` · ${voice.gender}` : ''}
                     </span>
                   </button>
 
                   {chosen && (
-                    <span className="shrink-0 text-[var(--vv-gold)]">
+                    <span className="shrink-0 text-[var(--vg-accent)]">
                       <Check size={14} />
                     </span>
                   )}

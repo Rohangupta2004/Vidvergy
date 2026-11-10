@@ -100,8 +100,8 @@ export default function MultiShotForm({
               onClick={() => patch({ mode })}
               className="flex-1 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold transition-colors disabled:opacity-50"
               style={{
-                background: active ? 'var(--space-brand-primary-500)' : 'transparent',
-                color: active ? 'var(--space-text-on-primary)' : 'var(--space-text-secondary)',
+                background: active ? 'var(--vg-gold-tint)' : 'transparent',
+                color: active ? 'var(--vg-text)' : 'var(--space-text-secondary)',
               }}
             >
               {mode === 'custom' ? 'Custom shots' : 'Auto story'}
@@ -206,12 +206,12 @@ export default function MultiShotForm({
                   className="rounded-full px-3 py-1.5 text-[12.5px] font-semibold transition-colors disabled:opacity-50"
                   style={{
                     background: active
-                      ? 'color-mix(in srgb, var(--space-brand-primary-500) 18%, transparent)'
+                      ? 'var(--vg-gold-tint)'
                       : 'transparent',
                     border: `1px solid ${
                       active ? 'var(--space-brand-primary-500)' : 'var(--space-border-default)'
                     }`,
-                    color: active ? 'var(--space-brand-highlight)' : 'var(--space-text-secondary)',
+                    color: active ? 'var(--vg-text)' : 'var(--space-text-secondary)',
                   }}
                 >
                   {seconds}s

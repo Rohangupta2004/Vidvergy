@@ -9,14 +9,14 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import {
-  AlertTriangle, ArrowRight, Check, Circle, CircleDot, FileUp, Layers, Lock, Pause,
+  AlertTriangle, ArrowRight, Check, Circle, CircleDot, FileUp, Layers, Lock, Mic, Pause,
   Play, Plus, RefreshCw, SkipForward, Sparkles, Trash2, UserRound, Wand2, Zap,
 } from 'lucide-react';
 import { Film, FilmCharacter, FilmScene, StoredReference, T, VideoClipSpec, db, isDeferredTextIssue, referenceSlug } from './api';
 import { audioReady, isSpokenSource, musicReady, narrationReady, sfxReady } from './pipeline/audio';
 import { openPricing } from '../../lib/plans';
 import { videoEngine } from '../../lib/videoEngines';
-import { resolveVideoModel } from './pipeline/videoModelService';
+import { resolveVideoModel, technicalPartOf } from './pipeline/videoModelService';
 import { pickerModels } from './modelPicker';
 import { capabilityFor, S2V_VIDEO_CAPABILITIES } from './v2Contracts';
 import VergeLoader from '../../components/VergeLoader';
@@ -43,6 +43,13 @@ function customerError(value: unknown): string {
   return friendlyErrorMessage(value);
 }
 
+/** How a block's storyboard frame reaches its video model. */
+function storyboardUseNote(modelId: string, cutType: unknown): string {
+  if (modelId === 'omni-1.1-flash') return 'Sent to Omni Flash as a reference';
+  if (modelId === 'seedance-2.5') return cutType === 'continuous' ? 'Guide only: Seedance continues from the last frame' : 'Opens this shot on Seedance';
+  return 'Guide only: this model takes no storyboard image';
+}
+
 function statusMeta(s: FilmScene): { word: string; color: string; icon: any } {
   switch (String(s.status)) {
     case 'completed': case 'succeeded': return { word: 'Completed', color: T.done, icon: <Check size={13} /> };
@@ -62,6 +69,99 @@ function statusMeta(s: FilmScene): { word: string; color: string; icon: any } {
 function sceneSeconds(film: Film, scene: FilmScene): number {
   const planned = (Array.isArray(film.plan?.scenes) ? film.plan!.scenes! : []).find((p) => p.scene_key === scene.scene_key);
   return Math.round(Number(planned?.duration_s || scene.duration_s) || 6);
+}
+
+const IN_FLIGHT = new Set(['queued', 'submitted', 'processing', 'generating', 'retrying']);
+const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab']);
+
+type BlockKey = 'done' | 'skipped' | 'rendering' | 'retrying' | 'starting' | 'writing' | 'queued' | 'look' | 'paused' | 'stalled' | 'failed' | 'needs_action' | 'ready' | 'waiting';
+interface BlockView { key: BlockKey; label: string; detail: string; tone: string; startable: boolean }
+interface RunScope { enabled: boolean; stage: string; paused: boolean; lookPending: boolean; live: boolean; stalled: boolean; until: number | null; first: FilmScene | null }
+
+/** Where the durable run stands, read only from saved state. `until` is the
+ * last block index this run may render; null means every remaining block. */
+function runScope(film: Film, scenes: FilmScene[], stalled: boolean): RunScope {
+  const background = (film.plan?.background || {}) as Record<string, unknown>;
+  const enabled = background.enabled === true && !['ready', 'cancelled'].includes(String(film.status));
+  const stage = String(background.stage || '');
+  const paused = enabled && film.plan?.orchestration?.paused === true;
+  const lookPending = enabled && background.review_gate_pending === true;
+  const isStalled = enabled && stalled;
+  const live = enabled && !paused && !lookPending && !isStalled && !RUNNER_RESTING_STAGES.has(stage);
+  const rawUntil = background.run_until_idx;
+  const until = rawUntil == null || rawUntil === '' || !Number.isFinite(Number(rawUntil)) ? null : Number(rawUntil);
+  const first = scenes.find((scene) => !DONE.has(String(scene.status))) || null;
+  return { enabled, stage, paused, lookPending, live, stalled: isStalled, until, first };
+}
+
+/** One plain-language state per block, shared by the scene rail, the Make
+ * list and the production banner so they can never disagree. */
+function blockView(film: Film, scene: FilmScene, scope: RunScope): BlockView {
+  const status = String(scene.status || 'waiting');
+  const state = (((scene.spec || {}) as VideoClipSpec).background || {}) as Record<string, unknown>;
+  const seconds = sceneSeconds(film, scene);
+  const inRun = scope.until == null || scene.idx <= scope.until;
+  const isFirst = scope.first?.id === scene.id;
+  if (status === 'completed' || status === 'succeeded') {
+    const swap = String(state.model_fallback || '');
+    return { key: 'done', label: 'Done', detail: swap ? `Clip saved. Rendered with a stand-in model: ${swap}.` : 'Clip saved.', tone: T.done, startable: false };
+  }
+  if (status === 'skipped') return { key: 'skipped', label: 'Skipped', detail: 'Left out of the film. The next block starts fresh instead of continuing from it.', tone: T.dim, startable: false };
+  if (status === 'failed') return { key: 'failed', label: 'Failed', detail: friendlyErrorMessage(scene.error || 'This block could not be made.'), tone: T.fault, startable: true };
+  if (status === 'needs_action') return { key: 'needs_action', label: 'Needs you', detail: 'The clip is saved, but its last frame could not be captured, so the next block cannot continue from it yet.', tone: T.fault, startable: false };
+  if (status === 'retrying' || (IN_FLIGHT.has(status) && String(state.provider_status || '') === 'retrying')) {
+    const attempt = Math.min(3, Math.max(1, Math.round(Number(state.attempt || state.retries) || 0) + 1));
+    return { key: 'retrying', label: 'Retrying', detail: `The video service did not answer, so the same request is being sent again — attempt ${attempt} of 3. Nothing extra is charged.`, tone: T.live, startable: false };
+  }
+  if (IN_FLIGHT.has(status)) return { key: 'rendering', label: 'Rendering', detail: `The video model is making this ${seconds}s clip. This usually takes a few minutes.`, tone: T.live, startable: false };
+  if (scope.lookPending) return { key: 'look', label: 'Waiting for look check', detail: 'Approve Block 1’s look above, then the rest continue.', tone: T.muted, startable: false };
+  if (scope.paused && inRun) return { key: 'paused', label: 'Paused', detail: 'Production is paused. Press Resume above to continue.', tone: T.muted, startable: false };
+  if (scope.stalled && inRun && isFirst) return { key: 'stalled', label: 'Not started', detail: 'The background runner has not picked this block up. Press Start to send it again — nothing is charged twice.', tone: T.fault, startable: true };
+  if (scope.live && inRun) {
+    if (isFirst) {
+      return status === 'ready' && scene.prompt
+        ? { key: 'starting', label: 'Starting', detail: 'Sending this block to the video model…', tone: T.live, startable: false }
+        : { key: 'writing', label: 'Writing prompt', detail: 'Writing this block’s shot prompt. It renders right after.', tone: T.live, startable: false };
+    }
+    return { key: 'queued', label: 'Queued', detail: `Starts when Block ${scene.idx} finishes, so it continues from that shot.`, tone: T.muted, startable: false };
+  }
+  const firstIdx = scope.first && scope.first.id !== scene.id ? scope.first.idx : null;
+  const before = firstIdx == null ? '' : firstIdx === scene.idx - 1 ? ` Block ${firstIdx + 1} renders first so the shots connect.` : ` Blocks ${firstIdx + 1}–${scene.idx} render first so the shots connect.`;
+  if (status === 'ready' && scene.prompt) return { key: 'ready', label: 'Ready', detail: `Prompt written. Press Start to render it.${before}`, tone: T.live, startable: true };
+  return { key: 'waiting', label: 'Not started', detail: `Press Start to write its prompt and render it.${before}`, tone: T.muted, startable: true };
+}
+
+function blockIcon(key: BlockKey) {
+  switch (key) {
+    case 'done': return <Check size={13} />;
+    case 'rendering': case 'retrying': case 'starting': case 'writing': return <VergeLoader size={30} label="Working" />;
+    case 'failed': case 'needs_action': case 'stalled': return <AlertTriangle size={13} />;
+    case 'paused': return <Pause size={12} />;
+    case 'skipped': return <SkipForward size={13} />;
+    case 'ready': return <CircleDot size={13} />;
+    default: return <Circle size={12} />;
+  }
+}
+
+/** Credits per block: a block's charge is "held" from Start until its clip
+ * lands (then "used"), and "returned" once a failed or never-started block is
+ * refunded. Nothing is counted for a block that was never authorized. */
+function creditSummary(film: Film, scenes: FilmScene[]) {
+  const billing = (((film.plan?.background || {}) as Record<string, unknown>).billing || {}) as Record<string, unknown>;
+  const keys = new Set((Array.isArray(billing.scene_keys) ? billing.scene_keys : []).map(String));
+  let used = 0; let held = 0; let returned = 0;
+  const heldBlocks: number[] = [];
+  for (const scene of scenes) {
+    const state = (((scene.spec || {}) as VideoClipSpec).background || {}) as Record<string, unknown>;
+    const seconds = Math.max(1, Math.ceil(sceneSeconds(film, scene)));
+    const key = String(state.active_credit_key || state.idempotency_key || '');
+    const refundedKey = String(state.terminal_refunded_key || '');
+    const refundQueuedKey = String(state.terminal_refund_pending_key || '');
+    if (refundedKey || refundQueuedKey) returned += seconds;
+    if (String(scene.status) === 'completed' || String(scene.status) === 'succeeded') used += Math.max(1, Math.ceil(Number(state.credits_actual) || seconds));
+    else if (String(scene.status) !== 'skipped' && key && keys.has(key) && refundedKey !== key && refundQueuedKey !== key) { held += seconds; heldBlocks.push(scene.idx + 1); }
+  }
+  return { used, held, returned, heldBlocks, unmetered: billing.unmetered === true };
 }
 
 function referenceLabel(s: FilmScene): string {
@@ -93,8 +193,8 @@ function CastReview(props: {
   const [library, setLibrary] = useState<StoredReference[]>([]);
   useEffect(() => { void db.listReferences().then((rows) => setLibrary(rows.filter((row) => row.type === 'character'))).catch(() => setLibrary([])); }, [props.film.id]);
   const reviewed = props.film.plan?.cast_reviewed === true;
-  const ready = reviewed && cast.every((character) => character.sheet_required === false || (character.approved && character.url));
-  const visualCast = cast.filter((character) => character.sheet_required !== false);
+  const ready = reviewed && cast.every((character) => character.sheet_required === false || character.kind === 'narrator' || (character.approved && character.url));
+  const visualCast = cast.filter((character) => character.sheet_required !== false && character.kind !== 'narrator');
   const canApproveAll = visualCast.length > 0 && visualCast.every((character) => character.url && !character.image_error && !character.image_review_by_eye);
   const inputStyle = { width: '100%', background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 8, color: T.bone, padding: '8px 10px', fontSize: 12 } as const;
   const sheetAction = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, minHeight: 44, borderRadius: 7, padding: '7px 8px', fontSize: 12, fontWeight: 750, lineHeight: 1.25, textAlign: 'center', cursor: 'pointer' } as const;
@@ -108,7 +208,7 @@ function CastReview(props: {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {canApproveAll && !ready ? <button type="button" disabled={props.disabled} onClick={() => visualCast.forEach((character) => props.onUpdate(character.id, { approved: true }))} style={{ minHeight: 44, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 10, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}>Approve all</button> : null}
+          {canApproveAll && !ready ? <button type="button" disabled={props.disabled} onClick={() => visualCast.forEach((character) => props.onUpdate(character.id, { approved: true }))} style={{ minHeight: 44, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 10, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}>Approve all</button> : null}
           <span style={{ color: ready ? T.done : T.live, border: `1px solid ${ready ? T.done : T.live}`, borderRadius: 999, padding: '6px 10px', fontSize: 12, fontWeight: 800 }}>{ready ? 'CAST APPROVED' : 'APPROVAL REQUIRED'}</span>
         </div>
       </div>
@@ -118,7 +218,7 @@ function CastReview(props: {
           <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>Add a cast member if identity must persist, or confirm that this is intentionally character-free.</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
             <button disabled={props.disabled} onClick={props.onAdd} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}><Plus size={12} /> Add character</button>
-            <button disabled={props.disabled || reviewed} onClick={props.onConfirmEmpty} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: reviewed ? T.raised : T.live, color: reviewed ? T.done : 'var(--space-text-on-primary)', border: 'none', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} /> {reviewed ? 'No-cast plan confirmed' : 'Confirm no cast needed'}</button>
+            <button disabled={props.disabled || reviewed} onClick={props.onConfirmEmpty} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: reviewed ? T.raised : T.live, color: reviewed ? T.done : 'var(--vg-on-btn)', border: 'none', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} /> {reviewed ? 'No-cast plan confirmed' : 'Confirm no cast needed'}</button>
           </div>
         </div>
       ) : (
@@ -126,44 +226,55 @@ function CastReview(props: {
           {cast.map((character) => {
             const inferred = new Set(character.inferred_fields || []);
             const coverage = Array.isArray(character.coverage) ? character.coverage : [];
+            // The narrator is a voice only: no sheet, no image, no visual identity to approve.
+            const voiceOnly = character.kind === 'narrator';
+            const unapprove = voiceOnly ? {} : { approved: false };
             const field = (label: string, key: keyof FilmCharacter, value: string, multiline = false) => (
               <label style={{ display: 'block' }}><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>{label}{inferred.has(String(key)) ? ' · inferred' : ''}</span>{multiline
-                ? <textarea key={`${character.id}-${String(key)}-${value}`} defaultValue={value} rows={2} disabled={props.disabled} onBlur={(event) => { if (event.target.value !== value) props.onUpdate(character.id, { [key]: event.target.value, approved: false } as Partial<FilmCharacter>); }} style={{ ...inputStyle, resize: 'vertical' }} />
-                : <input key={`${character.id}-${String(key)}-${value}`} defaultValue={value} disabled={props.disabled} onBlur={(event) => { if (event.target.value !== value) props.onUpdate(character.id, { [key]: event.target.value, approved: false } as Partial<FilmCharacter>); }} style={inputStyle} />}</label>
+                ? <textarea key={`${character.id}-${String(key)}-${value}`} defaultValue={value} rows={2} disabled={props.disabled} onBlur={(event) => { if (event.target.value !== value) props.onUpdate(character.id, { [key]: event.target.value, ...unapprove } as Partial<FilmCharacter>); }} style={{ ...inputStyle, resize: 'vertical' }} />
+                : <input key={`${character.id}-${String(key)}-${value}`} defaultValue={value} disabled={props.disabled} onBlur={(event) => { if (event.target.value !== value) props.onUpdate(character.id, { [key]: event.target.value, ...unapprove } as Partial<FilmCharacter>); }} style={inputStyle} />}</label>
             );
             return (
               <article key={character.id} style={{ background: T.raised, border: `1px solid ${character.approved ? T.done : T.line}`, borderRadius: 11, padding: 12 }}>
                 <div className="s2v-cast-grid" style={{ display: 'grid', gridTemplateColumns: '120px minmax(0, 1fr)', gap: 12 }}>
+                  {voiceOnly ? (
+                  <div>
+                    <div style={{ width: 120, height: 80, display: 'grid', placeItems: 'center', borderRadius: 9, border: `1px solid ${T.dim}`, color: T.live }}><Mic size={25} /></div>
+                    <div style={{ color: T.bone, fontSize: 12, fontWeight: 800, marginTop: 7 }}>{character.name}</div>
+                    <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 4 }}>Voice only. The narrator is heard, never shown on screen.</div>
+                  </div>
+                  ) : (
                   <div>
                     {character.url ? <img src={character.url} alt={`${character.name} sheet`} style={{ width: 120, height: 150, objectFit: 'cover', borderRadius: 9, border: `1px solid ${T.dim}` }} /> : <div style={{ width: 120, height: 150, display: 'grid', placeItems: 'center', borderRadius: 9, border: `1px dashed ${T.fault}`, color: T.dim }}><UserRound size={25} /></div>}
                     <div style={{ color: T.bone, fontSize: 12, fontWeight: 800, marginTop: 7 }}>{character.name}</div>
                     <div style={{ color: T.live, fontFamily: T.mono, fontSize: 12, marginTop: 2 }}>@{referenceSlug(character.name || character.id)}</div>
                     {character.image_error ? <div style={{ color: character.image_review_by_eye ? 'var(--vg-warning)' : T.fault, fontSize: 12, lineHeight: 1.5, marginTop: 6 }}><b>{character.image_review_by_eye ? 'Review by eye: ' : ''}</b>{character.image_review_by_eye ? character.image_error : friendlyErrorMessage(character.image_error)}</div> : null}
                     <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-                      <button disabled={props.disabled} onClick={() => props.onRegenerate(character.id, character.url ? 'premium' : 'draft')} style={{ ...sheetAction, background: character.url ? 'transparent' : T.live, color: character.url ? T.bone : 'var(--space-text-on-primary)', border: `1px solid ${character.url ? T.dim : T.live}` }}><RefreshCw size={12} />{character.url ? 'Regenerate' : 'Generate sheet'}</button>
-                      <button disabled={props.disabled || !character.url} onClick={() => props.onUpdate(character.id, { approved: !character.approved })} style={{ ...sheetAction, background: character.approved ? T.done : character.url ? T.live : T.canvas, color: character.approved || character.url ? 'var(--space-text-on-primary)' : T.dim, border: 'none', fontWeight: 800, cursor: character.url ? 'pointer' : 'default' }}><Check size={10} />{character.approved ? 'Approved' : 'Approve sheet'}</button>
+                      <button disabled={props.disabled} onClick={() => props.onRegenerate(character.id, character.url ? 'premium' : 'draft')} style={{ ...sheetAction, background: character.url ? 'transparent' : T.live, color: character.url ? T.bone : 'var(--vg-on-btn)', border: `1px solid ${character.url ? T.dim : T.live}` }}><RefreshCw size={12} />{character.url ? 'Regenerate' : 'Generate sheet'}</button>
+                      <button disabled={props.disabled || !character.url} onClick={() => props.onUpdate(character.id, { approved: !character.approved })} style={{ ...sheetAction, background: character.approved ? T.done : character.url ? T.live : T.canvas, color: character.approved || character.url ? 'var(--vg-on-btn)' : T.dim, border: 'none', fontWeight: 800, cursor: character.url ? 'pointer' : 'default' }}><Check size={10} />{character.approved ? 'Approved' : 'Approve sheet'}</button>
                       <label style={{ ...sheetAction, background: 'transparent', color: T.bone, border: `1px solid ${T.dim}`, fontWeight: 500 }}><FileUp size={10} />Upload own<input type="file" accept="image/png,image/jpeg,image/webp" disabled={props.disabled} style={{ display: 'none' }} onChange={(event) => { const file = event.target.files?.[0]; if (file) props.onUpload(character.id, file); event.target.value = ''; }} /></label>
                       {library.length ? <select aria-label={`Reuse an existing sheet for ${character.name}`} disabled={props.disabled} defaultValue="" onChange={(event) => { const ref = library.find((item) => String(item.id) === event.target.value); if (ref) props.onReuse(character.id, ref); event.target.value = ''; }} style={{ ...inputStyle, fontSize: 12, padding: '6px 7px', minHeight: 44 }}><option value="">Reuse existing…</option>{library.map((ref) => <option key={ref.id} value={ref.id}>@{ref.name}</option>)}</select> : null}
                     </div>
                   </div>
+                  )}
                   <details style={{ minWidth: 0 }}>
-                    <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 12.5, fontWeight: 800 }}>Edit identity, voice & script coverage</summary>
+                    <summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 12.5, fontWeight: 800 }}>{voiceOnly ? 'Edit narrator voice & script coverage' : 'Edit identity, voice & script coverage'}</summary>
                     <div style={{ minWidth: 0 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 1fr) 140px', gap: 8 }}>
                       {field('Name', 'name', character.name)}
                       <label><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>Type</span><select value={character.kind || 'main'} disabled={props.disabled} onChange={(event) => props.onUpdate(character.id, { kind: event.target.value as FilmCharacter['kind'], approved: false })} style={inputStyle}><option value="main">Main</option><option value="narrator">Narrator / VO</option><option value="side">Recurring side</option></select></label>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 8 }}>
-                      {field('Role', 'role', character.role || '')}{field('Age / appearance cues', 'age_appearance', character.age_appearance || '')}{field('Wardrobe', 'wardrobe', character.wardrobe || '')}{field('Personality / voice', 'personality_voice', character.personality_voice || '')}
+                      {field('Role', 'role', character.role || '')}{voiceOnly ? null : field('Age / appearance cues', 'age_appearance', character.age_appearance || '')}{voiceOnly ? null : field('Wardrobe', 'wardrobe', character.wardrobe || '')}{field('Personality / voice', 'personality_voice', character.personality_voice || '')}
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8, marginTop: 8 }}>
-                      {(['tone', 'accent', 'pace'] as const).map((key) => <label key={key}><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>Voice {key}{inferred.has('voice') ? ' · inferred' : ''}</span><input defaultValue={character.voice?.[key] || (key === 'accent' ? 'neutral' : key === 'pace' ? 'conversational' : 'natural')} disabled={props.disabled} onBlur={(event) => props.onUpdate(character.id, { voice: { ...(character.voice || { tone: '', accent: '', pace: '' }), [key]: event.target.value }, approved: false })} style={inputStyle} /></label>)}
-                      <label><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>Voice ID <span style={{ fontWeight: 500 }}>(optional)</span></span><input defaultValue={character.voice?.voice_id || ''} placeholder="Existing voice id" disabled={props.disabled} onBlur={(event) => props.onUpdate(character.id, { voice: { ...(character.voice || { tone: 'natural', accent: 'neutral', pace: 'conversational' }), voice_id: event.target.value || undefined }, approved: false })} style={inputStyle} /></label>
+                      {(['tone', 'accent', 'pace'] as const).map((key) => <label key={key}><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>Voice {key}{inferred.has('voice') ? ' · inferred' : ''}</span><input defaultValue={character.voice?.[key] || (key === 'accent' ? 'neutral' : key === 'pace' ? 'conversational' : 'natural')} disabled={props.disabled} onBlur={(event) => props.onUpdate(character.id, { voice: { ...(character.voice || { tone: '', accent: '', pace: '' }), [key]: event.target.value }, ...unapprove })} style={inputStyle} /></label>)}
+                      <label><span style={{ display: 'block', color: T.dim, fontSize: 12, fontWeight: 750, marginBottom: 4 }}>Voice ID <span style={{ fontWeight: 500 }}>(optional)</span></span><input defaultValue={character.voice?.voice_id || ''} placeholder="Existing voice id" disabled={props.disabled} onBlur={(event) => props.onUpdate(character.id, { voice: { ...(character.voice || { tone: 'natural', accent: 'neutral', pace: 'conversational' }), voice_id: event.target.value || undefined }, ...unapprove })} style={inputStyle} /></label>
                     </div>
-                    <div style={{ marginTop: 8 }}>{field('Locked appearance used in every block', 'appearance', character.appearance || '', true)}</div>
+                    {voiceOnly ? null : <div style={{ marginTop: 8 }}>{field('Locked appearance used in every block', 'appearance', character.appearance || '', true)}</div>}
                     <details style={{ marginTop: 9 }}><summary style={{ color: T.muted, fontSize: 12, cursor: 'pointer' }}>Script coverage · {coverage.reduce((sum, item) => sum + item.lines.length, 0)} mapped line(s)</summary><div style={{ display: 'grid', gap: 5, marginTop: 6 }}>{coverage.length ? coverage.map((item, index) => <div key={index} style={{ color: T.muted, fontSize: 12, lineHeight: 1.45 }}><span style={{ color: T.live, fontFamily: T.mono }}>Scene {item.scene}</span>{item.lines.map((line, lineIndex) => <div key={lineIndex} style={{ marginTop: 2 }}>“{line}”</div>)}</div>) : <div style={{ color: T.fault, fontSize: 12 }}>No exact script lines were mapped. Add coverage before approving if this person appears in the script.</div>}</div></details>
                     <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <button disabled={props.disabled || !character.url} onClick={() => props.onUpdate(character.id, { approved: !character.approved })} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: character.approved ? T.done : character.url ? T.live : T.canvas, color: character.approved || character.url ? 'var(--space-text-on-primary)' : T.dim, border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}><Check size={12} /> {character.approved ? 'Approved' : 'Approve sheet'}</button>
+                      {voiceOnly ? null : <button disabled={props.disabled || !character.url} onClick={() => props.onUpdate(character.id, { approved: !character.approved })} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: character.approved ? T.done : character.url ? T.live : T.canvas, color: character.approved || character.url ? 'var(--vg-on-btn)' : T.dim, border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}><Check size={12} /> {character.approved ? 'Approved' : 'Approve sheet'}</button>}
                       <button disabled={props.disabled} onClick={() => props.onRemove(character.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'transparent', color: T.fault, border: 'none', padding: '7px 8px', fontSize: 12, cursor: 'pointer' }}><Trash2 size={11} /> Remove</button>
                     </div>
                     </div>
@@ -217,7 +328,10 @@ export default function RenderRoom(props: {
   onSkip: (scene: FilmScene) => void;
   onGenerateCharacterDialogue: (scene: FilmScene) => void;
   dialogueAudioSceneId: number | null;
-  /** Fire every prepared scene at once (multi-generate). */
+  sceneInFlightId: number | null;
+  generateAllInFlight: boolean;
+  onStartScene: (scene: FilmScene) => void;
+  /** Prepare and submit every unfinished scene through the authenticated runner. */
   onGenerateAll: () => void;
   /** Style Lock, toggled mid-production. */
   onToggleStyleLock: (on: boolean) => void;
@@ -237,26 +351,58 @@ export default function RenderRoom(props: {
   onDeletePlanScene: (scene: FilmScene) => void;
   onAudioProbe: (scene: FilmScene, probe: ClipAudioProbe) => void;
   manualMode: boolean;
+  /** The durable run should be moving, but its lease lapsed with no tick. */
+  runnerStalled: boolean;
+  runnerIssue: string;
+  onRestartRunner: () => void;
+  blockStartError: { id: number; message: string } | null;
 }) {
   const { film, note, busy, auto } = props;
   const scenes = [...(Array.isArray(props.scenes) ? props.scenes : [])].sort((a, b) => a.idx - b.idx);
   const completed = scenes.filter((s) => s.status === 'completed');
   const failedScenes = scenes.filter((s) => s.status === 'failed');
-  const generating = scenes.find((s) => s.status === 'generating') || null;
+  const inFlight = scenes.find((s) => ['queued', 'submitted', 'processing', 'generating', 'retrying'].includes(String(s.status))) || null;
+  const generating = inFlight;
   const active = scenes.find((s) => !DONE.has(String(s.status))) || null;
   const allDone = scenes.length > 0 && scenes.every((s) => DONE.has(String(s.status)));
   const assembling = film.status === 'assembling';
-  // Multi-generate: every scene whose prompt is prepared and waiting.
-  const readyToFire = scenes.filter((s) => s.status === 'ready' && String(s.prompt || '').trim());
-  const batchRunning = busy || !!generating;
+  const remainingToGenerate = scenes.filter((s) => ['idle', 'pending', 'waiting', 'ready', 'failed'].includes(String(s.status)));
   const styleLocked = film.style_lock === true;
   const totalSeconds = scenes.reduce((n, s) => n + sceneSeconds(film, s), 0);
   const background = film.plan?.background || null;
   const backgroundActive = background?.enabled === true && film.status !== 'ready';
   const makeStarted = backgroundActive || scenes.some((scene) => !['waiting', 'ready'].includes(String(scene.status)));
+  const scope = runScope(film, scenes, props.runnerStalled);
+  const views = new Map(scenes.map((scene) => [scene.id, blockView(film, scene, scope)] as const));
+  const credits = creditSummary(film, scenes);
+  const coversAll = scope.live && scope.until == null;
+  const batchRunning = busy || props.generateAllInFlight || props.sceneInFlightId != null || coversAll || (!!inFlight && !scope.enabled);
+  const runFocus = inFlight || scope.first;
+  const runHeadline = scope.stalled
+    ? `Block ${(scope.first?.idx ?? 0) + 1} has not started — the background runner did not pick it up`
+    : scope.lookPending ? 'Block 1 is ready — approve the look to continue'
+      : scope.paused ? 'Paused — no new block starts until you resume'
+        : scope.stage === 'idle' && scope.first ? `Stopped after Block ${scope.first.idx} — press Start on Block ${scope.first.idx + 1} to continue`
+          : !scope.first ? 'Every block is done — assembling the final film'
+            : inFlight ? `Rendering Block ${inFlight.idx + 1} of ${scenes.length} — safe to close this tab`
+              : `Starting Block ${scope.first.idx + 1} of ${scenes.length} — safe to close this tab`;
+  const runProgressLabel = runFocus ? `Block ${runFocus.idx + 1} of ${scenes.length} · ${(views.get(runFocus.id)?.label || '').toLowerCase()}` : `All ${scenes.length} blocks done`;
+  const viewCounts = scenes.reduce((counts, scene) => { const key = views.get(scene.id)?.key || 'waiting'; counts[key] = (counts[key] || 0) + 1; return counts; }, {} as Record<string, number>);
+  const workingCount = (viewCounts.rendering || 0) + (viewCounts.retrying || 0) + (viewCounts.starting || 0) + (viewCounts.writing || 0);
+  const notStartedCount = (viewCounts.ready || 0) + (viewCounts.waiting || 0) + (viewCounts.paused || 0) + (viewCounts.look || 0);
+  const attentionCount = (viewCounts.failed || 0) + (viewCounts.needs_action || 0) + (viewCounts.stalled || 0);
+  const runChips = [
+    { label: `${(viewCounts.done || 0) + (viewCounts.skipped || 0)} done`, tone: T.done, show: true },
+    { label: `${workingCount} in progress`, tone: T.live, show: workingCount > 0 },
+    { label: `${viewCounts.queued || 0} queued`, tone: T.muted, show: Boolean(viewCounts.queued) },
+    { label: `${notStartedCount} not started`, tone: T.muted, show: notStartedCount > 0 },
+    { label: `${attentionCount} need${attentionCount === 1 ? 's' : ''} you`, tone: T.fault, show: attentionCount > 0 },
+    { label: `${scenes.filter((scene) => String(scene.prompt || '').trim()).length}/${scenes.length} prompts written`, tone: T.muted, show: true },
+    { label: background?.review_gate_pending ? 'Look check waiting' : background?.look_approved_at ? 'Look approved' : background?.review_gate ? 'Look check after Block 1' : 'No look check', tone: T.muted, show: true },
+  ].filter((chip) => chip.show);
   const characterSheets = Array.isArray(film.character_refs) ? film.character_refs : [];
-  const missingSheets = characterSheets.filter((character) => character.sheet_required !== false && !character.url);
-  const unapprovedSheets = characterSheets.filter((character) => character.sheet_required !== false && character.url && !character.approved);
+  const missingSheets = characterSheets.filter((character) => character.sheet_required !== false && character.kind !== 'narrator' && !character.url);
+  const unapprovedSheets = characterSheets.filter((character) => character.sheet_required !== false && character.kind !== 'narrator' && character.url && !character.approved);
   const castReady = film.plan?.cast_reviewed === true && missingSheets.length === 0 && unapprovedSheets.length === 0;
   const incompatibleSpeakingScenes = film.plan?.characters_speak
     ? scenes.filter((scene) => scene.dialogue?.kind === 'character' && Boolean(String(scene.dialogue?.line || '').trim()) && !resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).audioSupported)
@@ -301,7 +447,8 @@ export default function RenderRoom(props: {
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
           {scenes.map((s) => {
-            const meta = statusMeta(s);
+            const view = views.get(s.id) || blockView(film, s, scope);
+            const meta = { color: view.tone, icon: blockIcon(view.key), word: view.label };
             const isSel = selected?.id === s.id;
             return (
               <button
@@ -327,7 +474,7 @@ export default function RenderRoom(props: {
       {/* —— Active scene panel —— */}
       <div className="s2v-board-panel" style={{ flex: 1, overflowY: 'auto', minWidth: 0, padding: '24px 24px 32px' }}>
         <div style={{ maxWidth: 880, margin: '0 auto' }}>
-          <ProductionOverview film={film} scenes={scenes} />
+          <ProductionOverview film={film} scenes={scenes} headline={scope.enabled ? runHeadline : undefined} />
           {/* Film-level facts and controls: how long the cut runs, whether the
               look is locked, and — when several prompts are waiting — the one
               button that renders them all at once. */}
@@ -350,15 +497,15 @@ export default function RenderRoom(props: {
             >
               <Lock size={11} /> Style Lock {styleLocked ? 'on' : 'off'}
             </button> : null}
-            {readyToFire.length >= 2 ? (
+            {remainingToGenerate.length ? (
               <button
                 className="s2v-lift"
                 disabled={batchRunning}
-                title="Render every prepared scene in order. Each later scene waits for the newly validated prior frame; a failure stops later submissions."
+                title="Prepare and generate every unfinished scene in order. The runner respects the continuity dependency and its concurrency limit."
                 onClick={props.onGenerateAll}
-                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, background: batchRunning ? T.raised : T.live, color: batchRunning ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 700, cursor: batchRunning ? 'default' : 'pointer' }}
+                style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 7, background: batchRunning ? T.raised : T.live, color: batchRunning ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 700, cursor: batchRunning ? 'default' : 'pointer' }}
               >
-                <Layers size={13} /> {batchRunning ? 'Generating…' : `Generate All Ready (${readyToFire.length})`}
+                {props.generateAllInFlight || coversAll ? <VergeLoader size={30} label="Generating all remaining blocks" /> : <Layers size={13} />} {props.generateAllInFlight ? 'Starting…' : coversAll ? 'Generating every remaining block' : `Generate all remaining (${remainingToGenerate.length})`}
               </button>
             ) : null}
           </div>
@@ -367,7 +514,7 @@ export default function RenderRoom(props: {
             <section style={{ marginBottom: 14, background: T.card, border: `1px solid ${startReady ? T.done : T.live}`, borderRadius: 13, padding: '15px 16px', boxShadow: '0 8px 28px color-mix(in srgb, var(--space-text-primary) 14%, transparent)' }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                 <div style={{ flex: '1 1 300px' }}>
-                  <div style={{ color: T.bone, fontSize: 15, fontWeight: 850 }}>{startReady ? 'Ready to start production' : 'Finish these checks, then Start'}</div>
+                  <div style={{ color: T.bone, fontSize: 15, fontWeight: 850 }}>{completed.length && startReady ? `Ready to continue · ${scenes.length - completed.length} block${scenes.length - completed.length === 1 ? '' : 's'} left` : startReady ? 'Ready to start production' : 'Finish these checks, then Start'}</div>
                   <div role="list" aria-label="Production readiness checks" style={{ display: 'grid', gap: 5, marginTop: 8 }}>
                     {[
                       { label: 'Cast references approved', pass: !missingSheets.length && !unapprovedSheets.length, detail: missingSheets.length ? `${missingSheets.length} image${missingSheets.length === 1 ? '' : 's'} missing` : unapprovedSheets.length ? `${unapprovedSheets.length} sheet${unapprovedSheets.length === 1 ? '' : 's'} need review` : 'ready' },
@@ -378,9 +525,9 @@ export default function RenderRoom(props: {
                   <div role="list" aria-label="Plan totals" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}><span role="listitem" style={{ color: T.bone, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 9, padding: '7px 9px', fontSize: 12 }}>Total · {totalSeconds}s</span><span role="listitem" style={{ color: T.bone, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 9, padding: '7px 9px', fontSize: 12 }}>Estimate · {totalSeconds} credits</span><span role="listitem" style={{ color: T.bone, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 9, padding: '7px 9px', fontSize: 12 }}>ETA · several minutes per block</span></div><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 7 }}>{signedInTabRequired ? 'Keep this tab open while the selected model works.' : 'You can close this tab after Start.'}</div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  {missingSheets.length ? <button type="button" disabled={busy} onClick={props.onGenerateMissingCast} style={{ minHeight: 44, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Generate missing images</button> : null}
-                  {modelBlockers.length ? <button type="button" disabled={busy} onClick={props.onFixAudioModels} style={{ minHeight: 44, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Fix model compatibility</button> : null}
-                  <div style={{ display: 'grid', gap: 5, justifyItems: 'end' }}><button className="s2v-lift" disabled={!startReady} onClick={props.onStartBackground} style={{ minHeight: 46, display: 'inline-flex', alignItems: 'center', gap: 8, background: startReady ? 'var(--vg-gradient-action)' : T.raised, color: startReady ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${startReady ? T.live : T.line}`, borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 850, cursor: startReady ? 'pointer' : 'default' }}><Play size={14} /> Start</button>{startDisabledReason ? <span style={{ color: T.fault, fontSize: 12 }}>{startDisabledReason}</span> : <span style={{ color: T.done, fontSize: 12 }}>Ready to make {scenes.length} block{scenes.length === 1 ? '' : 's'}.</span>}</div>
+                  {missingSheets.length ? <button type="button" disabled={busy} onClick={props.onGenerateMissingCast} style={{ minHeight: 44, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Generate missing images</button> : null}
+                  {modelBlockers.length ? <button type="button" disabled={busy} onClick={props.onFixAudioModels} style={{ minHeight: 44, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Fix model compatibility</button> : null}
+                  <div style={{ display: 'grid', gap: 5, justifyItems: 'end' }}><button className="s2v-lift" disabled={!startReady} onClick={props.onStartBackground} style={{ minHeight: 46, display: 'inline-flex', alignItems: 'center', gap: 8, background: startReady ? 'var(--vg-gradient-action)' : T.raised, color: startReady ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${startReady ? T.live : T.line}`, borderRadius: 10, padding: '10px 18px', fontSize: 14, fontWeight: 850, cursor: startReady ? 'pointer' : 'default' }}><Play size={14} /> {completed.length ? 'Start remaining' : 'Start'}</button>{startDisabledReason ? <span style={{ color: T.fault, fontSize: 12 }}>{startDisabledReason}</span> : <span style={{ color: T.done, fontSize: 12 }}>Ready to make {scenes.length} block{scenes.length === 1 ? '' : 's'}.</span>}</div>
                 </div>
               </div>
               <details style={{ marginTop: 10 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.muted, fontSize: 12, fontWeight: 750 }}>Model limits</summary><div style={{ display: 'grid', gap: 5, color: T.muted, fontSize: 12, lineHeight: 1.45 }}>{S2V_VIDEO_CAPABILITIES.filter((item) => item.operation === 'generate' && item.available && item.modelId !== 'openrouter/bytedance/seedance-2.0-fast').map((item) => <div key={item.key}><b style={{ color: T.bone }}>{item.label}:</b> {item.supportedDurations?.length ? item.supportedDurations.map((value) => `${value}s`).join('/') : `${item.minDurationSec}–${item.maxDurationSec}s`}, {item.nativeAudio ? 'native sound' : 'silent adapter'}, {item.maxReferences} reference input{item.maxReferences === 1 ? '' : 's'}, continuity by {item.continuityMode.replace('-', ' ')}.</div>)}</div></details>
@@ -408,15 +555,15 @@ export default function RenderRoom(props: {
                 const sceneSpec = (planned?.spec || scene.spec || {}) as VideoClipSpec;
                 const start = scenes.slice(0,index).reduce((sum,item) => sum + sceneSeconds(film,item),0);
                 const end = start + sceneSeconds(film,scene);
-                const castThumbs = (film.character_refs || []).filter((character) => (sceneSpec.characters || []).includes(character.id) && character.url);
-                return <div key={scene.id} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '44px minmax(0,1fr)', gap: 12 }}><div aria-hidden style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ width: 36, height: 36, display: 'grid', placeItems: 'center', borderRadius: 999, background: selected?.id === scene.id ? T.live : T.raised, color: selected?.id === scene.id ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${selected?.id === scene.id ? T.live : T.dim}`, fontSize: 12, fontWeight: 850 }}>{index + 1}</span>{index < scenes.length - 1 ? <span style={{ width: 1, flex: 1, minHeight: 22, background: T.line }} /> : null}</div><article style={{ marginBottom: 12, background: selected?.id === scene.id ? 'color-mix(in srgb, var(--space-brand-primary-500) 8%, var(--space-surface-card))' : T.raised, border: `1px solid ${selected?.id === scene.id ? T.live : T.line}`, borderRadius: 12, padding: 12 }}><button type="button" onClick={() => setSelectedId(scene.id)} style={{ width: '100%', minHeight: 44, textAlign: 'left', background: 'transparent', color: T.bone, border: 0, padding: 0 }}><span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}><strong style={{ fontSize: 14 }}>Block {index + 1}</strong><span style={{ color: T.live, fontFamily: T.mono, fontSize: 12 }}>{start}–{end}s</span><span style={{ color: T.muted, border: `1px solid ${T.dim}`, borderRadius: 999, padding: '3px 8px', fontSize: 12 }}>{sceneSpec.cut_type === 'continuous' ? 'Continues' : 'New shot'}</span></span></button><div style={{ display: 'grid', gridTemplateColumns: (sceneSpec as any).storyboard_url ? '120px minmax(0,1fr)' : 'minmax(0,1fr)', gap: 12, marginTop: 8 }}>{(sceneSpec as any).storyboard_url ? <img src={String((sceneSpec as any).storyboard_url)} alt={`Storyboard frame for block ${index + 1}`} style={{ width: 120, height: 80, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.line}` }} /> : null}<div><p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: 0 }}>{String(scene.script_segment || sceneSpec.visual_goal || 'Visual beat')}</p>{scene.dialogue?.line ? <p style={{ color: T.bone, fontSize: 14, lineHeight: 1.5, margin: '7px 0 0' }}>“{scene.dialogue.line}”</p> : null}<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{castThumbs.map((character) => <img key={character.id} src={character.url!} alt={character.name} title={character.name} style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.dim}` }} />)}{(scene.reference_assets || []).slice(0,4).map((asset,assetIndex) => <img key={`${asset.url}-${assetIndex}`} src={asset.url} alt={asset.label || 'Reference'} style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.dim}` }} />)}</div></div></div>{sceneSpec.speech_warning ? <div role="status" style={{ marginTop: 9, color: 'var(--vg-warning)', background: 'var(--vg-warning-bg)', border: '1px solid var(--vg-warning)', borderRadius: 9, padding: '8px 10px', fontSize: 12 }}>{sceneSpec.speech_warning}</div> : null}<details style={{ marginTop: 9 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 14, fontWeight: 750 }}>Edit block</summary><div style={{ display: 'grid', gap: 8, marginTop: 8 }}><label style={{ color: T.muted, fontSize: 12 }}>Script<textarea defaultValue={scene.script_segment || ''} rows={3} disabled={backgroundActive} onBlur={(event) => { if (event.target.value !== scene.script_segment) props.onUpdatePlanScene(scene,{script_segment:event.target.value}); }} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Spoken lines<textarea defaultValue={scene.dialogue?.line || ''} rows={2} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{dialogue_line:event.target.value})} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Length (seconds)<input type="number" defaultValue={scene.duration_s} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{duration_s:Number(event.target.value)})} style={{ width: 100, minHeight: 44, marginLeft: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 8 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Prompt<textarea defaultValue={scene.prompt || String(sceneSpec.visual_goal || '')} rows={4} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{prompt:event.target.value})} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label></div></details></article></div>;
+                const castThumbs = (film.character_refs || []).filter((character) => character.kind !== 'narrator' && (sceneSpec.characters || []).includes(character.id) && character.url);
+                return <div key={scene.id} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '44px minmax(0,1fr)', gap: 12 }}><div aria-hidden style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}><span style={{ width: 36, height: 36, display: 'grid', placeItems: 'center', borderRadius: 999, background: selected?.id === scene.id ? T.live : T.raised, color: selected?.id === scene.id ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${selected?.id === scene.id ? T.live : T.dim}`, fontSize: 12, fontWeight: 850 }}>{index + 1}</span>{index < scenes.length - 1 ? <span style={{ width: 1, flex: 1, minHeight: 22, background: T.line }} /> : null}</div><article style={{ marginBottom: 12, background: selected?.id === scene.id ? 'color-mix(in srgb, var(--space-brand-primary-500) 8%, var(--space-surface-card))' : T.raised, border: `1px solid ${selected?.id === scene.id ? T.live : T.line}`, borderRadius: 12, padding: 12 }}><button type="button" onClick={() => setSelectedId(scene.id)} style={{ width: '100%', minHeight: 44, textAlign: 'left', background: 'transparent', color: T.bone, border: 0, padding: 0 }}><span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}><strong style={{ fontSize: 14 }}>Block {index + 1}</strong><span style={{ color: T.live, fontFamily: T.mono, fontSize: 12 }}>{start}–{end}s</span><span style={{ color: T.muted, border: `1px solid ${T.dim}`, borderRadius: 999, padding: '3px 8px', fontSize: 12 }}>{sceneSpec.cut_type === 'continuous' ? 'Continues' : 'New shot'}</span></span></button><div style={{ display: 'grid', gridTemplateColumns: (sceneSpec as any).storyboard_url ? '120px minmax(0,1fr)' : 'minmax(0,1fr)', gap: 12, marginTop: 8 }}>{(sceneSpec as any).storyboard_url ? <div><img src={String((sceneSpec as any).storyboard_url)} alt={`Storyboard frame for block ${index + 1}`} style={{ width: 120, height: 80, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.line}` }} /><div style={{ color: T.dim, fontSize: 11, lineHeight: 1.3, marginTop: 4 }}>{storyboardUseNote(resolveVideoModel((sceneSpec as any).engine_id || film.video_model).id, (sceneSpec as any).cut_type || (index === 0 ? 'new_shot' : 'continuous'))}</div></div> : null}<div><p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: 0 }}>{String(scene.script_segment || sceneSpec.visual_goal || 'Visual beat')}</p>{scene.dialogue?.line ? <p style={{ color: T.bone, fontSize: 14, lineHeight: 1.5, margin: '7px 0 0' }}>“{scene.dialogue.line}”</p> : null}<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>{castThumbs.map((character) => <img key={character.id} src={character.url!} alt={character.name} title={character.name} style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.dim}` }} />)}{(scene.reference_assets || []).slice(0,4).map((asset,assetIndex) => <img key={`${asset.url}-${assetIndex}`} src={asset.url} alt={asset.label || 'Reference'} style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.dim}` }} />)}</div></div></div>{sceneSpec.speech_warning ? <div role="status" style={{ marginTop: 9, color: 'var(--vg-warning)', background: 'var(--vg-warning-bg)', border: '1px solid var(--vg-warning)', borderRadius: 9, padding: '8px 10px', fontSize: 12 }}>{sceneSpec.speech_warning}</div> : null}<details style={{ marginTop: 9 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 14, fontWeight: 750 }}>Edit block</summary><div style={{ display: 'grid', gap: 8, marginTop: 8 }}><label style={{ color: T.muted, fontSize: 12 }}>Script<textarea defaultValue={scene.script_segment || ''} rows={3} disabled={backgroundActive} onBlur={(event) => { if (event.target.value !== scene.script_segment) props.onUpdatePlanScene(scene,{script_segment:event.target.value}); }} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Spoken lines<textarea defaultValue={scene.dialogue?.line || ''} rows={2} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{dialogue_line:event.target.value})} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Length (seconds)<input type="number" defaultValue={scene.duration_s} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{duration_s:Number(event.target.value)})} style={{ width: 100, minHeight: 44, marginLeft: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 8 }} /></label><label style={{ color: T.muted, fontSize: 12 }}>Prompt<textarea defaultValue={scene.prompt || String(sceneSpec.visual_goal || '')} rows={4} disabled={backgroundActive} onBlur={(event) => props.onUpdatePlanScene(scene,{prompt:event.target.value})} style={{ width: '100%', marginTop: 4, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 10, fontSize: 14 }} /></label></div></details></article></div>;
               })}
             </div>
           </section>
 
           {false && props.manualMode ? <section style={{ marginBottom: 12, background: T.card, border: `1px solid ${storyboardRequested ? T.live : T.line}`, borderRadius: 12, padding: '13px 14px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}><div style={{ color: T.bone, fontSize: 13, fontWeight: 800 }}>Storyboard</div><div style={{ color: T.muted, fontSize: 12 }}>{storyboardRequested ? 'One keyframe per block. Opening and New shot blocks start from these frames.' : 'Not selected in the brief.'}</div>{!storyboardRequested && !background?.enabled && selected ? <button type="button" disabled={busy} onClick={() => props.onGenerateStoryboard(selected)} style={{ marginLeft: 'auto', minHeight: 44, background: 'transparent', color: T.live, border: `1px solid ${T.live}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 750 }}>Add storyboard for scene {selected.idx + 1}</button> : null}</div>
-            {storyboardRequested ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 9, marginTop: 10 }}>{scenes.map((scene) => { const sceneSpec = (scene.spec || {}) as VideoClipSpec; const state = sceneSpec.storyboard_status || (sceneSpec.storyboard_url ? 'ready' : 'loading'); return <article key={scene.id} style={{ background: T.raised, border: `1px solid ${sceneSpec.storyboard_approved ? T.done : state === 'error' ? T.fault : T.line}`, borderRadius: 10, padding: 9 }}>{sceneSpec.storyboard_url ? <img src={sceneSpec.storyboard_url} alt={`Storyboard scene ${scene.idx + 1}`} style={{ width: '100%', height: 92, objectFit: 'cover', borderRadius: 7 }} /> : state === 'error' ? <div style={{ minHeight: 92, display: 'grid', placeItems: 'center', color: T.fault, fontSize: 12, textAlign: 'center' }}>{sceneSpec.storyboard_error || 'Storyboard generation failed.'}</div> : <div style={{ minHeight: 92, display: 'grid', placeItems: 'center' }}><VergeLoader size={36} label={`Generating storyboard scene ${scene.idx + 1}`} /></div>}<div style={{ color: T.live, fontFamily: T.mono, fontSize: 12, marginTop: 7 }}>SCENE {scene.idx + 1}</div><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.4, marginTop: 3 }}>{String(sceneSpec.storyboard_caption || sceneSpec.summary || sceneSpec.visual_goal || scene.script_segment).slice(0, 120)}</div><div style={{ display: 'flex', gap: 6, marginTop: 8 }}>{sceneSpec.storyboard_url && !sceneSpec.storyboard_approved ? <button type="button" disabled={busy || background?.enabled} onClick={() => props.onApproveStoryboard(scene)} style={{ minHeight: 36, flex: 1, background: T.done, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 7, fontSize: 12, fontWeight: 800 }}>Approve</button> : null}<button type="button" disabled={busy || background?.enabled} onClick={() => props.onGenerateStoryboard(scene)} style={{ minHeight: 36, flex: 1, background: 'transparent', color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 7, fontSize: 12 }}>{sceneSpec.storyboard_url ? 'Regenerate' : state === 'error' ? 'Retry' : 'Generate'}</button></div>{sceneSpec.storyboard_approved ? <div style={{ color: T.done, fontSize: 12, marginTop: 6 }}>Approved keyframe</div> : null}</article>; })}</div> : null}
+            {storyboardRequested ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 9, marginTop: 10 }}>{scenes.map((scene) => { const sceneSpec = (scene.spec || {}) as VideoClipSpec; const state = sceneSpec.storyboard_status || (sceneSpec.storyboard_url ? 'ready' : 'loading'); return <article key={scene.id} style={{ background: T.raised, border: `1px solid ${sceneSpec.storyboard_approved ? T.done : state === 'error' ? T.fault : T.line}`, borderRadius: 10, padding: 9 }}>{sceneSpec.storyboard_url ? <img src={sceneSpec.storyboard_url} alt={`Storyboard scene ${scene.idx + 1}`} style={{ width: '100%', height: 92, objectFit: 'cover', borderRadius: 7 }} /> : state === 'error' ? <div style={{ minHeight: 92, display: 'grid', placeItems: 'center', color: T.fault, fontSize: 12, textAlign: 'center' }}>{sceneSpec.storyboard_error || 'Storyboard generation failed.'}</div> : <div style={{ minHeight: 92, display: 'grid', placeItems: 'center' }}><VergeLoader size={36} label={`Generating storyboard scene ${scene.idx + 1}`} /></div>}<div style={{ color: T.live, fontFamily: T.mono, fontSize: 12, marginTop: 7 }}>SCENE {scene.idx + 1}</div><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.4, marginTop: 3 }}>{String(sceneSpec.storyboard_caption || sceneSpec.summary || sceneSpec.visual_goal || scene.script_segment).slice(0, 120)}</div><div style={{ display: 'flex', gap: 6, marginTop: 8 }}>{sceneSpec.storyboard_url && !sceneSpec.storyboard_approved ? <button type="button" disabled={busy || background?.enabled} onClick={() => props.onApproveStoryboard(scene)} style={{ minHeight: 36, flex: 1, background: T.done, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 7, fontSize: 12, fontWeight: 800 }}>Approve</button> : null}<button type="button" disabled={busy || background?.enabled} onClick={() => props.onGenerateStoryboard(scene)} style={{ minHeight: 36, flex: 1, background: 'transparent', color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 7, fontSize: 12 }}>{sceneSpec.storyboard_url ? 'Regenerate' : state === 'error' ? 'Retry' : 'Generate'}</button></div>{sceneSpec.storyboard_approved ? <div style={{ color: T.done, fontSize: 12, marginTop: 6 }}>Approved keyframe</div> : null}</article>; })}</div> : null}
           </section> : null}
 
           {false && !props.manualMode ? <section aria-label="Text shot plan" style={{ display: 'grid', gap: 10, marginBottom: 12 }}>{scenes.map((scene) => { const planned = (film.plan?.scenes || []).find((item) => item.scene_key === scene.scene_key); const sceneSpec = (planned?.spec || scene.spec || {}) as VideoClipSpec; return <button key={scene.id} type="button" onClick={() => setSelectedId(scene.id)} style={{ width: '100%', minHeight: 120, textAlign: 'left', background: selected?.id === scene.id ? 'color-mix(in srgb, var(--vg-accent) 10%, transparent)' : T.card, color: T.bone, border: `1px solid ${selected?.id === scene.id ? T.live : T.line}`, borderRadius: 12, padding: 14 }}><span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}><b style={{ color: T.live, fontFamily: T.mono }}>{scene.idx === 0 ? 0 : scenes.slice(0, scene.idx).reduce((sum, item) => sum + sceneSeconds(film, item), 0)}–{scenes.slice(0, scene.idx + 1).reduce((sum, item) => sum + sceneSeconds(film, item), 0)}s</b><span style={{ color: T.muted, fontSize: 12 }}>{sceneSpec.cut_type === 'continuous' ? 'Continues' : 'New shot'}</span>{(film.character_refs || []).filter((character) => (sceneSpec.characters || []).includes(character.id)).map((character) => character.url ? <img key={character.id} src={character.url} alt={character.name} title={character.name} style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 999, border: `1px solid ${T.dim}` }} /> : null)}</span>{sceneSpec.timed_beats?.length ? <span style={{ display: 'grid', gap: 5, marginTop: 9 }}>{sceneSpec.timed_beats.map((beat, index) => <span key={index} style={{ color: T.muted, fontSize: 12, lineHeight: 1.45 }}><b style={{ color: T.bone }}>{beat.start_s}–{beat.end_s}s</b> {beat.action}</span>)}</span> : <span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 8 }}>{String(sceneSpec.visual_goal || planned?.visual_goal || scene.script_segment)}</span>}<span style={{ display: 'block', marginTop: 8, color: T.bone, fontSize: 12.5 }}>“{String(scene.dialogue?.line || scene.script_segment || 'Visual beat')}”</span>{sceneSpec.speech_warning ? <span style={{ display: 'block', color: 'var(--vg-warning)', fontSize: 12, marginTop: 6 }}>{sceneSpec.speech_warning}</span> : null}</button>; })}</section> : null}
@@ -440,21 +587,81 @@ export default function RenderRoom(props: {
               <div style={{ color: T.bone, fontSize: 18, fontWeight: 800 }}>Block 1 is ready — does the look work?</div>
               {scenes[0]?.asset_url ? <video src={scenes[0].asset_url} controls playsInline style={{ width: '100%', maxHeight: 300, borderRadius: 10, marginTop: 12, background: 'var(--space-surface-bg)' }} /> : null}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-                <button type="button" onClick={() => props.onPauseBackground(false)} style={{ minHeight: 44, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 14, fontWeight: 800 }}>Continue</button>
+                <button type="button" onClick={() => props.onPauseBackground(false)} style={{ minHeight: 44, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 10, padding: '9px 16px', fontSize: 14, fontWeight: 800 }}>Continue</button>
                 <button type="button" onClick={() => { if (scenes[0]) props.onRegenPrompt(scenes[0]); }} style={{ minHeight: 44, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: '9px 16px', fontSize: 14, fontWeight: 750 }}>Change look</button>
               </div>
             </div>
           ) : null}
 
-          {makeStarted ? <section aria-labelledby="make-progress-title" style={{ marginBottom: 14, background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}><div><h2 id="make-progress-title" style={{ color: T.bone, fontSize: 20, margin: 0 }}>Make</h2><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{signedInTabRequired ? 'Keep this tab open while this model works.' : 'You can close this tab. Your progress is saved.'}</p></div><span style={{ color: T.muted, fontSize: 12 }}>{completed.length} of {scenes.length} ready</span></div><div style={{ display: 'grid', gap: 8, marginTop: 14 }}>{scenes.map((scene) => { const state = String(scene.status); const label = DONE.has(state) ? 'done' : state === 'failed' ? 'failed' : ['queued','submitted','processing','generating','retrying'].includes(state) ? 'rendering' : state === 'ready' && scene.prompt ? 'writing' : 'waiting'; const tone = label === 'done' ? T.done : label === 'failed' ? T.fault : label === 'rendering' ? T.live : T.muted; return <div key={scene.id} style={{ display: 'grid', gridTemplateColumns: scene.asset_url ? '72px minmax(0,1fr) auto' : 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', minHeight: 64, background: T.raised, border: `1px solid ${label === 'failed' ? T.fault : T.line}`, borderRadius: 10, padding: 10 }}>{scene.asset_url ? <video src={scene.asset_url} muted playsInline preload="metadata" style={{ width: 72, height: 46, objectFit: 'cover', borderRadius: 7, background: T.canvas }} /> : null}<div style={{ minWidth: 0 }}><div style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Block {scene.idx + 1} · {sceneSeconds(film,scene)}s</div><div style={{ color: tone, fontSize: 12, marginTop: 4 }}>waiting → writing → rendering → {label === 'failed' ? 'failed' : 'done'} · <b>{label}</b></div>{label === 'failed' ? <div style={{ color: T.fault, fontSize: 12, lineHeight: 1.45, marginTop: 5 }}>{customerError(scene.error)}</div> : null}</div><div>{label === 'rendering' ? <VergeLoader size={32} label={`Rendering block ${scene.idx + 1}`} /> : label === 'done' ? <Check size={18} color={T.done} /> : label === 'failed' ? <button type="button" disabled={busy} onClick={() => props.onRetry(scene)} style={{ minHeight: 44, background: T.live, color: 'var(--space-text-on-primary)', border: 0, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 800 }}>Retry</button> : <Circle size={16} color={T.dim} />}</div></div>; })}</div></section> : null}
+          {makeStarted ? <section aria-labelledby="make-progress-title" style={{ marginBottom: 14, background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <div>
+                <h2 id="make-progress-title" style={{ color: T.bone, fontSize: 20, margin: 0 }}>Make</h2>
+                <p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{signedInTabRequired ? 'Keep this tab open while this model works.' : 'Blocks render one after another so each shot continues from the last. You can close this tab — progress is saved.'}</p>
+              </div>
+              <span style={{ color: T.muted, fontSize: 12 }}>{completed.length} of {scenes.length} done</span>
+            </div>
+            <div style={{ display: 'grid', gap: 8, marginTop: 14 }}>
+              {scenes.map((scene) => {
+                const view = views.get(scene.id) || blockView(film, scene, scope);
+                const blockBackground = (((scene.spec || {}) as VideoClipSpec).background || {}) as Record<string, unknown>;
+                const providerDetail = view.key === 'failed' ? technicalPartOf(scene.error) : '';
+                const sceneStarting = props.sceneInFlightId === scene.id;
+                const startError = props.blockStartError?.id === scene.id ? props.blockStartError.message : '';
+                const refunded = Boolean(blockBackground.terminal_refunded_key);
+                const actionDisabled = busy || props.generateAllInFlight || props.sceneInFlightId != null;
+                const alarm = view.key === 'failed' || view.key === 'needs_action' || view.key === 'stalled' || Boolean(startError);
+                const working = view.key === 'rendering' || view.key === 'retrying' || view.key === 'starting' || view.key === 'writing';
+                return <div key={scene.id} style={{ display: 'grid', gridTemplateColumns: scene.asset_url ? '72px minmax(0,1fr) auto' : 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', minHeight: 64, background: T.raised, border: `1px solid ${alarm ? T.fault : T.line}`, borderRadius: 10, padding: 10 }}>
+                  {scene.asset_url ? <video src={scene.asset_url} muted playsInline preload="metadata" style={{ width: 72, height: 46, objectFit: 'cover', borderRadius: 7, background: T.canvas }} /> : null}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Block {scene.idx + 1} · {sceneSeconds(film, scene)}s</span>
+                      <span style={{ color: view.tone, border: `1px solid ${view.tone}`, borderRadius: 999, padding: '2px 8px', fontSize: 12, fontWeight: 800 }}>{view.label}</span>
+                    </div>
+                    <div role={view.key === 'failed' ? 'alert' : undefined} style={{ color: alarm ? T.fault : T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 5 }}>{view.detail}</div>
+                    {view.key === 'failed' ? <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 3 }}>{refunded ? 'Its credits were returned. Retry sends it again and charges it once; Skip leaves it out of the film.' : 'Retry sends it again on the credits already held for it — nothing is charged twice. Skip leaves it out of the film.'}</div> : null}
+                    {startError ? <div role="alert" style={{ color: T.fault, fontSize: 12, lineHeight: 1.45, marginTop: 5 }}>Couldn’t start this block: {friendlyErrorMessage(startError)}</div> : null}
+                    {providerDetail ? <details style={{ marginTop: 4 }}><summary style={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.dim, fontSize: 12 }}>What the provider actually said</summary><div style={{ color: T.muted, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>{providerDetail}</div></details> : null}
+                  </div>
+                  <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
+                    {view.key === 'done' ? <Check size={18} color={T.done} />
+                      : working ? <VergeLoader size={32} label={`${view.label} block ${scene.idx + 1}`} />
+                        : view.key === 'needs_action' ? <>
+                          <button type="button" disabled={actionDisabled} onClick={() => props.onRetryFrame(scene)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--vg-on-btn)', border: 0, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 800 }}><RefreshCw size={12} /> Retry frame</button>
+                          <button type="button" disabled={actionDisabled} onClick={() => { if (window.confirm('Continue without a continuity frame? The next block will not inherit this block’s final visual state, and this choice will be recorded.')) props.onContinueWithoutFrame(scene); }} style={{ minHeight: 32, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 9, padding: '6px 11px', fontSize: 12, fontWeight: 700 }}>Continue without it</button>
+                        </>
+                          : view.startable || startError ? <>
+                            <button type="button" disabled={actionDisabled} onClick={() => props.onStartScene(scene)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: actionDisabled ? T.raised : T.live, color: actionDisabled ? T.dim : 'var(--vg-on-btn)', border: 0, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 800, cursor: actionDisabled ? 'default' : 'pointer' }}>{sceneStarting ? <VergeLoader size={28} label={`Starting block ${scene.idx + 1}`} /> : view.key === 'failed' || startError ? <RefreshCw size={12} /> : <Play size={12} />}{sceneStarting ? 'Starting…' : view.key === 'failed' || startError ? 'Retry' : 'Start'}</button>
+                            {view.key === 'failed' ? <button type="button" disabled={actionDisabled} onClick={() => { if (window.confirm(`Skip block ${scene.idx + 1}? It is left out of the film, the next block continues without a frame from it, and that choice is recorded. No credits are charged for a skipped block.`)) props.onSkip(scene); }} style={{ minHeight: 32, display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 9, padding: '6px 11px', fontSize: 12, fontWeight: 700 }}><SkipForward size={11} /> Skip</button> : null}
+                          </>
+                            : view.key === 'paused' ? <Pause size={16} color={T.dim} /> : <Circle size={16} color={T.dim} />}
+                  </div>
+                </div>;
+              })}
+            </div>
+          </section> : null}
 
-          {backgroundActive ? (
+          {scope.enabled ? (
             <>
-            <div style={{ marginBottom: 10, background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, color: T.bone, fontSize: 13, fontWeight: 800 }}><span>Shot {Math.min(scenes.length, completed.length + 1)} of {scenes.length}</span><span>{scenes.length ? Math.round((completed.length / scenes.length) * 100) : 0}%</span></div><div role="progressbar" aria-valuemin={0} aria-valuemax={scenes.length} aria-valuenow={completed.length} style={{ height: 7, borderRadius: 999, background: T.raised, marginTop: 9, overflow: 'hidden' }}><div style={{ width: `${scenes.length ? (completed.length / scenes.length) * 100 : 0}%`, height: '100%', background: T.live }} /></div><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>{['Prompts written', 'Voice ready', 'Music ready', background?.review_gate_pending ? 'Look waiting' : 'Look approved'].map((label) => <span key={label} style={{ border: `1px solid ${T.line}`, borderRadius: 999, padding: '5px 8px', color: T.muted, fontSize: 12 }}>{label}</span>)}</div><div style={{ marginTop: 10, color: T.muted, fontSize: 12 }}>Credits · used {Number(film.plan?.orchestration?.billed_so_far || 0).toFixed(0)} · held {Math.max(0, Number(film.plan?.max_authorized_credits || 0) - Number(film.plan?.orchestration?.billed_so_far || 0)).toFixed(0)} · returned {Number((film.plan?.background as any)?.credits_returned || 0).toFixed(0)}</div></div>
-            <div role="status" aria-live="polite" style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 11, background: 'color-mix(in srgb, var(--space-brand-primary-500) 8%, transparent)', border: `1px solid ${T.live}`, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              {film.plan?.orchestration?.paused ? <Pause size={18} color={T.live} /> : <VergeLoader size={32} label="Background production running" />}
-              <div style={{ flex: '1 1 260px' }}><div style={{ color: T.bone, fontSize: 12.5, fontWeight: 750 }}>{film.plan?.orchestration?.paused ? 'Paused after the current provider job' : 'Running in the background — safe to close this tab'}</div><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 3 }}>{film.stage_note || 'The next saved step will appear here.'}</div><div style={{ color: T.dim, fontSize: 12, marginTop: 4 }}>Billed so far: {Number(film.plan?.orchestration?.billed_so_far || 0).toFixed(0)} credits · ceiling {Number(film.plan?.max_authorized_credits || 0).toFixed(0)} credits</div></div>
-              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><button type="button" onClick={() => props.onPauseBackground(!film.plan?.orchestration?.paused)} style={{ minHeight: 44, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}>{film.plan?.orchestration?.paused ? 'Resume' : 'Pause after this shot'}</button><button type="button" onClick={props.onStopFutureJobs} style={{ minHeight: 44, background: 'transparent', color: T.fault, border: `1px solid ${T.fault}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}>Stop future jobs</button></div>
+            <div style={{ marginBottom: 10, background: T.card, border: `1px solid ${scope.stalled ? T.fault : T.line}`, borderRadius: 12, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, color: T.bone, fontSize: 13, fontWeight: 800 }}><span>{runProgressLabel}</span><span>{scenes.length ? Math.round((completed.length / scenes.length) * 100) : 0}%</span></div>
+              <div role="progressbar" aria-label="Blocks completed" aria-valuemin={0} aria-valuemax={scenes.length} aria-valuenow={completed.length} aria-valuetext={`${completed.length} of ${scenes.length} blocks done`} style={{ height: 7, borderRadius: 999, background: T.raised, marginTop: 9, overflow: 'hidden' }}><div style={{ width: `${scenes.length ? (completed.length / scenes.length) * 100 : 0}%`, height: '100%', background: T.live, transition: 'width 0.6s ease' }} /></div>
+              <div role="list" aria-label="Block status counts" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>{runChips.map((chip) => <span key={chip.label} role="listitem" style={{ border: `1px solid ${chip.tone}`, borderRadius: 999, padding: '5px 8px', color: chip.tone, fontSize: 12 }}>{chip.label}</span>)}</div>
+              <div title="Credits are held for a block when it is started and become used when its clip lands. If a block fails, or production stops before a block starts, its credits are returned automatically." style={{ marginTop: 10, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{credits.unmetered ? 'Credits · not charged on this account' : `Credits · ${credits.used} used · ${credits.held} held${credits.heldBlocks.length ? ` for block${credits.heldBlocks.length === 1 ? '' : 's'} ${credits.heldBlocks.join(', ')}` : ''} · ${credits.returned} returned`}</div>
+            </div>
+            <div role="status" aria-live="polite" style={{ marginBottom: 12, padding: '12px 14px', borderRadius: 11, background: scope.stalled ? 'var(--vg-danger-bg)' : 'color-mix(in srgb, var(--space-brand-primary-500) 8%, transparent)', border: `1px solid ${scope.stalled ? T.fault : T.live}`, display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              {scope.stalled ? <AlertTriangle size={18} color={T.fault} /> : scope.live ? <VergeLoader size={32} label="Background production running" /> : <Pause size={18} color={T.live} />}
+              <div style={{ flex: '1 1 260px' }}>
+                <div style={{ color: scope.stalled ? T.fault : T.bone, fontSize: 12.5, fontWeight: 750 }}>{runHeadline}</div>
+                <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 3 }}>{scope.stalled ? 'Nothing has been sent to the video model for this block yet, so nothing extra is charged. Press Start again to resend it.' : (film.stage_note || 'The next saved step will appear here.')}</div>
+                {props.runnerIssue && !failedScenes.length ? <div role="alert" style={{ color: T.fault, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>{props.runnerIssue}</div> : null}
+              </div>
+              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                {scope.stalled ? <button type="button" disabled={busy || props.generateAllInFlight || props.sceneInFlightId != null} onClick={props.onRestartRunner} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}><Play size={12} /> Start again</button> : null}
+                {scope.live || scope.paused ? <button type="button" onClick={() => props.onPauseBackground(!scope.paused)} style={{ minHeight: 44, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}>{scope.paused ? 'Resume' : 'Pause after this shot'}</button> : null}
+                {scope.live || scope.paused || scope.stalled ? <button type="button" onClick={props.onStopFutureJobs} style={{ minHeight: 44, background: 'transparent', color: T.fault, border: `1px solid ${T.fault}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}>Stop future jobs</button> : null}
+              </div>
             </div>
             {completed.length ? <WatchSoFar scenes={completed} /> : null}
             </>
@@ -472,7 +679,7 @@ export default function RenderRoom(props: {
               error={friendlyErrorMessage(film.error)}
               engineId={(film as any).video_model || (film as any).engine_id}
               subject="this film"
-              onRetry={active ? () => props.onRetry(active) : undefined}
+              onRetry={active ? () => props.onStartScene(active) : undefined}
               compact
               style={{ margin: '6px 0 10px' }}
             />
@@ -492,7 +699,7 @@ export default function RenderRoom(props: {
                   className="s2v-lift"
                   disabled={busy || !!generating}
                   onClick={() => { const first = failedScenes[0]; if (first) props.onRetry(first); }}
-                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: busy || generating ? T.raised : T.live, color: busy || generating ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, cursor: busy || generating ? 'default' : 'pointer' }}
+                  style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: busy || generating ? T.raised : T.live, color: busy || generating ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '8px 14px', fontSize: 12.5, fontWeight: 700, cursor: busy || generating ? 'default' : 'pointer' }}
                 >
                   <RefreshCw size={12} /> Retry failed only
                 </button>
@@ -503,10 +710,10 @@ export default function RenderRoom(props: {
                     <span style={{ color: T.muted, fontFamily: T.mono, fontSize: 12, flexShrink: 0, paddingTop: 1 }}>Scene {String(s.idx + 1).padStart(2, '0')}</span>
                     <span style={{ color: T.fault, fontSize: 12, lineHeight: 1.5, minWidth: 0, flex: 1 }}>{customerError(s.error)}</span>
                     {isCreditsError(s.error) ? (
-                      <button className="s2v-ghost" onClick={() => openPricing('credits')} style={{ flexShrink: 0, background: T.live, border: 'none', color: 'var(--space-text-on-primary)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Top up credits</button>
+                      <button className="s2v-ghost" onClick={() => openPricing('credits')} style={{ flexShrink: 0, background: T.live, border: 'none', color: 'var(--vg-on-btn)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>Top up credits</button>
                     ) : null}
                     {classifyError(s.error).canSwitchToOmni && !film.plan?.background?.enabled && resolveVideoModel(((s.spec as VideoClipSpec)?.engine_id) || film.video_model).id !== OMNI_MODEL_ID && Number(s.duration_s) <= 8 ? (
-                      <button className="s2v-ghost" disabled={busy || !!generating} onClick={() => props.onUpdatePlanScene(s, { engine_id: OMNI_MODEL_ID, engine_reason: `Creator switched to ${OMNI_LABEL} so this scene can generate in the background.` })} style={{ flexShrink: 0, background: T.live, border: 'none', color: 'var(--space-text-on-primary)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: busy || generating ? 'default' : 'pointer' }}>Switch to Omni</button>
+                      <button className="s2v-ghost" disabled={busy || !!generating} onClick={() => props.onUpdatePlanScene(s, { engine_id: OMNI_MODEL_ID, engine_reason: `Creator switched to ${OMNI_LABEL} so this scene can generate in the background.` })} style={{ flexShrink: 0, background: T.live, border: 'none', color: 'var(--vg-on-btn)', borderRadius: 8, padding: '4px 10px', fontSize: 12, fontWeight: 700, cursor: busy || generating ? 'default' : 'pointer' }}>Switch to Omni</button>
                     ) : null}
                     <button className="s2v-ghost" disabled={busy || !!generating} onClick={() => props.onRetry(s)} style={{ flexShrink: 0, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 8, padding: '4px 10px', fontSize: 12, cursor: busy || generating ? 'default' : 'pointer' }}>Retry</button>
                   </div>
@@ -664,6 +871,9 @@ function ScenePanel(props: {
   onSkip: (scene: FilmScene) => void;
   onGenerateCharacterDialogue: (scene: FilmScene) => void;
   dialogueAudioSceneId: number | null;
+  sceneInFlightId: number | null;
+  generateAllInFlight: boolean;
+  onStartScene: (scene: FilmScene) => void;
   onUpdatePlanScene: (scene: FilmScene, patch: Record<string, unknown>) => void;
   onGenerateStoryboard: (scene: FilmScene) => void;
   onApproveStoryboard: (scene: FilmScene) => void;
@@ -692,7 +902,7 @@ function ScenePanel(props: {
     && Number(s.duration_s || 0) <= Number(selectedModel.safeMaxDuration || 1)
     ? []
     : (spec.duration_notes || []);
-  const castReady = film.plan?.cast_reviewed === true && (film.character_refs || []).every((character) => character.approved && character.url);
+  const castReady = film.plan?.cast_reviewed === true && (film.character_refs || []).every((character) => character.sheet_required === false || character.kind === 'narrator' || (character.approved && character.url));
   const working = busy || s.status === 'generating';
   // LightBeam: the ACTIVE scene card carries the amber focus glow.
   const activeGlow = isActive && !DONE.has(String(s.status));
@@ -814,7 +1024,7 @@ function ScenePanel(props: {
           <div style={{ color: T.fault, fontSize: 12.5, fontWeight: 800 }}>Continuity frame unavailable</div>
           <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>{friendlyErrorMessage(s.error || spec.background.frame_extraction.error)}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-            <button className="s2v-lift" disabled={working} onClick={() => props.onRetryFrame(s)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}><RefreshCw size={12} /> Retry frame</button>
+            <button className="s2v-lift" disabled={working} onClick={() => props.onRetryFrame(s)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}><RefreshCw size={12} /> Retry frame</button>
             <button className="s2v-ghost" disabled={working} onClick={() => { if (window.confirm('Continue without a continuity frame? The next scene will not inherit this scene’s final visual state, and this choice will be recorded.')) props.onContinueWithoutFrame(s); }} style={{ minHeight: 44, background: 'transparent', color: T.fault, border: `1px solid ${T.fault}`, borderRadius: 9, padding: '9px 14px', fontSize: 12 }}>Continue without continuity frame</button>
           </div>
         </div>
@@ -830,9 +1040,9 @@ function ScenePanel(props: {
           <div style={{ color: T.bone, fontSize: 13, fontWeight: 850 }}>Scene {s.idx + 1} needs a retry</div>
           <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>{customerError(s.error).replace(/[.\s]+$/, '')}. Credits returned.</div>
           <div style={{ color: T.live, fontSize: 12, lineHeight: 1.5, marginTop: 6 }}>Recommended next step: {recovery.customerMessage}</div>
-          {canSwitchOmni ? <button type="button" disabled={Boolean(film.plan?.background?.enabled)} onClick={() => props.onUpdatePlanScene(s, { engine_id: OMNI_MODEL_ID, engine_reason: `Creator switched to ${OMNI_LABEL} so this scene can generate in the background.` })} style={{ minHeight: 44, marginTop: 9, marginRight: 8, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 800 }}>Switch to Omni</button> : null}
+          {canSwitchOmni ? <button type="button" disabled={Boolean(film.plan?.background?.enabled)} onClick={() => props.onUpdatePlanScene(s, { engine_id: OMNI_MODEL_ID, engine_reason: `Creator switched to ${OMNI_LABEL} so this scene can generate in the background.` })} style={{ minHeight: 44, marginTop: 9, marginRight: 8, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 800 }}>Switch to Omni</button> : null}
           {canSwitchModel ? <button type="button" disabled={Boolean(film.plan?.background?.enabled)} onClick={() => props.onUpdatePlanScene(s, { engine_id: switchTarget, engine_reason: `Creator selected ${switchLabel} for the next retry after ${selectedModel.label} failed with ${recovery.category}.` })} style={{ minHeight: 44, marginTop: 9, background: 'transparent', color: T.live, border: `1px solid ${T.live}`, borderRadius: 9, padding: '8px 12px', fontSize: 12, fontWeight: 750 }}>Switch to {switchLabel} for retry</button> : null}
-          <details style={{ marginTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.dim, fontSize: 12 }}>Technical details</summary><div style={{ color: T.muted, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>Category: {recovery.category}<br />Model: {selectedModel.apiModel}</div></details>
+          <details style={{ marginTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.dim, fontSize: 12 }}>Technical details</summary><div style={{ color: T.muted, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>Category: {recovery.category}<br />Model: {selectedModel.apiModel}{technicalPartOf(s.error) ? <><br />Provider said: {technicalPartOf(s.error)}</> : null}</div></details>
         </div>;
       })() : null}
 
@@ -878,7 +1088,7 @@ function ScenePanel(props: {
                 <input type="checkbox" checked={editAuthorized} onChange={(event) => setEditAuthorized(event.target.checked)} />
                 <span><b style={{ color: T.bone }}>Paid edit authorization:</b> planning reserve up to $0.40 for Scene {s.idx + 1} only; the provider quote/receipt is authoritative. No other scene is regenerated.</span>
               </label>
-              <button className="s2v-lift" disabled={props.editingId != null || !editInstruction.trim() || !editAuthorized} onClick={() => { props.onOmniEdit(s, editInstruction.trim()); setEditAuthorized(false); }} style={{ minHeight: 42, marginTop: 9, background: props.editingId === s.id ? T.raised : T.live, color: props.editingId === s.id ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 750, cursor: props.editingId != null || !editInstruction.trim() || !editAuthorized ? 'default' : 'pointer' }}>
+              <button className="s2v-lift" disabled={props.editingId != null || !editInstruction.trim() || !editAuthorized} onClick={() => { props.onOmniEdit(s, editInstruction.trim()); setEditAuthorized(false); }} style={{ minHeight: 42, marginTop: 9, background: props.editingId === s.id ? T.raised : T.live, color: props.editingId === s.id ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 14px', fontSize: 12, fontWeight: 750, cursor: props.editingId != null || !editInstruction.trim() || !editAuthorized ? 'default' : 'pointer' }}>
                 {props.editingId === s.id ? 'Editing source video…' : 'Approve cost & create edit revision'}
               </button>
             </div>
@@ -892,7 +1102,7 @@ function ScenePanel(props: {
                 <div><div style={{ color: T.live, fontSize: 12, marginBottom: 4 }}>AFTER · {previewRevision.model}</div><ProbedVideo src={previewRevision.after_url} modelId={previewRevision.model} audioEnabled={film.plan?.audio_enabled !== false} videoProps={{ controls: true, preload: 'metadata', style: { width: '100%', borderRadius: 8, background: 'var(--space-surface-bg)' } }} /></div>
               </div>
               <div style={{ display: 'flex', gap: 8, marginTop: 9 }}>
-                <button className="s2v-lift" disabled={working} onClick={() => props.onAcceptRevision(s, previewRevision.id)} style={{ background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5 }} />Accept revision</button>
+                <button className="s2v-lift" disabled={working} onClick={() => props.onAcceptRevision(s, previewRevision.id)} style={{ background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5 }} />Accept revision</button>
                 <button className="s2v-ghost" disabled={working} onClick={() => props.onUndoRevision(s, previewRevision.id)} style={{ background: 'transparent', color: T.muted, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '8px 13px', fontSize: 12, cursor: 'pointer' }}>Keep original</button>
               </div>
             </div>
@@ -913,7 +1123,7 @@ function ScenePanel(props: {
             disabled={working || !castReady}
             title={castReady ? 'Generate this approved block.' : 'Approve the cast before generating any block.'}
             onClick={() => props.onGenerate(s)}
-            style={{ display: 'flex', alignItems: 'center', gap: 9, background: working ? T.raised : T.live, color: working ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 10, padding: '12px 26px', fontSize: 14, fontWeight: 700, cursor: working ? 'default' : 'pointer', boxShadow: working ? 'none' : '0 2px 12px color-mix(in srgb, var(--space-brand-primary-500) 25%, transparent)' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, background: working ? T.raised : T.live, color: working ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 10, padding: '12px 26px', fontSize: 14, fontWeight: 700, cursor: working ? 'default' : 'pointer', boxShadow: working ? 'none' : '0 2px 12px color-mix(in srgb, var(--space-brand-primary-500) 25%, transparent)' }}
           >
             <Play size={15} /> Generate Video
           </button>
@@ -925,7 +1135,7 @@ function ScenePanel(props: {
         ) : null}
         {s.status === 'failed' && !isDeferredTextIssue(s.validation?.issues) ? (
           <>
-            <button className="s2v-lift" disabled={working} onClick={() => props.onRetry(s)} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 7, background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '10px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+            <button className="s2v-lift" disabled={working} onClick={() => props.onRetry(s)} style={{ minHeight: 44, display: 'flex', alignItems: 'center', gap: 7, background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '10px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
               <RefreshCw size={13} /> Rewrite and retry
             </button>
             <button className="s2v-ghost" disabled={working} onClick={() => props.onRegenPrompt(s)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'transparent', border: `1px solid ${T.dim}`, color: T.bone, borderRadius: 9, padding: '10px 16px', fontSize: 12.5, cursor: 'pointer' }}>

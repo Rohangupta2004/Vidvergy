@@ -27,7 +27,7 @@ import {
   RUNWAY_RATIOS, RUNWAY_RECIPES, RUNWAY_VIDEO_MODELS,
 } from './videoEngines';
 import { poll } from './poll';
-import { spaceId, workspaceTokenNow } from './workspace';
+import { spaceId, workspaceFetch, workspaceTokenNow } from './workspace';
 
 const BASE = '/api/generate/runway';
 
@@ -452,9 +452,7 @@ export function runwayCapabilities(opts: { refresh?: boolean } = {}): Promise<Ru
   if (capabilitiesCache) return capabilitiesCache;
   capabilitiesCache = (async () => {
     try {
-      const res = await fetch(`${BASE}/capabilities`, {
-        headers: runwayToken() ? { 'X-Workspace-DB-Token': runwayToken() } : undefined,
-      });
+      const res = await workspaceFetch(`${BASE}/capabilities`);
       const data = await readJson(res);
       if (!res.ok) return offlineCapabilities(messageFrom(data, res.status).message);
       return normaliseCapabilities(data);
@@ -500,12 +498,9 @@ export interface RunwayQuote {
 export async function runwayQuote(params: Record<string, any>, creditUsd = DEFAULT_CREDIT_USD): Promise<RunwayQuote> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/quote`, {
+    res = await workspaceFetch(`${BASE}/quote`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(runwayToken() ? { 'X-Workspace-DB-Token': runwayToken() } : {}),
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
   } catch (e: any) {
@@ -547,15 +542,12 @@ export async function runwayGenerate(
   options: { idempotencyKey?: string } = {},
 ): Promise<RunwaySubmission> {
   const path = endpoint.indexOf('/api/') === 0 ? endpoint : `${BASE}/${endpoint.replace(/^\/+/, '')}`;
-  const token = runwayToken();
-  if (!token) return fail('You need to be signed in before Runway can generate anything.', 'no_credentials', 401);
   let res: Response;
   try {
-    res = await fetch(path, {
+    res = await workspaceFetch(path, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Workspace-DB-Token': token,
         'Idempotency-Key': options.idempotencyKey || idempotencyKey(),
       },
       body: JSON.stringify(body),
@@ -692,9 +684,7 @@ export async function runwayPoll(taskId: string, opts: RunwayPollOptions = {}): 
     if (opts.signal?.cancelled) return { cancelled: true, elapsedMs: Date.now() - started };
 
     try {
-      const response = await fetch(`${BASE}/status/${encodeURIComponent(taskId)}`, {
-        headers: { 'X-Workspace-DB-Token': runwayToken() },
-      });
+      const response = await workspaceFetch(`${BASE}/status/${encodeURIComponent(taskId)}`);
       const data = await readJson(response);
       return { response, data, elapsedMs: Date.now() - started };
     } catch (networkError: any) {
@@ -800,7 +790,7 @@ export async function runwayUpload(file: File): Promise<string> {
   const safeName = file.name.replace(/[^\w.-]+/g, '_');
   if (file.type.indexOf('image/') === 0) {
     const dataUrl = await readAsDataUrl(file);
-    const res = await fetch('/api/upload/image', {
+    const res = await workspaceFetch('/api/upload/image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-App-Id': runwayAppId() },
       body: JSON.stringify({ imageData: dataUrl, fileName: safeName }),
@@ -813,7 +803,7 @@ export async function runwayUpload(file: File): Promise<string> {
   const form = new FormData();
   form.append('file', new File([file], safeName, { type: file.type || 'application/octet-stream' }));
   form.append('folder', 'runway');
-  const res = await fetch('/api/upload/file', { method: 'POST', body: form });
+  const res = await workspaceFetch('/api/upload/file', { method: 'POST', body: form });
   const data = await readJson(res);
   if (!res.ok || !data?.url) throw new Error(String(data?.error || `File upload failed (HTTP ${res.status}).`));
   return String(data.url);

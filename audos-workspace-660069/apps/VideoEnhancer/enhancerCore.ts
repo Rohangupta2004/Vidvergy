@@ -14,7 +14,8 @@
 
 import { VEO_31_FAST_MODEL } from '../../lib/appIds';
 import { readRender, submitRender as submitCanonicalRender } from '../../lib/render/cloudRender';
-import { callHook, spaceId, workspaceTokenNow, WORKSPACE_ID } from '../../lib/workspace';
+import { callHook, spaceId, workspaceFetch, workspaceTokenNow, WORKSPACE_ID } from '../../lib/workspace';
+import { authorizeCredits, newChargeKey, refundCreditsStrict } from '../../lib/credits';
 
 export const WORKSPACE_UUID = WORKSPACE_ID;
 export const ACCENT = '#3B82F6';
@@ -122,16 +123,14 @@ export const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 export const BUFFERED_UPLOAD_BYTES = 50 * 1024 * 1024; // /api/upload/file server-side ceiling
 
 async function uploadVideoBuffered(file: File): Promise<{ url: string; bytes: number }> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const form = new FormData();
   form.append('file', file);
   form.append('workspaceId', WORKSPACE_UUID);
   form.append('folder', 'video-enhancer');
-  const headers: Record<string, string> = { 'X-Workspace-DB-Token': token };
+  const headers: Record<string, string> = {};
   const id = appId();
   if (id) headers['X-App-Id'] = id;
-  const res = await fetch('/api/upload/file', { method: 'POST', headers, body: form });
+  const res = await workspaceFetch('/api/upload/file', { method: 'POST', headers, body: form });
   const data = await res.json().catch(() => null);
   if (!res.ok || !data?.success || !data.url) {
     throw new Error((data?.error as string) || ('Upload failed (HTTP ' + res.status + ').'));
@@ -141,12 +140,10 @@ async function uploadVideoBuffered(file: File): Promise<{ url: string; bytes: nu
 
 /** Signed direct-to-GCS upload for files over the 50MB buffered ceiling. */
 async function uploadVideoSigned(file: File): Promise<{ url: string; bytes: number }> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const contentType = file.type || 'video/mp4';
-  const grantRes = await fetch('/api/upload/signed-url', {
+  const grantRes = await workspaceFetch('/api/upload/signed-url', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ size: file.size, contentType }),
   });
   const grant = await grantRes.json().catch(() => null);
@@ -181,13 +178,10 @@ export async function uploadVideo(file: File): Promise<{ url: string; bytes: num
 // ---------------------------------------------------------------------------
 
 async function postTranscription(blob: Blob, filename: string): Promise<{ transcript: string; words: TranscriptWord[]; duration: number }> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const form = new FormData();
   form.append('audio', blob, filename);
-  const res = await fetch('/api/workspaces/' + WORKSPACE_UUID + '/audio/transcribe-timestamped', {
+  const res = await workspaceFetch('/api/workspaces/' + WORKSPACE_UUID + '/audio/transcribe-timestamped', {
     method: 'POST',
-    headers: { 'X-Workspace-DB-Token': token },
     body: form,
   });
   const data = await res.json().catch(() => null);
@@ -209,12 +203,9 @@ async function postTranscription(blob: Blob, filename: string): Promise<{ transc
  * word-timed endpoint is unavailable so the creator still gets a transcript.
  */
 async function postPlainTranscription(blob: Blob, filename: string): Promise<{ transcript: string; words: TranscriptWord[]; duration: number }> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const form = new FormData();
   form.append('audio', blob, filename);
-  const headers: Record<string, string> = { 'X-Workspace-DB-Token': token };
-  const res = await fetch('/api/generate/transcribe', { method: 'POST', headers, body: form });
+  const res = await workspaceFetch('/api/generate/transcribe', { method: 'POST', body: form });
   const data = await res.json().catch(() => null);
   if (!res.ok || typeof data?.text !== 'string') {
     throw new Error((data?.error as string) || ('Transcription failed (HTTP ' + res.status + ').'));
@@ -341,7 +332,9 @@ export async function fetchVideoAsFile(url: string): Promise<File> {
     const id = appId();
     if (id) headers['X-App-Id'] = id;
   }
-  const res = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
+  const res = isInternalUrl(url)
+    ? await workspaceFetch(url, { headers })
+    : await fetch(url);
   if (!res.ok) throw new Error('Could not load the stored video (HTTP ' + res.status + ').');
   const blob = await res.blob();
   const name = url.split('?')[0].split('/').pop() || 'video.mp4';
@@ -394,11 +387,9 @@ export function retimeSegmentText(seg: CaptionSegment, newText: string): Caption
 // ---------------------------------------------------------------------------
 
 async function askClaude(prompt: string, maxTokens = 3000): Promise<string> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
-  const res = await fetch('/proxy/anthropic/v1/messages', {
+  const res = await workspaceFetch('/proxy/anthropic/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'claude-sonnet-5',
       max_tokens: maxTokens,
@@ -530,25 +521,65 @@ export function applyEmphasis(segments: CaptionSegment[], emphasis: string[]): C
 // 4. Veo B-roll generation
 // ---------------------------------------------------------------------------
 
+const BROLL_CREDITS_KEY = 'video-enhancer:broll-credit-authorizations';
+type BrollCredit = { entryKey: string; seconds: number };
+
+function readBrollCredits(): Map<string, BrollCredit> {
+  if (typeof window === 'undefined') return new Map();
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(BROLL_CREDITS_KEY) || '{}');
+    return new Map(Object.entries(parsed || {}) as Array<[string, BrollCredit]>);
+  } catch {
+    return new Map();
+  }
+}
+
+const brollCredits = readBrollCredits();
+function persistBrollCredits(): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(BROLL_CREDITS_KEY, JSON.stringify(Object.fromEntries(brollCredits))); } catch { /* best effort */ }
+}
+function rememberBrollCredit(operationId: string, credit: BrollCredit | null): void {
+  if (credit) brollCredits.set(operationId, credit);
+  else brollCredits.delete(operationId);
+  persistBrollCredits();
+}
+
 export async function submitBroll(prompt: string, aspectRatio: '16:9' | '9:16', durationSec: number): Promise<string> {
+  const seconds = Math.min(8, Math.max(4, Math.round(durationSec)));
+  const entryKey = newChargeKey('veh-broll');
+  await authorizeCredits({
+    seconds,
+    entryKey,
+    source: 'video-enhancer-broll',
+    note: `${seconds}s AI B-roll`,
+  });
   const data = await callHook('veh-broll-generate', {
     model: VEO_31_FAST_MODEL,
     prompt,
     aspect: aspectRatio,
-    durationS: Math.min(8, Math.max(4, Math.round(durationSec))),
+    durationS: seconds,
+    entryKey,
   });
-  if (data?.status === 'failed') {
-    throw new Error(String(data.error || data.errorMessage || 'B-roll generation failed to start.'));
+  if (data?.status === 'failed' || !data?.operationId) {
+    await refundCreditsStrict(entryKey, 'Video Enhancer B-roll was not accepted by the provider');
+    throw new Error(String(data?.error || data?.errorMessage || 'B-roll generation did not start. Your credits were refunded.'));
   }
-  if (!data?.operationId) {
-    throw new Error(String(data?.error || 'B-roll generation did not return an operation id.'));
-  }
-  return String(data.operationId);
+  const operationId = String(data.operationId);
+  rememberBrollCredit(operationId, { entryKey, seconds });
+  return operationId;
 }
 
 export async function checkBroll(operationId: string): Promise<{ status: 'processing' | 'completed' | 'failed'; progress?: number; videoUrl?: string; errorMessage?: string }> {
   const data = await callHook('veh-broll-generate', { operationId });
   const status = data?.status === 'completed' ? 'completed' : data?.status === 'failed' ? 'failed' : 'processing';
+  const credit = brollCredits.get(operationId);
+  if (credit && status === 'completed') {
+    rememberBrollCredit(operationId, null);
+  } else if (credit && status === 'failed') {
+    await refundCreditsStrict(credit.entryKey, 'Video Enhancer AI B-roll failed before delivery');
+    rememberBrollCredit(operationId, null);
+  }
   return {
     status,
     progress: Number(data?.progress) || 0,
@@ -562,12 +593,9 @@ export async function checkBroll(operationId: string): Promise<{ status: 'proces
 // ---------------------------------------------------------------------------
 
 export async function clipVideo(videoUrlOrKey: string, startSec: number, endSec: number): Promise<{ url: string; durationSec: number }> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token };
-  const res = await fetch('/api/video/clip', {
+  const res = await workspaceFetch('/api/video/clip', {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ videoUrlOrKey, startSec, endSec, workspaceId: WORKSPACE_UUID }),
   });
   const data = await res.json().catch(() => null);
@@ -598,7 +626,7 @@ export interface RenderProps {
 export async function submitRender(props: RenderProps, durationInFrames: number): Promise<string> {
   const submitted = await submitCanonicalRender({
     compositionTsx: ENHANCER_COMPOSITION_TSX,
-    props,
+    props: props as unknown as Record<string, unknown>,
     durationInFrames,
     aspect: '16:9',
   });

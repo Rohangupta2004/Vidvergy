@@ -65,21 +65,21 @@ export function AgentThinkingShowcase() {
 
   return (
     <section style={{ padding: '84px 24px' }}>
-      <div style={{ maxWidth: 640, margin: '0 auto', borderRadius: 21, padding: 1, background: 'linear-gradient(135deg, rgba(184, 120, 8, 0.75), rgba(236, 72, 153, 0.65), rgba(212, 146, 10, 0.6))', boxShadow: '0 30px 80px rgba(184, 120, 8, 0.22)' }}>
-        <div style={{ borderRadius: 20, background: '#0D0B05', padding: 'clamp(28px, 6vw, 48px)', textAlign: 'center' }}>
+      <div style={{ maxWidth: 640, margin: '0 auto', borderRadius: 21, padding: 1, background: 'linear-gradient(135deg, rgba(168, 134, 31, 0.75), rgba(212, 175, 55, 0.6), rgba(230, 196, 90, 0.5))', boxShadow: '0 30px 80px rgba(212, 175, 55, 0.12)' }}>
+        <div style={{ borderRadius: 20, background: 'var(--vg-bg)', padding: 'clamp(28px, 6vw, 48px)', textAlign: 'center' }}>
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 22 }}>
             <GradientOrb size="lg" thinking />
           </div>
-          <h2 style={{ margin: 0, fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: 700, letterSpacing: '-0.02em', color: '#ffffff' }}>
+          <h2 style={{ margin: 0, fontSize: 'clamp(24px, 4vw, 32px)', fontWeight: 700, letterSpacing: '-0.02em', color: 'var(--vg-text)' }}>
             The Vidverge Agent thinks for you
           </h2>
-          <p style={{ margin: '12px auto 28px', maxWidth: 460, fontSize: 15, lineHeight: 1.6, color: '#9aa3b8' }}>
+          <p style={{ margin: '12px auto 28px', maxWidth: 460, fontSize: 15, lineHeight: 1.6, color: 'var(--vg-secondary)' }}>
             Watch it work — from idea to publish-ready video, no manual pipeline assembly
           </p>
           <div style={{ textAlign: 'left' }}>
             <ThinkingSteps steps={steps} isStreaming />
           </div>
-          <p style={{ margin: '22px 0 0', fontSize: 12.5, color: '#6b7488' }}>
+          <p style={{ margin: '22px 0 0', fontSize: 12.5, color: 'var(--vg-muted)' }}>
             Sign in to run the agent on your product
           </p>
         </div>

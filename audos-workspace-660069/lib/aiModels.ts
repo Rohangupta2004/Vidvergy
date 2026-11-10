@@ -12,6 +12,8 @@
  * thing wherever it is declared.
  */
 
+import { workspaceFetch } from './workspace';
+
 export const CLAUDE_SONNET = 'claude-sonnet-5' as const;
 export const CLAUDE_OPUS = 'claude-opus-5' as const;
 
@@ -66,16 +68,16 @@ export interface ClaudeTextRequest {
  * mid-JSON. The proxy caps output at 8,192 tokens.
  */
 export async function claudeText({ task, system, user, maxTokens = 2048, model }: ClaudeTextRequest): Promise<string> {
-  const token = workspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
-  const res = await fetch('/proxy/anthropic/v1/messages', {
+  const res = await workspaceFetch('/proxy/anthropic/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: model || selectModel(task),
-      max_tokens: Math.min(8192, Math.max(256, maxTokens)),
+      max_tokens: Math.min(16384, Math.max(256, maxTokens)),
       ...(system ? { system } : {}),
-      thinking: { type: 'disabled' },
+      ...(String(model || selectModel(task)) === CLAUDE_OPUS
+        ? { thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } }
+        : { thinking: { type: 'disabled' } }),
       messages: [{ role: 'user', content: user }],
     }),
   });

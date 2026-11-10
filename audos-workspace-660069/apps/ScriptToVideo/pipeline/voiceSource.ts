@@ -18,7 +18,7 @@
  * customer picks a voice.
  */
 
-import { getWorkspaceToken } from '../../../lib/workspace';
+import { getWorkspaceToken, workspaceFetch } from '../../../lib/workspace';
 import { uploadBlob } from '../api';
 import type { VoiceSourceId } from '../api';
 import { probeAudioDuration } from './sceneVoice';
@@ -174,9 +174,9 @@ export async function recordOpenAiLine(params: {
   if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const voice = isOpenAiVoice(String(params.voice || '')) ? String(params.voice) : DEFAULT_OPENAI_VOICE;
 
-  const res = await fetch('/proxy/openai/v1/audio/speech', {
+  const res = await workspaceFetch('/proxy/openai/v1/audio/speech', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: OPENAI_TTS_MODEL,
       voice,

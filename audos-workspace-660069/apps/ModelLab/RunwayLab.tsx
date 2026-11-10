@@ -19,28 +19,28 @@ import {
 import type { RunwayCapabilities, RunwayModeId } from '../../lib/runway';
 
 const C = {
-  surface: '#FFFAEB',
-  card: '#FFFFFF',
-  border: 'rgba(180,120,0,0.14)',
-  accent: '#C8920A',
-  text: '#1A1000',
-  text2: '#7A6030',
-  success: '#166534',
-  error: '#991B1B',
+  surface: '#1A1D26',
+  card: '#12141B',
+  border: '#2A2E3A',
+  accent: '#D4AF37',
+  text: '#F5F6F8',
+  text2: '#C3C7D1',
+  success: '#3FB950',
+  error: '#E5484D',
 };
 const FONT = 'system-ui, sans-serif';
 
 const RUNWAY_THEME = {
   bg: 'transparent',
-  panel: '#FFFAEB',
+  panel: '#1A1D26',
   card: C.card,
   line: C.border,
-  lineStrong: 'rgba(180,120,0,0.36)',
+  lineStrong: '#3A3F4D',
   ink: C.text,
-  soft: '#3D2800',
+  soft: '#C3C7D1',
   muted: C.text2,
   accent: C.accent,
-  onAccent: '#ffffff',
+  onAccent: '#0B0D12',
   good: C.success,
   bad: C.error,
   font: FONT,
@@ -132,14 +132,14 @@ export default function RunwayLab() {
               </div>
               <div style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.6 }}>{info?.blurb || ''}</div>
               <div style={{ fontSize: 11.5, color: C.text2, marginTop: 9, lineHeight: 1.7 }}>
-                <div><b style={{ color: '#3D2800' }}>Modes:</b> {info?.textToVideo ? 'text-to-video and image-to-video' : 'image-to-video only'}</div>
-                <div><b style={{ color: '#3D2800' }}>Duration:</b> {live?.durations.length ? `${live.durations.join(', ')}s` : info?.durations}</div>
-                <div><b style={{ color: '#3D2800' }}>Ratios:</b> {ratios.length ? ratios.map(ratioLabel).join(' · ') : '—'}</div>
-                <div><b style={{ color: '#3D2800' }}>Cost:</b> {live?.price || info?.priceNote || '—'}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Modes:</b> {info?.textToVideo ? 'text-to-video and image-to-video' : 'image-to-video only'}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Duration:</b> {live?.durations.length ? `${live.durations.join(', ')}s` : info?.durations}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Ratios:</b> {ratios.length ? ratios.map(ratioLabel).join(' · ') : '—'}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Cost:</b> {live?.price || info?.priceNote || '—'}</div>
               </div>
               <div style={{ display: 'flex', gap: 7, marginTop: 11, flexWrap: 'wrap' }}>
                 {info?.textToVideo ? (
-                  <button className="ml-btn" onClick={() => choose('text_to_video')} style={{ background: C.accent, color: '#fff', border: 'none', borderRadius: 8, padding: '7px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
+                  <button className="ml-btn" onClick={() => choose('text_to_video')} style={{ background: C.accent, color: '#0B0D12', border: 'none', borderRadius: 8, padding: '7px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}>
                     Run text → video
                   </button>
                 ) : null}
@@ -165,20 +165,20 @@ export default function RunwayLab() {
             <div key={m.id} className="ml-card" style={{ background: C.card, border: `1px solid ${mode === m.id ? C.accent : C.border}`, borderRadius: 12, padding: 14, opacity: offline ? 0.55 : 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 14.5, fontWeight: 800 }}>{info?.name || m.label}</span>
-                <Pill text={m.kind === 'image' ? 'Images' : 'Video'} color={m.kind === 'image' ? '#B4720A' : C.accent} />
+                <Pill text={m.kind === 'image' ? 'Images' : 'Video'} color={m.kind === 'image' ? '#E6C45A' : C.accent} />
                 {live?.version ? <Pill text={`v${live.version}`} color={C.text2} /> : null}
                 {offline ? <Pill text="Not enabled" color={C.error} /> : null}
               </div>
               <div style={{ fontSize: 12.5, color: C.text2, lineHeight: 1.6 }}>{live?.description || info?.purpose || m.blurb}</div>
               <div style={{ fontSize: 11.5, color: C.text2, marginTop: 9, lineHeight: 1.7 }}>
-                <div><b style={{ color: '#3D2800' }}>Inputs:</b> {live?.fields.length ? live.fields.join(', ') : info?.inputsNote || m.inputs}</div>
-                <div><b style={{ color: '#3D2800' }}>Outputs:</b> {live?.outputs || (m.kind === 'image' ? 4 : 1)}</div>
-                <div><b style={{ color: '#3D2800' }}>Cost:</b> {live?.price || info?.priceNote || '—'}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Inputs:</b> {live?.fields.length ? live.fields.join(', ') : info?.inputsNote || m.inputs}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Outputs:</b> {live?.outputs || (m.kind === 'image' ? 4 : 1)}</div>
+                <div><b style={{ color: '#F5F6F8' }}>Cost:</b> {live?.price || info?.priceNote || '—'}</div>
               </div>
               <button
                 className="ml-btn"
                 onClick={() => choose(m.id)}
-                style={{ marginTop: 11, background: mode === m.id ? C.accent : 'transparent', color: mode === m.id ? '#fff' : C.text, border: `1px solid ${mode === m.id ? 'transparent' : C.border}`, borderRadius: 8, padding: '7px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}
+                style={{ marginTop: 11, background: mode === m.id ? C.accent : 'transparent', color: mode === m.id ? '#0B0D12' : C.text, border: `1px solid ${mode === m.id ? 'transparent' : C.border}`, borderRadius: 8, padding: '7px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: FONT }}
               >
                 {mode === m.id ? 'Open below ↓' : `Run ${info?.name || m.label}`}
               </button>

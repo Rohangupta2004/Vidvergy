@@ -9,13 +9,15 @@
  *   — every paginated HeyGen public/account avatar look through the same-origin
  *     proxy with X-Workspace-DB-Token,
  *   — project commands and read-only progress refreshes.
- * Idea-to-script runs on gpt-6.1-sol through the OpenAI proxy per the app AI
- * policy (interactive tier, X-Workspace-DB-Token).
+ * Idea-to-script and hook variants run on Claude Opus 5.5 through the Anthropic
+ * proxy, with GPT 6.1 Sol (OpenAI proxy, interactive tier) only as the fallback.
  */
-import { callHook, getWorkspaceToken, WORKSPACE_ID } from '../../../lib/workspace';
-import { requireVerifiedCreditSession } from '../../../lib/credits';
-import type { ForgeAvatar, ForgeAvatarBundle, ForgeChoices, ForgeClonedVoice, ForgeCreatedAvatar, ForgeProject } from './forgeTypes';
+import { callHook, workspaceFetch, WORKSPACE_ID } from '../../../lib/workspace';
+import { authorizeCredits, newChargeKey, refundCredits, requireVerifiedCreditSession } from '../../../lib/credits';
+import type { CaptionLanguage, ForgeAutoBudget, ForgeAvatar, ForgeAvatarBundle, ForgeChoices, ForgeClonedVoice, ForgeCreatedAvatar, ForgeProject, ProjectBrand } from './forgeTypes';
 import type { ForgeBrowserTask } from './forgeTypes';
+import { FORGE_FALLBACK_MODEL, FORGE_OPUS_MODEL } from './forgeModels';
+import { STRUCTURED_SCRIPT_FORMAT_GUIDE, parseStructuredScript, spokenScriptFromStructured, structuredPlanFor } from './scriptFormat';
 
 // ---------------------------------------------------------------------------
 // Pipeline ops
@@ -23,6 +25,67 @@ import type { ForgeBrowserTask } from './forgeTypes';
 
 async function pipeline(body: Record<string, unknown>): Promise<any> {
   return callHook('sceneforge-pipeline', body);
+}
+
+export type ForgeTimedWord = { word: string; start: number; end: number; confidence?: number };
+
+/**
+ * Deepgram receives the exact ElevenLabs voice chunks that HeyGen used. Each
+ * response is offset onto the project timeline, so cards and captions follow
+ * spoken audio instead of an even text estimate. The caller deliberately
+ * falls back to the server's estimate if a provider read is unavailable.
+ */
+export async function transcribeVoiceChunks(
+  chunks: Array<{ audio_url?: string | null; audio_duration_sec?: number; duration_sec?: number }>,
+  captionLanguage: CaptionLanguage = 'hinglish',
+): Promise<ForgeTimedWord[]> {
+  const words: ForgeTimedWord[] = [];
+  let offset = 0;
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!chunk.audio_url) continue;
+    const audioResponse = await fetch(chunk.audio_url);
+    if (!audioResponse.ok) throw new Error(`Voice chunk ${index + 1} could not be read for timing.`);
+    const blob = await audioResponse.blob();
+    const form = new FormData();
+    form.append('audio', new File([blob], `sceneforge-voice-${index + 1}.mp3`, { type: blob.type || 'audio/mpeg' }));
+    if (captionLanguage === 'hinglish') form.append('language', 'multi');
+    if (captionLanguage === 'hindi') form.append('language', 'hi');
+    if (captionLanguage === 'english') form.append('language', 'en');
+    const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/transcribe-timestamped`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(data?.words)) throw new Error(String(data?.error || `Timestamped transcription failed for voice chunk ${index + 1}.`));
+    let localEnd = 0;
+    for (const entry of data.words) {
+      const word = String(entry?.word || '').trim();
+      const start = Number(entry?.start);
+      const end = Number(entry?.end);
+      if (!word || !Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
+      words.push({ word, start: offset + Math.max(0, start), end: offset + Math.max(start + 0.03, end), confidence: Number(entry?.confidence) || undefined });
+      localEnd = Math.max(localEnd, end);
+    }
+    offset += Math.max(localEnd, Number(data?.duration) || 0, Number(chunk.audio_duration_sec || chunk.duration_sec) || 0);
+  }
+  if (!words.length) throw new Error('Timestamped transcription returned no spoken words.');
+  return words;
+}
+
+export async function transcribeAvatarAudio(videoUrl: string, captionLanguage: CaptionLanguage = 'hinglish'): Promise<ForgeTimedWord[]> {
+  const mediaResponse = await fetch(videoUrl);
+  if (!mediaResponse.ok) throw new Error('The completed HeyGen master could not be read for word timing.');
+  const blob = await mediaResponse.blob();
+  const form = new FormData();
+  form.append('audio', new File([blob], 'sceneforge-heygen-master.mp4', { type: blob.type || 'video/mp4' }));
+  form.append('language', captionLanguage === 'hinglish' ? 'multi' : captionLanguage === 'hindi' ? 'hi' : 'en');
+  const response = await workspaceFetch(`/api/workspaces/${WORKSPACE_ID}/audio/transcribe-timestamped`, { method: 'POST', body: form });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !Array.isArray(data?.words)) throw new Error(String(data?.error || 'The HeyGen master audio could not be transcribed.'));
+  const words = data.words.map((entry: any) => ({ word: String(entry?.word || '').trim(), start: Number(entry?.start), end: Number(entry?.end), confidence: Number(entry?.confidence) || undefined })).filter((entry: ForgeTimedWord) => entry.word && Number.isFinite(entry.start) && Number.isFinite(entry.end) && entry.end >= entry.start);
+  if (!words.length) throw new Error('Timestamped transcription returned no words from the HeyGen master.');
+  return words;
 }
 
 export async function listProjects(): Promise<ForgeProject[]> {
@@ -40,6 +103,18 @@ export async function createProject(input: {
 }): Promise<ForgeProject> {
   const data = await pipeline({ op: 'create', ...input });
   if (!data?.ok || !data.project) throw new Error(data?.error || 'The project could not be created.');
+  return data.project;
+}
+
+export async function saveProjectDraft(projectId: string, input: { script?: string; topic?: string; niche?: string; style?: string; target_length_sec?: number; choices?: ForgeChoices }): Promise<ForgeProject> {
+  const data = await pipeline({ op: 'save', project_id: projectId, ...input });
+  if (!data?.ok || !data.project) throw new Error(data?.error || 'The project draft could not be saved.');
+  return data.project;
+}
+
+export async function updateProjectBrand(projectId: string, brand: ProjectBrand): Promise<ForgeProject> {
+  const data = await pipeline({ op: 'brand_update', project_id: projectId, brand });
+  if (!data?.ok || !data.project) throw new Error(data?.error || 'Brand changes could not be saved.');
   return data.project;
 }
 
@@ -70,7 +145,8 @@ export async function getProject(projectId: string): Promise<ForgeProject | null
 
 export async function chooseDraft(projectId: string, variation: number): Promise<ForgeProject | null> {
   const data = await pipeline({ op: 'choose_draft', project_id: projectId, variation });
-  return data?.project || null;
+  if (!data?.ok || !data?.project) throw new Error(data?.error || 'The selected draft could not be locked.');
+  return data.project;
 }
 
 export async function cancelProject(projectId: string): Promise<ForgeProject | null> {
@@ -91,6 +167,34 @@ export async function retryFromStep(projectId: string): Promise<ForgeProject | n
 }
 
 /**
+ * Re-runs ONLY the Auto Editor render from the saved composed edit, avatar
+ * master and assets (op `render_retry`). Finished earlier render jobs are
+ * adopted instead of re-rendered; voice, HeyGen and assets are never redone.
+ */
+export async function retryRender(projectId: string): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'render_retry', project_id: projectId });
+  if (!data?.ok) throw new Error(data?.error || 'The render could not be retried.');
+  return data.project || null;
+}
+
+/**
+ * Opt-in QA audit of a finished Auto Editor video (op `run_qa`). Frame analysis
+ * only — no credits. It proposes fixes; nothing changes until they are approved.
+ */
+export async function runQaAudit(projectId: string): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'run_qa', project_id: projectId });
+  if (!data?.ok) throw new Error(data?.error || 'The QA audit could not start.');
+  return data.project || null;
+}
+
+/** Approve and/or ignore proposed QA fixes (op `qa_fixes`); approved fixes re-render with no new charge. */
+export async function reviewQaFixes(projectId: string, approve: string[], ignore: string[]): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'qa_fixes', project_id: projectId, approve, ignore });
+  if (!data?.ok) throw new Error(data?.error || 'The QA fixes could not be saved.');
+  return data.project || null;
+}
+
+/**
  * Browser → server report for the browser-owned avatar step
  * (op `complete_avatar_step`): persists the submitted HeyGen video id, the
  * finished video URL, or the exact failure, so the durable pipeline resumes
@@ -103,6 +207,10 @@ export async function reportAvatarStep(projectId: string, update: {
   duration_sec?: number;
   error?: string;
   transparent_fallback?: boolean;
+  render_api?: 'v2' | 'v3';
+  avatar_model?: 'avatar_iv' | 'legacy_v2';
+  fallback_reason?: string | null;
+  word_timestamps?: ForgeTimedWord[];
 }): Promise<ForgeProject | null> {
   const data = await pipeline({ op: 'complete_avatar_step', project_id: projectId, ...update });
   if (!data?.ok) throw new Error(data?.error || 'The avatar result could not be saved to the project.');
@@ -120,6 +228,49 @@ export async function reviewStep(
   return data.project || null;
 }
 
+/** Re-run the Remotion agent on a delivered (or failed) Auto Editor project with one instruction. */
+export async function autoReedit(projectId: string, instruction: string): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'auto_reedit', project_id: projectId, instruction });
+  if (!data?.ok) throw new Error(data?.error || 'The re-edit could not start.');
+  return data.project || null;
+}
+
+/** Brand answers for a finished Auto Editor project. Only confirmed values are sent; blank fields are left out, never guessed. */
+export interface AutoBrandAnswers {
+  name?: string;
+  website?: string;
+  cta?: string;
+  logoChoice?: 'site' | 'web' | 'upload' | 'brand_kit' | 'none';
+  logoUrl?: string;
+  logoOriginalUrl?: string;
+  logoSource?: string;
+  logoKey?: string | null;
+  logoHasBackground?: boolean;
+  /** true only when the user pressed "Use my saved Brand Kit". */
+  usedBrandKit?: boolean;
+}
+
+/**
+ * Saves the user's answers to the delivery-notes brand questions (op `auto_brand_answers`) and re-runs the
+ * existing Auto Editor re-edit path. Only studio_config.brandContext / brandBrief (and the confirmed logo) change;
+ * no new charge and no draft rebuild.
+ */
+export async function autoBrandAnswers(projectId: string, answers: AutoBrandAnswers): Promise<ForgeProject | null> {
+  const data = await pipeline({ op: 'auto_brand_answers', project_id: projectId, answers });
+  if (!data?.ok) throw new Error(data?.error || 'The brand answers could not be saved.');
+  return data.project || null;
+}
+
+/** Pre-start estimate of the Remotion agent's token reservation plus SceneForge's own recent usage. */
+export async function getAutoBudget(script: string, seconds: number): Promise<ForgeAutoBudget | null> {
+  try {
+    const data = await pipeline({ op: 'auto_budget', script: script.slice(0, 30000), seconds });
+    return data?.ok && data.budget ? data.budget as ForgeAutoBudget : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function applyEdit(projectId: string, changes: {
   accent?: string;
   music_mood?: string;
@@ -134,42 +285,104 @@ export async function applyEdit(projectId: string, changes: {
 }
 
 // ---------------------------------------------------------------------------
-// Idea → script (gpt-6.1-sol via the OpenAI proxy — interactive tier)
+// Scripting — Claude Opus 5.5 primary, GPT 6.1 Sol fallback
 // ---------------------------------------------------------------------------
 
-export async function ideaToScript(idea: string, niche: string, targetSeconds: number): Promise<string> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Your workspace session is not ready yet — refresh and try again.');
-  const wordsTarget = Math.round((targetSeconds / 60) * 140);
-  const res = await fetch('/proxy/openai/v1/chat/completions', {
+async function scriptingText(system: string, user: string, options: { maxTokens: number; json?: boolean }): Promise<{ text: string; model: string }> {
+  let primaryError = '';
+  try {
+    const res = await workspaceFetch('/proxy/anthropic/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: FORGE_OPUS_MODEL,
+        max_tokens: Math.min(16000, options.maxTokens),
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'medium' },
+        system,
+        messages: [{ role: 'user', content: user }],
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    const text = (Array.isArray(data?.content) ? data.content : [])
+      .filter((block: any) => block && block.type === 'text')
+      .map((block: any) => String(block.text || ''))
+      .join('')
+      .trim();
+    if (res.ok && text) return { text, model: FORGE_OPUS_MODEL };
+    primaryError = String(data?.error?.message || data?.error || data?.code || `HTTP ${res.status}`);
+  } catch (error: any) {
+    primaryError = String(error?.message || error);
+  }
+  console.warn('[SceneForge] Claude Opus 5.5 was unavailable for scripting; using GPT 6.1 Sol:', primaryError);
+  const res = await workspaceFetch('/proxy/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: 'gpt-6.1-sol',
+      model: FORGE_FALLBACK_MODEL,
       reasoning_effort: 'medium',
-      max_completion_tokens: 6000,
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You write spoken presenter scripts for avatar videos. Conversational, specific, zero filler. ' +
-            'Write ONLY the words the presenter says — no stage directions, no headings, no markdown. ' +
-            'Tailor examples and vocabulary to the stated niche/industry so the video feels made for that audience.',
-        },
-        {
-          role: 'user',
-          content:
-            'Niche/industry: ' + (niche || 'general business') + '\n' +
-            'Target length: about ' + targetSeconds + ' seconds (~' + wordsTarget + ' words).\n' +
-            'Idea: ' + idea,
-        },
-      ],
+      max_completion_tokens: Math.min(16000, options.maxTokens),
+      ...(options.json ? { response_format: { type: 'json_object' } } : {}),
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     }),
   });
   const data = await res.json().catch(() => null);
   const text = data?.choices?.[0]?.message?.content;
-  if (!res.ok || !text) throw new Error(data?.error?.message || data?.error || 'The script could not be generated.');
-  return String(text).trim();
+  if (!res.ok || !text) {
+    console.warn('[SceneForge] GPT 6.1 Sol scripting fallback failed:', data?.error?.message || data?.error || `HTTP ${res.status}`);
+    throw new Error('The script writer is unavailable right now. Please try again in a moment.');
+  }
+  return { text: String(text).trim(), model: FORGE_FALLBACK_MODEL };
+}
+
+function stripCodeFence(text: string): string {
+  return String(text || '').replace(/^\s*```[a-z]*\s*\n/i, '').replace(/\n```\s*$/, '').trim();
+}
+
+function parseJsonObject(text: string): any {
+  const clean = stripCodeFence(text);
+  try { return JSON.parse(clean); } catch { /* try the outermost object below */ }
+  const start = clean.indexOf('{');
+  const end = clean.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('The hook writer did not return JSON.');
+  return JSON.parse(clean.slice(start, end + 1));
+}
+
+/** Writes a script in SceneForge's structured Act / Scene / Shot / dialogue format; only the quoted dialogue is voiced. */
+export async function ideaToScript(idea: string, niche: string, targetSeconds: number): Promise<string> {
+  const plan = structuredPlanFor(targetSeconds);
+  const end = `${Math.floor(plan.totalSec / 60)}:${String(plan.totalSec % 60).padStart(2, '0')}`;
+  const system = [
+    'You write scripts for SceneForge videos. Each scene carries full production direction, but only its one quoted dialogue line is spoken aloud by the on-camera presenter or character.',
+    'Dialogue is conversational, specific and free of filler. Tailor examples and vocabulary to the stated niche/industry so the video feels made for that audience.',
+    'Preserve the language and script used in the idea for the dialogue: Roman-script Hinglish stays natural Roman Hinglish, Devanagari stays Devanagari, and code-mixed text is never translated. Production direction stays in English.',
+    'Return only the script — no preamble and no closing notes.',
+    '',
+    STRUCTURED_SCRIPT_FORMAT_GUIDE,
+  ].join('\n');
+  const user =
+    'Niche/industry: ' + (niche || 'general business') + '\n' +
+    `Target length: about ${plan.totalSec} seconds — exactly ${plan.scenes} scenes of about ${plan.sceneSec} seconds each, in ${plan.acts} act${plan.acts === 1 ? '' : 's'}, running 0:00–${end}.\n` +
+    `Spoken dialogue in total: about ${Math.round(plan.totalSec * 2.3)} words.\n` +
+    'Idea: ' + idea;
+  const { text, model } = await scriptingText(system, user, { maxTokens: 16000 });
+  const script = stripCodeFence(text);
+  if (!parseStructuredScript(script)) console.warn(`[SceneForge] ${model} did not return the structured scene format; keeping its script as written.`);
+  return script;
+}
+
+/** Generate exactly three alternate opening hooks without starting or charging a video render. */
+export async function generateHookVariants(script: string, niche: string): Promise<string[]> {
+  const spoken = spokenScriptFromStructured(parseStructuredScript(script)) || script;
+  const { text: raw } = await scriptingText(
+    'Create exactly three original spoken opening hooks for an avatar video. Preserve the script language and factual claims. Return JSON only as {"hooks":["...","...","..."]}. Each hook must be one short sentence and use a genuinely different structure.',
+    `Niche: ${niche || 'general'}\nScript:\n${spoken.slice(0, 12000)}`,
+    { maxTokens: 6000, json: true },
+  );
+  const parsed = parseJsonObject(String(raw));
+  const hooks = Array.isArray(parsed?.hooks) ? parsed.hooks.map(String).map((value: string) => value.trim()).filter(Boolean).slice(0, 3) : [];
+  if (hooks.length !== 3) throw new Error('The hook writer did not return exactly three usable variants.');
+  return hooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,19 +433,37 @@ export async function createAvatar(input: {
   parentId?: number;
   consentAttested?: boolean;
 }): Promise<ForgeCreatedAvatar> {
-  const data = requireCreatorResult(await avatarCreator({
-    op: 'create',
-    request_id: requestId('avatar'),
-    name: input.name,
-    method: input.method,
-    prompt: input.prompt || undefined,
-    url: input.url || undefined,
-    workspace_url: input.workspaceUrl || undefined,
-    reference_urls: input.referenceUrls || [],
-    aspect_ratio: input.aspectRatio || 'auto',
-    parent_id: input.parentId || undefined,
-    consent_attested: input.consentAttested === true,
-  }), 'Avatar creation could not start.');
+  const creditKey = newChargeKey('sceneforge-avatar');
+  await authorizeCredits({
+    engine: 'heygen/avatar-create',
+    options: { jobs: 1, avatarType: input.method },
+    entryKey: creditKey,
+    source: 'sceneforge-avatar',
+    label: `Custom avatar · ${input.method.replace('_', ' ')}`,
+    note: input.name.slice(0, 120),
+  });
+  let created: any;
+  try {
+    created = await avatarCreator({
+      op: 'create',
+      request_id: requestId('avatar'),
+      name: input.name,
+      method: input.method,
+      prompt: input.prompt || undefined,
+      url: input.url || undefined,
+      workspace_url: input.workspaceUrl || undefined,
+      reference_urls: input.referenceUrls || [],
+      aspect_ratio: input.aspectRatio || 'auto',
+      parent_id: input.parentId || undefined,
+      consent_attested: input.consentAttested === true,
+    });
+  } catch (error) {
+    await refundCredits(creditKey, 'Avatar creation could not start');
+    throw error;
+  }
+  // A retryable provider answer is resumed by the status poll with the same request, so it stays charged.
+  if (!created?.ok && created?.code !== 'provider_retryable') await refundCredits(creditKey, 'Avatar creation failed');
+  const data = requireCreatorResult(created, 'Avatar creation could not start.');
   return data.avatar;
 }
 
@@ -252,15 +483,12 @@ export async function deleteCreatedAvatar(id: number): Promise<string | null> {
 }
 
 async function uploadWorkspaceSceneForgeFile(file: File, folder: string): Promise<{ url: string; key: string | null }> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Your workspace session is not ready yet — refresh and try again.');
   const form = new FormData();
   form.append('file', file, file.name);
   form.append('workspaceId', WORKSPACE_ID);
   form.append('folder', folder);
-  const response = await fetch('/api/upload/file', {
+  const response = await workspaceFetch('/api/upload/file', {
     method: 'POST',
-    headers: { 'X-Workspace-DB-Token': token },
     body: form,
   });
   const data = await response.json().catch(() => ({}));
@@ -270,6 +498,11 @@ async function uploadWorkspaceSceneForgeFile(file: File, folder: string): Promis
 
 export function uploadWorkspaceAvatarFile(file: File): Promise<{ url: string; key: string | null }> {
   return uploadWorkspaceSceneForgeFile(file, 'sceneforge-avatars');
+}
+
+export function uploadProjectLogo(file: File, projectId: string): Promise<{ url: string; key: string | null }> {
+  if (!projectId) return Promise.reject(new Error('Save the SceneForge project before uploading its logo.'));
+  return uploadWorkspaceSceneForgeFile(file, `sceneforge-projects/${projectId}/brand`);
 }
 
 // Voice cloning uses Audos's managed ElevenLabs integration. Provider keys never reach this bundle.
@@ -285,7 +518,24 @@ export async function createClonedVoice(name: string, files: File[]): Promise<Fo
     const stored = await uploadWorkspaceSceneForgeFile(file, 'sceneforge-voice-clones');
     uploaded.push({ url: stored.url, filename: file.name, contentType: file.type, sizeBytes: file.size });
   }
-  const data = requireCreatorResult(await avatarCreator({ op: 'voice_create', name: name.trim(), files: uploaded }), 'ElevenLabs voice cloning failed.');
+  const creditKey = newChargeKey('sceneforge-voice-clone');
+  await authorizeCredits({
+    engine: 'elevenlabs/voice-clone',
+    options: { jobs: 1 },
+    entryKey: creditKey,
+    source: 'sceneforge-voice-clone',
+    label: 'ElevenLabs voice clone',
+    note: name.trim().slice(0, 120),
+  });
+  let created: any;
+  try {
+    created = await avatarCreator({ op: 'voice_create', name: name.trim(), files: uploaded });
+  } catch (error) {
+    await refundCredits(creditKey, 'Voice cloning could not start');
+    throw error;
+  }
+  if (!created?.ok) await refundCredits(creditKey, 'Voice cloning failed');
+  const data = requireCreatorResult(created, 'ElevenLabs voice cloning failed.');
   return data.voice;
 }
 
@@ -328,11 +578,9 @@ export async function loadMyAvatars(): Promise<ForgeAvatar[]> {
 
 const HEYGEN_PROXY = () => `/api/workspaces/${WORKSPACE_ID}/provider-credentials/heygen/proxy`;
 async function heygen(path: string, init?: RequestInit): Promise<any> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Your workspace session is not ready yet — refresh and try again.');
-  const response = await fetch(`${HEYGEN_PROXY()}/${path.replace(/^\/+/, '')}`, {
+  const response = await workspaceFetch(`${HEYGEN_PROXY()}/${path.replace(/^\/+/, '')}`, {
     ...init,
-    headers: { ...(init?.method ? { 'Content-Type': 'application/json' } : {}), 'X-Workspace-DB-Token': token, ...(init?.headers || {}) },
+    headers: { ...(init?.method ? { 'Content-Type': 'application/json' } : {}), ...(init?.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`HeyGen HTTP ${response.status}: ${data?.error?.message || data?.message || data?.error || 'request failed'}`);
@@ -347,11 +595,57 @@ async function heygen(path: string, init?: RequestInit): Promise<any> {
 // above, then persists the result with reportAvatarStep.
 // ---------------------------------------------------------------------------
 
-export async function submitAvatarRender(payload: NonNullable<ForgeBrowserTask['payload']>): Promise<string> {
-  const data = await heygen('v2/video/generate', { method: 'POST', body: JSON.stringify(payload) });
+export interface AvatarRenderSubmission {
+  videoId: string;
+  renderApi: 'v2' | 'v3';
+  avatarModel: 'avatar_iv' | 'legacy_v2';
+  fallbackReason: string | null;
+}
+
+function legacyAvatarPayload(payload: NonNullable<ForgeBrowserTask['payload']>): { video_inputs: any[]; dimension: { width: number; height: number } } {
+  const fallback = payload.fallback_v2 || payload;
+  if (!Array.isArray(fallback.video_inputs) || !fallback.dimension) {
+    throw new Error('The legacy HeyGen fallback request is missing from this project.');
+  }
+  return { video_inputs: fallback.video_inputs, dimension: fallback.dimension };
+}
+
+/**
+ * Prefer HeyGen's documented Avatar IV v3 engine. Compatibility is checked
+ * before the paid create call because SceneForge historically selected an
+ * ElevenLabs voice and some existing avatar looks are v2-only. Any unsupported
+ * look/voice or create failure falls back to the exact prior v2 audio payload.
+ */
+export async function submitAvatarRender(
+  payload: NonNullable<ForgeBrowserTask['payload']>,
+  options?: { forceLegacy?: boolean; fallbackReason?: string },
+): Promise<AvatarRenderSubmission> {
+  let fallbackReason = options?.fallbackReason || null;
+  const preferred = payload.preferred_v3;
+  if (!options?.forceLegacy && preferred) {
+    try {
+      const avatarId = String(preferred.avatar_id || '');
+      const voiceId = String(preferred.voice_id || '');
+      const lookResult = await heygen(`v3/avatars/looks/${encodeURIComponent(avatarId)}`);
+      const look = lookResult?.data || lookResult || {};
+      const supported = Array.isArray(look.supported_api_engines) ? look.supported_api_engines.map(String) : [];
+      if (supported.indexOf('avatar_iv') < 0) throw new Error('The selected avatar look does not support Avatar IV.');
+      const voiceResult = await heygen(`v3/voices/${encodeURIComponent(voiceId)}`);
+      const voice = voiceResult?.data || voiceResult || {};
+      if (String(voice.voice_id || '') !== voiceId) throw new Error('The selected voice is not available in HeyGen v3.');
+      const data = await heygen('v3/videos', { method: 'POST', body: JSON.stringify(preferred) });
+      const videoId = String(data?.data?.video_id || data?.video_id || '');
+      if (!videoId) throw new Error('HeyGen Avatar IV accepted the request but did not return data.video_id.');
+      return { videoId, renderApi: 'v3', avatarModel: 'avatar_iv', fallbackReason: null };
+    } catch (error: any) {
+      fallbackReason = String(error?.message || error || 'Avatar IV is unavailable.').slice(0, 320);
+    }
+  }
+
+  const data = await heygen('v2/video/generate', { method: 'POST', body: JSON.stringify(legacyAvatarPayload(payload)) });
   const videoId = String(data?.data?.video_id || data?.video_id || '');
-  if (!videoId) throw new Error('HeyGen accepted the avatar request but did not return data.video_id.');
-  return videoId;
+  if (!videoId) throw new Error('HeyGen accepted the legacy fallback request but did not return data.video_id.');
+  return { videoId, renderApi: 'v2', avatarModel: 'legacy_v2', fallbackReason };
 }
 
 export interface AvatarRenderStatus {
@@ -361,7 +655,17 @@ export interface AvatarRenderStatus {
   error: string | null;
 }
 
-export async function pollAvatarRender(videoId: string): Promise<AvatarRenderStatus> {
+export async function pollAvatarRender(videoId: string, renderApi: 'v2' | 'v3' = 'v2'): Promise<AvatarRenderStatus> {
+  if (renderApi === 'v3') {
+    const data = await heygen(`v3/videos/${encodeURIComponent(videoId)}`);
+    const video = data?.data || data || {};
+    return {
+      status: String(video?.status || 'processing').toLowerCase(),
+      url: typeof video?.video_url === 'string' && /^https?:\/\//i.test(video.video_url) ? String(video.video_url) : null,
+      durationSec: Number(video?.duration) || 0,
+      error: [video?.failure_code, video?.failure_message].filter(Boolean).join(': ') || null,
+    };
+  }
   const data = await heygen(`v1/video_status.get?video_id=${encodeURIComponent(videoId)}`);
   const video = data?.data || data || {};
   const failure = video?.error;

@@ -1,5 +1,7 @@
 import type { CreativeBrief } from './creativeStrategy';
 import { callHook } from './api';
+import { workspaceFetch } from '../../lib/workspace';
+import { creditsForSeconds } from '../../lib/credits';
 
 export const CAMPAIGN_PRODUCTION_VERSION = 'vergeye.campaign-production.2026-10-21.v1';
 export const OMNI_EDIT_CAPABILITY_VERSION = 'gemini-omni-1.1-flash-edit.2026-10-21.v1';
@@ -111,6 +113,54 @@ export interface CampaignProductionState {
 
 export function emptyCampaignProduction(): CampaignProductionState {
   return { schemaVersion: CAMPAIGN_PRODUCTION_VERSION, assets: [], usage: [], lastPackCreatedAt: '' };
+}
+
+/** Saved campaigns predate usage tracking and revision history. Normalise every
+ * collection before the production panel renders so one legacy row cannot
+ * crash the whole Ads Studio surface with `.filter` / `.map` / `.length`. */
+export function upgradeCampaignProduction(value: unknown): CampaignProductionState {
+  const source = value && typeof value === 'object' ? value as any : {};
+  const assets = (Array.isArray(source.assets) ? source.assets : [])
+    .filter((asset: any) => asset && typeof asset === 'object')
+    .map((asset: any, index: number) => ({
+      ...asset,
+      id: clean(asset.id, `asset_migrated_${index}`),
+      dedupKey: clean(asset.dedupKey, `migrated-${index}`),
+      campaignId: clean(asset.campaignId),
+      creativeBriefId: clean(asset.creativeBriefId),
+      angleId: clean(asset.angleId),
+      contentSubtype: clean(asset.contentSubtype, 'Campaign asset'),
+      title: clean(asset.title, `Campaign asset ${index + 1}`),
+      aspectRatio: clean(asset.aspectRatio, '9:16'),
+      format: clean(asset.format, 'MP4'),
+      status: ['planned', 'generating', 'ready', 'failed'].includes(asset.status) ? asset.status : 'planned',
+      qaState: ['not-run', 'pass', 'needs-review', 'fail'].includes(asset.qaState) ? asset.qaState : 'not-run',
+      prompt: clean(asset.prompt),
+      exactText: {
+        headline: clean(asset.exactText?.headline),
+        body: clean(asset.exactText?.body),
+        cta: clean(asset.exactText?.cta),
+      },
+      layout: ['headline-top', 'split', 'minimal', 'feature-stack'].includes(asset.layout) ? asset.layout : 'headline-top',
+      referenceUrl: clean(asset.referenceUrl),
+      brandLogoUrl: clean(asset.brandLogoUrl),
+      brandAccent: clean(asset.brandAccent),
+      revisions: (Array.isArray(asset.revisions) ? asset.revisions : [])
+        .filter((revision: any) => revision && typeof revision === 'object'),
+      activeRevisionId: clean(asset.activeRevisionId),
+      error: clean(asset.error),
+      qualityApprovals: asset.qualityApprovals && typeof asset.qualityApprovals === 'object' ? asset.qualityApprovals : {},
+      createdAt: clean(asset.createdAt),
+      updatedAt: clean(asset.updatedAt),
+    })) as CampaignAsset[];
+  const usage = (Array.isArray(source.usage) ? source.usage : [])
+    .filter((row: any) => row && typeof row === 'object') as UsageRecord[];
+  return {
+    schemaVersion: CAMPAIGN_PRODUCTION_VERSION,
+    assets,
+    usage,
+    lastPackCreatedAt: clean(source.lastPackCreatedAt),
+  };
 }
 
 function uid(prefix: string): string {
@@ -277,12 +327,10 @@ function contentMarkdown(content: GeneratedContent): string {
 }
 
 export async function generateCampaignContent(asset: CampaignAsset, brief: CreativeBrief): Promise<{ revision: CampaignRevision; usage: UsageRecord }> {
-  const token = (window as any).__workspaceDb?.token;
-  if (!token) throw new Error('Your workspace session is not ready. Refresh, then try again.');
   const evidence = brief.reasoning.evidence.filter((item) => /^https?:\/\//i.test(item.sourceUrl));
-  const response = await fetch('/proxy/openai/v1/chat/completions', {
+  const response = await workspaceFetch('/proxy/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'gpt-6.1-sol', reasoning_effort: 'medium', max_completion_tokens: 6000, stream: false,
       response_format: { type: 'json_object' },
@@ -468,14 +516,14 @@ export function qualityState(checks: CampaignQualityCheck[]): CampaignAsset['qaS
 }
 
 export function usageByCategory(state: CampaignProductionState, briefs: CreativeBrief[]): Array<{ category: UsageCategory; estimate: string; actual: string; note: string }> {
-  const videoCredits = briefs.filter((brief) => brief.contentKind === 'video').reduce((sum, brief) => sum + Math.max(1, brief.quantity) * Math.max(0, brief.durationSec), 0);
+  const videoSeconds = briefs.filter((brief) => brief.contentKind === 'video').reduce((sum, brief) => sum + Math.max(1, brief.quantity) * Math.max(0, brief.durationSec), 0);
   const categories: UsageCategory[] = ['research', 'llm_planning', 'image', 'video', 'editing', 'rendering'];
   return categories.map((category) => {
     const rows = state.usage.filter((row) => row.category === category);
     const estimatedUsd = rows.reduce((sum, row) => sum + (row.estimateUsd || 0), 0);
     const actualKnown = rows.some((row) => row.actualUsd != null);
     const actualUsd = rows.reduce((sum, row) => sum + (row.actualUsd || 0), 0);
-    if (category === 'video') return { category, estimate: `${videoCredits} credits planned`, actual: 'Recorded by Script-to-Video', note: 'One credit per approved finished second; provider receipt remains authoritative.' };
+    if (category === 'video') return { category, estimate: `${creditsForSeconds(videoSeconds)} credits planned (${videoSeconds}s)`, actual: 'Recorded by Script-to-Video', note: 'Gemini Omni 1.1 Flash at real engine cost + 30%; Script-to-Video charges each clip before it is generated.' };
     if (category === 'research') return { category, estimate: '$0 incremental', actual: '$0 here', note: 'Reuses the saved campaign research and competitor intelligence.' };
     if (category === 'rendering') return { category, estimate: 'Quoted in Finish', actual: 'Recorded in renderer', note: 'Final assembly reuses approved clips; no duplicate generation.' };
     return { category, estimate: estimatedUsd ? `~$${estimatedUsd.toFixed(2)}` : 'No spend yet', actual: actualKnown ? `$${actualUsd.toFixed(2)}` : 'Provider receipt unavailable', note: `${rows.length} recorded operation${rows.length === 1 ? '' : 's'}.` };

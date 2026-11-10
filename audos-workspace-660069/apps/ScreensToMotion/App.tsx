@@ -135,8 +135,8 @@ const pillButton = (active: boolean): CSSProperties => ({
   borderRadius: 13,
   border: active ? '1px solid var(--space-brand-primary-500)' : '1px solid var(--space-border-default)',
   cursor: 'pointer',
-  color: active ? 'var(--space-text-on-primary)' : 'var(--space-text-secondary)',
-  background: active ? 'linear-gradient(135deg,var(--space-brand-primary-500),var(--space-brand-primary-700))' : 'var(--space-surface-panel)',
+  color: active ? 'var(--vg-text)' : 'var(--space-text-secondary)',
+  background: active ? 'var(--vg-gold-tint)' : 'var(--space-surface-panel)',
   fontWeight: 720,
   fontSize: 13.5,
   display: 'inline-flex',
@@ -432,7 +432,7 @@ export default function App() {
   const counts = useMemo(() => `${files.length} / ${INGEST_RULES.maxFiles} screenshots · brief ${briefLength} / ${INGEST_RULES.briefMaxChars}`, [files.length, briefLength]);
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: 0, overflowY: 'auto', color: 'var(--space-text-primary)', background: 'radial-gradient(900px 460px at 50% -8%,color-mix(in srgb,var(--space-brand-primary-500) 20%,transparent),transparent 64%),var(--space-surface-bg)', fontFamily: "'Inter','Geist',system-ui,sans-serif" }}>
+    <div style={{ width: '100%', height: '100%', minHeight: 0, overflowY: 'auto', color: 'var(--space-text-primary)', background: 'radial-gradient(900px 460px at 50% -8%,color-mix(in srgb,var(--space-brand-primary-500) 8%,transparent),transparent 64%),var(--space-surface-bg)', fontFamily: "'Inter','Geist',system-ui,sans-serif" }}>
       <style>{CSS}</style>
       <main style={{ width: 'min(920px,100%)', margin: '0 auto', boxSizing: 'border-box', padding: 'clamp(20px,4vw,48px) clamp(16px,5vw,48px) 72px' }}>
         <header className="stm-rise" style={{ marginBottom: 28 }}>
@@ -473,8 +473,8 @@ export default function App() {
                   {files.map((file, index) => (
                     <div key={`${file.name}-${index}`} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--space-border-default)', background: 'var(--space-surface-panel)' }}>
                       <img src={previews[index]} alt={file.name} style={{ width: '100%', aspectRatio: '16/10', objectFit: 'cover', display: 'block' }} />
-                      <button type="button" onClick={() => removeFile(index)} aria-label={`Remove ${file.name}`} style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, display: 'grid', placeItems: 'center', borderRadius: 99, border: 0, cursor: 'pointer', color: '#fff', background: 'rgba(2,6,23,.72)' }}><X size={13} /></button>
-                      <span style={{ position: 'absolute', left: 6, bottom: 6, padding: '2px 7px', borderRadius: 99, background: 'rgba(2,6,23,.72)', color: '#fff', fontSize: 10 }}>{index + 1}</span>
+                      <button type="button" onClick={() => removeFile(index)} aria-label={`Remove ${file.name}`} style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, display: 'grid', placeItems: 'center', borderRadius: 99, border: 0, cursor: 'pointer', color: '#fff', background: 'rgba(0,0,0,.72)' }}><X size={13} /></button>
+                      <span style={{ position: 'absolute', left: 6, bottom: 6, padding: '2px 7px', borderRadius: 99, background: 'rgba(0,0,0,.72)', color: '#fff', fontSize: 10 }}>{index + 1}</span>
                     </div>
                   ))}
                 </div>
@@ -515,7 +515,7 @@ export default function App() {
                           <Film size={14} color="var(--space-text-brand)" />
                           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</span>
                           <span style={{ color: 'var(--space-text-muted)', fontSize: 11 }}>{(file.size / 1048576).toFixed(1)} MB</span>
-                          <button type="button" onClick={() => setClipFiles(clipFiles.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`} style={{ width: 22, height: 22, display: 'grid', placeItems: 'center', borderRadius: 99, border: 0, cursor: 'pointer', color: '#1A1000', background: 'rgba(180,120,0,0.14)' }}><X size={12} /></button>
+                          <button type="button" onClick={() => setClipFiles(clipFiles.filter((_, i) => i !== index))} aria-label={`Remove ${file.name}`} style={{ width: 22, height: 22, display: 'grid', placeItems: 'center', borderRadius: 99, border: 0, cursor: 'pointer', color: 'var(--vg-text)', background: 'var(--vg-raised)' }}><X size={12} /></button>
                         </div>
                       ))}
                     </div>
@@ -523,7 +523,7 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 13, color: 'var(--space-text-secondary)' }}><Wand2 size={14} color="var(--space-text-brand)" /> Veo atmosphere clips (gated — no screens, no text, no logos):</span>
                     {[0, 1, 2].map((n) => (
-                      <button key={n} type="button" className="stm-btn" disabled={clipFiles.length + n + presenterCount > CLIP_RULES.maxClips} onClick={() => setAtmosphereCount(n)} style={{ minWidth: 44, minHeight: 34, borderRadius: 10, border: atmosphereCount === n ? '1px solid var(--space-brand-primary-500)' : '1px solid var(--space-border-default)', cursor: 'pointer', color: atmosphereCount === n ? 'var(--space-text-on-primary)' : 'var(--space-text-secondary)', background: atmosphereCount === n ? 'var(--space-brand-primary-600)' : 'var(--space-surface-panel)', opacity: clipFiles.length + n + presenterCount > CLIP_RULES.maxClips ? 0.4 : 1, fontWeight: 700 }} data-testid={`stm-atmosphere-${n}`}>{n}</button>
+                      <button key={n} type="button" className="stm-btn" disabled={clipFiles.length + n + presenterCount > CLIP_RULES.maxClips} onClick={() => setAtmosphereCount(n)} style={{ minWidth: 44, minHeight: 34, borderRadius: 10, border: atmosphereCount === n ? '1px solid var(--space-brand-primary-500)' : '1px solid var(--space-border-default)', cursor: 'pointer', color: atmosphereCount === n ? 'var(--vg-text)' : 'var(--space-text-secondary)', background: atmosphereCount === n ? 'var(--vg-gold-tint)' : 'var(--space-surface-panel)', opacity: clipFiles.length + n + presenterCount > CLIP_RULES.maxClips ? 0.4 : 1, fontWeight: 700 }} data-testid={`stm-atmosphere-${n}`}>{n}</button>
                     ))}
                   </div>
                 </div>
@@ -574,7 +574,7 @@ export default function App() {
                         </p>
                         {presenter.status === 'awaiting-approval' ? (
                           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-                            <button type="button" className="stm-btn" onClick={() => setPresenter({ status: 'approved', candidate: (presenter as any).candidate })} style={{ minHeight: 40, padding: '0 16px', borderRadius: 11, border: 0, cursor: 'pointer', color: 'var(--space-text-on-primary)', background: 'linear-gradient(135deg,var(--space-brand-primary-500),var(--space-brand-primary-700))', fontWeight: 750, fontSize: 13 }} data-testid="stm-presenter-approve"><Check size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Approve</button>
+                            <button type="button" className="stm-btn" onClick={() => setPresenter({ status: 'approved', candidate: (presenter as any).candidate })} style={{ minHeight: 40, padding: '0 16px', borderRadius: 11, border: 0, cursor: 'pointer', color: 'var(--space-text-on-primary)', background: 'var(--vg-btn)', fontWeight: 750, fontSize: 13 }} data-testid="stm-presenter-approve"><Check size={14} style={{ verticalAlign: 'middle', marginRight: 6 }} />Approve</button>
                             <button type="button" className="stm-btn" onClick={() => void startPresenter()} style={{ minHeight: 40, padding: '0 14px', borderRadius: 11, border: '1px solid var(--space-border-default)', cursor: 'pointer', color: 'var(--space-text-primary)', background: 'var(--space-surface-panel)', fontSize: 13 }}><RefreshCw size={13} style={{ verticalAlign: 'middle', marginRight: 6 }} />Regenerate</button>
                             <button type="button" onClick={() => setPresenter({ status: 'off' })} style={{ minHeight: 40, padding: '0 14px', borderRadius: 11, border: '1px solid var(--space-border-default)', cursor: 'pointer', color: 'var(--space-text-secondary)', background: 'var(--space-surface-panel)', fontSize: 13 }}>Skip</button>
                           </div>
@@ -592,7 +592,7 @@ export default function App() {
 
             {error ? <div role="alert" style={{ padding: '13px 15px', borderRadius: 13, border: '1px solid color-mix(in srgb,var(--space-semantic-danger-500) 35%,transparent)', background: 'color-mix(in srgb,var(--space-semantic-danger-500) 9%,transparent)', color: 'var(--space-semantic-danger)', fontSize: 13 }}>{error}</div> : null}
 
-            <button type="button" className="stm-btn" disabled={!canGenerate} onClick={() => void generate()} style={{ minHeight: 54, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, border: 0, borderRadius: 15, cursor: canGenerate ? 'pointer' : 'not-allowed', color: 'var(--space-text-on-primary)', background: canGenerate ? 'linear-gradient(135deg,var(--space-brand-primary-500),var(--space-brand-primary-700))' : 'var(--space-surface-panel-strong)', opacity: canGenerate ? 1 : .55, fontSize: 15, fontWeight: 760 }} data-testid="stm-generate">
+            <button type="button" className="stm-btn" disabled={!canGenerate} onClick={() => void generate()} style={{ minHeight: 54, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, border: 0, borderRadius: 15, cursor: canGenerate ? 'pointer' : 'not-allowed', color: canGenerate ? 'var(--space-text-on-primary)' : 'var(--vg-muted)', background: canGenerate ? 'var(--vg-btn)' : 'var(--space-surface-panel-strong)', opacity: canGenerate ? 1 : .55, fontSize: 15, fontWeight: 760 }} data-testid="stm-generate">
               <Sparkles size={18} /> {route === 'mix' ? 'Generate the Presenter Mix' : 'Generate the demo video'}
             </button>
             {route === 'mix' && presenter.status === 'awaiting-approval' ? (
@@ -608,7 +608,7 @@ export default function App() {
               <h2 style={{ margin: '18px 0 7px', fontSize: 23 }}>{progress.label}</h2>
               <p style={{ margin: 0, color: 'var(--space-text-secondary)', lineHeight: 1.6 }}>{progress.detail}</p>
               <div style={{ marginTop: 22, height: 7, overflow: 'hidden', borderRadius: 99, background: 'var(--space-surface-panel-strong)' }}>
-                <div style={{ width: `${progressPercent}%`, height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--space-brand-primary-600),var(--space-brand-highlight-500))', transition: 'width .5s ease' }} />
+                <div style={{ width: `${progressPercent}%`, height: '100%', borderRadius: 99, background: 'var(--vg-accent)', transition: 'width .5s ease' }} />
               </div>
               <p style={{ margin: '16px 0 0', color: 'var(--space-text-muted)', fontSize: 12 }}>No human in the loop — ingest, conform, gate, analyse, plan, render.</p>
             </div>
@@ -629,7 +629,7 @@ export default function App() {
               </div>
             ) : null}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              <a href={videoUrl} target="_blank" rel="noopener noreferrer" download="screens-to-motion.mp4" className="stm-btn" style={{ minHeight: 52, flex: '1 1 230px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 15, color: 'var(--space-text-on-primary)', background: 'linear-gradient(135deg,var(--space-brand-primary-500),var(--space-brand-primary-700))', textDecoration: 'none', fontWeight: 760 }} data-testid="stm-download"><Download size={18} /> Download MP4</a>
+              <a href={videoUrl} target="_blank" rel="noopener noreferrer" download="screens-to-motion.mp4" className="stm-btn" style={{ minHeight: 52, flex: '1 1 230px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 15, color: 'var(--space-text-on-primary)', background: 'var(--vg-btn)', textDecoration: 'none', fontWeight: 760 }} data-testid="stm-download"><Download size={18} /> Download MP4</a>
               <button type="button" onClick={reset} className="stm-btn" style={{ minHeight: 52, flex: '1 1 190px', borderRadius: 15, border: '1px solid var(--space-border-default)', cursor: 'pointer', color: 'var(--space-text-primary)', background: 'var(--space-surface-panel)' }}><ArrowLeft size={15} style={{ marginRight: 8, verticalAlign: 'middle' }} />Make another</button>
               <button type="button" onClick={() => window.dispatchEvent(new CustomEvent('openApp', { detail: { appId: 'videos' } }))} className="stm-btn" style={{ minHeight: 52, flex: '1 1 190px', borderRadius: 15, border: '1px solid var(--space-border-default)', cursor: 'pointer', color: 'var(--space-text-primary)', background: 'var(--space-surface-panel)' }}><Film size={15} style={{ marginRight: 8, verticalAlign: 'middle' }} />Open My Videos</button>
             </div>

@@ -10,9 +10,9 @@ import React from 'react';
  * receives the raw suggestion text back.
  */
 
-const GOLD = '#6C63FF';
-const GOLD_DEEP = '#5146E8';
-const INK = '#0A0A0F';
+const GOLD = 'var(--vg-accent)';
+const GOLD_DEEP = 'var(--vg-accent-pressed)';
+const INK = 'var(--vg-on-btn)';
 
 export async function suggestWithAI(prompt: string): Promise<string> {
   const token = (window as unknown as { __workspaceDb?: { token?: string } }).__workspaceDb?.token;
@@ -95,10 +95,10 @@ export const AISparkleButton: React.FC<AISparkleButtonProps> = ({
         gap: 4,
         padding: '4px 10px',
         borderRadius: 6,
-        border: '1px solid rgba(108,99,255,0.35)',
+        border: '1px solid color-mix(in srgb, var(--vg-accent) 35%, transparent)',
         background: busy
-          ? 'rgba(108,99,255,0.18)'
-          : 'linear-gradient(135deg, rgba(108,99,255,0.14), rgba(81,70,232,0.1))',
+          ? 'color-mix(in srgb, var(--vg-accent) 18%, transparent)'
+          : 'color-mix(in srgb, var(--vg-accent) 12%, transparent)',
         color: GOLD,
         fontSize: 11,
         fontWeight: 600,
@@ -115,7 +115,7 @@ export const AISparkleButton: React.FC<AISparkleButtonProps> = ({
         (e.currentTarget as HTMLButtonElement).style.borderColor = GOLD;
       }}
       onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(108,99,255,0.35)';
+        (e.currentTarget as HTMLButtonElement).style.borderColor = 'color-mix(in srgb, var(--vg-accent) 35%, transparent)';
       }}
     >
       <span

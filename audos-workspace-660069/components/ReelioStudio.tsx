@@ -25,19 +25,19 @@ const META: Record<Exclude<Panel, null>, { title: string; subtitle: string; icon
     title: 'My Characters',
     subtitle: 'Upload a reference image and keep the same character in every shot.',
     icon: Users,
-    accent: '#2563eb',
+    accent: 'var(--vg-accent)',
   },
   mockups: {
     title: 'App Mockups',
     subtitle: 'Generate a realistic app screen to embed into your video.',
     icon: Smartphone,
-    accent: '#0d9488',
+    accent: 'var(--vg-accent)',
   },
   script: {
     title: 'Script Studio',
     subtitle: 'Review and edit your script scene by scene, then generate.',
     icon: Film,
-    accent: '#2563eb',
+    accent: 'var(--vg-accent)',
   },
 };
 
@@ -107,7 +107,7 @@ export default function ReelioStudio() {
           flexDirection: 'column',
           borderRadius: 22,
           border: '1px solid rgba(255,255,255,0.12)',
-          background: 'linear-gradient(180deg, #110E07 0%, #0D0B05 100%)',
+          background: 'linear-gradient(180deg, var(--vg-surface) 0%, var(--vg-bg) 100%)',
           boxShadow: '0 40px 120px rgba(0,0,0,0.7)',
           overflow: 'hidden',
           animation: 'rsRise .28s cubic-bezier(.16,1,.3,1) both',
@@ -122,7 +122,7 @@ export default function ReelioStudio() {
             gap: 12,
             padding: '18px 22px',
             borderBottom: '1px solid rgba(255,255,255,0.08)',
-            background: `radial-gradient(600px 120px at 0% 0%, ${meta.accent}22, transparent 70%)`,
+            background: `radial-gradient(600px 120px at 0% 0%, color-mix(in srgb, ${meta.accent} 8%, transparent), transparent 70%)`,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
@@ -134,15 +134,15 @@ export default function ReelioStudio() {
                 width: 40,
                 height: 40,
                 borderRadius: 12,
-                background: `${meta.accent}22`,
-                border: `1px solid ${meta.accent}55`,
+                background: `color-mix(in srgb, ${meta.accent} 15%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${meta.accent} 42%, transparent)`,
               }}
             >
-              <Icon size={20} color="#fff" />
+              <Icon size={20} color={meta.accent} />
             </span>
             <div style={{ minWidth: 0 }}>
-              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: '#fff' }}>{meta.title}</h2>
-              <p style={{ margin: '2px 0 0', fontSize: 12.5, color: '#9ca3af', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: 'var(--vg-text)' }}>{meta.title}</h2>
+              <p style={{ margin: '2px 0 0', fontSize: 12.5, color: 'var(--vg-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {meta.subtitle}
               </p>
             </div>
@@ -160,7 +160,7 @@ export default function ReelioStudio() {
               borderRadius: 10,
               border: '1px solid rgba(255,255,255,0.12)',
               background: 'rgba(255,255,255,0.04)',
-              color: '#9ca3af',
+              color: 'var(--vg-muted)',
               cursor: 'pointer',
             }}
           >

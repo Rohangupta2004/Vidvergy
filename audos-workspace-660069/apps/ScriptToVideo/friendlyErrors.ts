@@ -40,8 +40,12 @@ export interface FriendlyError {
 
 export const TAB_REQUIRED_MESSAGE =
   'This model runs from your signed-in browser. Keep this tab open; the selected model will not be changed.';
+export const SERVICE_CREDENTIAL_MESSAGE =
+  'The studio could not open its connection to this model just now, so no render was started. Retry shortly, or switch this film to Gemini Omni.';
 export const AUTH_MESSAGE =
   'Your sign-in needs a quick refresh, so nothing was started or charged. Tap Retry. If it happens again, refresh the page and sign in once more.';
+export const CREDIT_AUTH_MESSAGE =
+  'Your signed-in session needs a moment to re-authorize credits. Nothing was charged and no render was submitted — tap Retry, or sign in again if it keeps happening.';
 export const EMPTY_RESULTS_MESSAGE =
   'The service did not send anything back this time. Your film and completed scenes are safe. Tap Retry.';
 export const DB_TIMEOUT_MESSAGE =
@@ -126,7 +130,13 @@ export function classifyError(value: unknown): FriendlyError {
   if (/key limit exceeded|spending limit|openrouter_key_limit|provider budget reached/i.test(probe)) {
     return make('outage', 'Provider budget reached. This film remains paused; retry on the selected model later or create a separate Omni version.', { canSwitchToOmni: true, canRetry: false });
   }
-  if (/keep (?:this|the) (?:browser )?tab open|stay on this tab|closed-tab|browser session token|workspace_service_credential|workspace-level service credential|needs your current signed-in workspace session|founder workspace (?:backend )?credential/i.test(probe)) {
+  // Kling and Seedance are billed and submitted on the workspace's own server
+  // identity, so a missing service credential is a provider outage — keeping
+  // the tab open does not fix it.
+  if (/workspace_service_credential|workspace-level service credential|could not open its connection to this model/i.test(probe)) {
+    return make('outage', SERVICE_CREDENTIAL_MESSAGE, { canSwitchToOmni: true });
+  }
+  if (/keep (?:this|the) (?:browser )?tab open|stay on this tab|closed-tab|browser session token|needs your current signed-in workspace session|founder workspace (?:backend )?credential/i.test(probe)) {
     return make('tab-required', TAB_REQUIRED_MESSAGE, { canSwitchToOmni: true });
   }
   if (/not_approved_for_founder_billing|not approved for founder-funded|not on the founder-approved/i.test(probe)) {
@@ -134,6 +144,15 @@ export function classifyError(value: unknown): FriendlyError {
   }
   if (/\bnot_a_workspace_member\b/i.test(probe)) {
     return make('auth', 'This signed-in account is not a member of this workspace. Nothing was submitted.', { canRetry: false });
+  }
+  // A wallet authorization that could not be proven is a SESSION problem, not
+  // a balance problem: it is recoverable, nothing was charged, and the one
+  // thing that fixes it is re-acquiring the signed-in session. It is matched
+  // ahead of the generic auth case so the copy can say that plainly, and it
+  // never swallows a genuine out-of-credits refusal.
+  if (!/\binsufficient_credits\b/i.test(probe)
+    && /credit[_ ]authorization|credit_authorization_(?:unconfirmed|unavailable|refused|failed)|session_expired|sign in with your email/i.test(probe)) {
+    return make('auth', CREDIT_AUTH_MESSAGE);
   }
   if (/\b(?:no_credentials|workspace_token_invalid)\b|authentication required|session required|workspace session|session (?:expired|invalid)|\b401\b/i.test(probe)) {
     return make('auth', AUTH_MESSAGE);
@@ -152,7 +171,7 @@ export function classifyError(value: unknown): FriendlyError {
     return make('credits', 'You do not have enough Vidverge credits for this scene. Add credits, then retry. Your completed clips are safe.', { canRetry: false });
   }
   if (/billing[_-]/i.test(probe)) {
-    return make('billing', 'Credit authorization could not be confirmed. Refresh your signed-in session and retry. No render was submitted.');
+    return make('billing', CREDIT_AUTH_MESSAGE);
   }
   if (/rate.?limit|\b429\b/i.test(probe)) return make('rate-limit', 'The video service is busy right now. Wait a moment, then tap Retry.');
   if (/provider[_ -]?error|\b50[0234]\b|service unavailable|could not reach the video service/i.test(probe)) {

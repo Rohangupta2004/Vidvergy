@@ -1,8 +1,9 @@
 import { getSessionId, hookUrl } from '../../lib/workspace';
+import { DEFAULT_VIDEO_ENGINE, quote } from '../../lib/pricing';
 import { saveVidvergeHandoff } from '../../lib/vidvergeHandoff';
 import { buildVergeyeVideoHandoff } from '../../lib/vergeyeVideoProduction';
 import type { Competitor, Profile, ResearchFinding } from '../Phantom/store';
-import { emptyCampaignProduction, type CampaignProductionState } from './campaignProduction';
+import { emptyCampaignProduction, upgradeCampaignProduction, type CampaignProductionState } from './campaignProduction';
 
 export const CREATIVE_STRATEGY_SCHEMA_VERSION = 'vergeye.creative-strategy.v2';
 const LEGACY_CREATIVE_STRATEGY_SCHEMA_VERSION = 'vergeye.creative-strategy.v1';
@@ -289,7 +290,7 @@ export function upgradeCreativeStrategy(state: unknown): CreativeStrategyState {
     selectedAngleIds,
     contentSelections,
     briefs,
-    production: source.production && typeof source.production === 'object' ? source.production : emptyCampaignProduction(),
+    production: upgradeCampaignProduction(source.production),
   };
 }
 
@@ -482,10 +483,13 @@ export function estimateCreativeCost(selections: ContentSelection[], selectedAng
     if (item.kind === 'image') imageRenders += quantity * multiplier;
     if (item.kind === 'marketing') marketingOutputs += quantity * multiplier;
   });
-  const parts = [`${videoSeconds} video credit${videoSeconds === 1 ? '' : 's'}`];
-  if (imageRenders) parts.push(`${imageRenders} image render${imageRenders === 1 ? '' : 's'} (provider quote required)`);
+  // Video packs are produced in Script-to-Video on the canonical engine; the
+  // studio shows the exact per-scene quote again before it charges.
+  const videoCredits = quote(DEFAULT_VIDEO_ENGINE, { seconds: videoSeconds }).credits;
+  const parts = [`${videoCredits} video credit${videoCredits === 1 ? '' : 's'} (${videoSeconds}s at real engine cost + 30%)`];
+  if (imageRenders) parts.push(`${imageRenders} image render${imageRenders === 1 ? '' : 's'} (free)`);
   if (marketingOutputs) parts.push(`${marketingOutputs} marketing output${marketingOutputs === 1 ? '' : 's'} (planning is free)`);
-  return { videoCredits: videoSeconds, videoSeconds, imageRenders, marketingOutputs, summary: parts.join(' · ') };
+  return { videoCredits, videoSeconds, imageRenders, marketingOutputs, summary: parts.join(' · ') };
 }
 
 function productionRoute(selection: ContentSelection): CreativeBrief['production']['route'] {

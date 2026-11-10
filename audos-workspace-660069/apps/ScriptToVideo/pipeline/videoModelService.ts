@@ -42,7 +42,8 @@
  *   /api/generate/kling/status/:taskId. Kling durations are the strings
  *   '5' | '10'. Kling job ids are stored with a 'kling:' prefix so status
  *   polling routes to the right endpoint even across a reload (resumeFilm only
- *   has the stored operation id). Kling is a manual browser-authenticated option.
+ *   has the stored operation id). Kling and Seedance 2.5 are submitted by
+ *   stv-scene-generate, which bills this workspace's wallet.
  *
  * AVAILABILITY IS NOT RECORDED HERE. This header used to carry a dated probe
  * log, and every number in it eventually went stale while still reading as
@@ -62,7 +63,7 @@ import { Aspect, ReferenceAsset, uploadBlob, uploadDataUrl } from '../api';
 import { capabilityFor, rankReferences } from '../v2Contracts';
 import { scrubProviderPrompt } from './promptDirector';
 import { WORKSPACE_ID, workspaceFetch } from '../../../lib/workspace';
-import { TAB_REQUIRED_MESSAGE, callS2vHook as callHook } from '../friendlyErrors';
+import { SERVICE_CREDENTIAL_MESSAGE, callS2vHook as callHook } from '../friendlyErrors';
 import { assembleFilm } from './assemble';
 export { S2V_CAPABILITY_REGISTRY_VERSION, S2V_VIDEO_CAPABILITIES } from '../v2Contracts';
 export {
@@ -72,7 +73,8 @@ export {
 export type { VergeyeRouterMode, VergeyeRoutingDecision, VergeyeRoutingInput, VergeyeVideoStyleId } from '../../../lib/vergeyeVideoProduction';
 import { poll } from '../../../lib/poll';
 import { checkRunway, runwaySubmitVideo } from '../../../lib/videoEngineClient';
-import { authorizeCredits, refundCredits, refundCreditsStrict } from '../../../lib/credits';
+import { authorizeCredits, getCachedCredits, quoteGeneration, refundCredits, refundCreditsStrict } from '../../../lib/credits';
+import { openPricing } from '../../../lib/plans';
 import { groupADurationLadder, groupAMinDurationS, groupAModel, type GroupAModel } from '../../../lib/videoEngines';
 import {
   RUNWAY_ROSTER, RunwayRosterModel, clampRosterDuration, rosterDurations,
@@ -174,7 +176,7 @@ export const VIDEO_MODEL: VideoModelConfig = {
   promptMaxChars: 10000,
   negativeMaxChars: 500,
   pollIntervalMs: 5000,
-  timeoutMs: 8 * 60 * 1000,
+  timeoutMs: 4 * 60 * 1000,
 };
 
 /** Registry ids for Runway entries: legacy films stored 'runway-gen4.5' /
@@ -533,9 +535,12 @@ export function resolveVideoModel(id?: string | null): VideoModelConfig {
   if (byId) return byId;
   const byApi = VIDEO_MODELS.find((m) => m.apiModel === key);
   if (byApi) return { ...byApi, apiModel: key };
-  // 28 Oct 2026 paid sweep: stale Seedance, Kling, Runway and OpenRouter Veo
-  // selections all migrate to the one verified target instead of resubmitting
-  // against a failed provider or missing workspace credential.
+  // Compatibility only: retired Veo/Sora/Omni-preview ids are documented
+  // aliases served by Omni 1.1. They are never shown as explicit picker
+  // choices, so a current manual selection is never silently remapped.
+  if (/^(?:gemini-omni-flash-preview|veo-(?:2|3|3\.0|3\.1)(?:[.-].*)?|sora-2(?:[.-].*)?)$/i.test(key)) return VIDEO_MODEL;
+  // Unknown historical ids fail closed onto the default so old films remain
+  // openable; current explicit choices are restricted by modelPicker.ts.
   return VIDEO_MODEL;
 }
 
@@ -667,6 +672,9 @@ export interface CreateVideoParams {
   model?: VideoModelConfig;
   /** Stable scene-row key reused across retries so one clip is never billed twice. */
   creditKey?: string;
+  /** Defaults to the existing eager refund. The scene orchestrator sets false
+   * while its bounded retry/fallback ladder still has work left. */
+  refundOnFailure?: boolean;
   /** Film-level Audio choice. False forbids generated audio on every supporting model. */
   generateAudio?: boolean;
   /** Called after the exact provider body is built and before it is sent. */
@@ -706,68 +714,49 @@ export interface VideoJobStatus {
 const cancelled = new Set<string>();
 
 /**
- * AUTHENTICATED GENERATION: the stable scene key is authorized through
- * vv-credits before submit. The gateway uses the shared founder credential when
- * available. If that credential is missing or rejected, Kling and Seedance use
- * the same browser-authenticated proxy routes proven in Video Provider Lab.
- * The fallback keeps the one existing credit receipt and stores the returned
- * provider task id; it never creates a second paid submit.
+ * A failure the recovery ladder is allowed to send again unchanged. The flag
+ * is what ./resilience reads: a dropped connection and a blown client timeout
+ * carry no HTTP status to classify from, so they have to say so themselves.
  */
-async function callGenerateHook(payload: Record<string, unknown>): Promise<any> {
+function transientError(message: string, status = 0): Error {
+  const error: any = new Error(message);
+  error.transient = true;
+  if (status) error.status = status;
+  return error;
+}
+
+/**
+ * AUTHENTICATED GENERATION: the stable scene key is authorized through
+ * vv-credits before submit, then every provider is submitted and polled by
+ * stv-scene-generate. Seedance 2.5 and Kling bill this workspace's wallet
+ * through the server function's signed identity, so a visitor's browser token
+ * (which may belong to another workspace) is never needed.
+ */
+async function callGenerateHook(payload: Record<string, unknown>, timeoutMs = 45_000): Promise<any> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await callHook('stv-scene-generate', payload);
+    return await callHook('stv-scene-generate', payload, { signal: controller.signal });
   } catch (e: any) {
     const raw = String(e?.message || e);
     console.error('[ScriptToVideo] generation gateway failed', raw);
-    if (/invalid workspace session|workspace session|unauthori[sz]ed|\b401\b|\b403\b/i.test(raw)) {
-      throw new Error('Your sign-in session expired before the request reached the video service. Nothing was started or charged. Refresh the page, sign in, and retry this scene.');
+    if (controller.signal.aborted || /aborterror|timed? ?out|timeout/i.test(raw)) {
+      throw transientError(appendTechnicalDetails(
+        `The video service did not answer within ${Math.round(timeoutMs / 1000)} seconds. Nothing new was submitted. Tap Retry.`,
+        raw,
+      ));
     }
-    throw new Error('The video service could not be reached. Your film and completed scenes are safe. Tap Retry shortly.');
+    if (/invalid workspace session|workspace session|unauthori[sz]ed|\b401\b|\b403\b/i.test(raw)) {
+      throw new Error(appendTechnicalDetails('Your sign-in session expired before the request reached the video service. Nothing was started or charged. Refresh the page, sign in, and retry this scene.', raw));
+    }
+    throw transientError(appendTechnicalDetails('The video service could not be reached. Your film and completed scenes are safe. Tap Retry shortly.', raw));
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
 const BROWSER_KLING_PREFIX = 'browser-kling:';
 const BROWSER_VEO_PREFIX = 'browser-veo:';
-
-async function browserWorkspaceJson(path: string, init: RequestInit = {}): Promise<any> {
-  const response = await workspaceFetch(path, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...((init.headers || {}) as Record<string, string>),
-    },
-  });
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error: any = new Error(String(data?.error?.message || data?.error || data?.message || data?.errorMessage || `Request failed (${response.status}).`));
-    error.status = response.status;
-    error.data = data;
-    throw error;
-  }
-  return data;
-}
-
-async function submitWithBrowserWorkspaceCredential(provider: VideoProvider, body: Record<string, unknown>): Promise<{ ok: true; jobId: string; warning?: string }> {
-  if (provider === 'kling') {
-    const hasReferences = Array.isArray(body.images) && body.images.length >= 2;
-    const path = hasReferences ? '/api/generate/kling/multi-image' : body.imageData ? '/api/generate/kling/image-to-video' : '/api/generate/kling/text-to-video';
-    const payload = hasReferences
-      ? { ...body, images: (body.images as any[]).map((image) => typeof image === 'string' ? { imageData: image } : image) }
-      : body;
-    const task = await browserWorkspaceJson(path, { method: 'POST', body: JSON.stringify(payload) });
-    const taskId = String(task?.taskId || task?.task_id || task?.id || '');
-    if (!taskId) throw new Error('Kling accepted the request but returned no task ID.');
-    return { ok: true, jobId: `${BROWSER_KLING_PREFIX}${taskId}`, warning: task?.modelFallback ? String(task.modelFallback) : undefined };
-  }
-  const task = await browserWorkspaceJson('/api/veo/generate/video', { method: 'POST', body: JSON.stringify(body) });
-  const operationId = String(task?.operationId || task?.operation_id || '');
-  if (!operationId || /_error_/.test(operationId)) throw new Error(String(task?.errorMessage || task?.message || 'The video proxy returned no usable operation ID.'));
-  return { ok: true, jobId: `${BROWSER_VEO_PREFIX}${operationId}` };
-}
-
-function isBackendCredentialFailure(value: unknown): boolean {
-  return /workspace_service_credential|founder workspace backend credential|S2V_KLING_WORKSPACE_TOKEN/i.test(String(value || ''));
-}
 
 function providerMessage(data: any): string {
   const value = data?.errorMessage || data?.error?.message || data?.error || data?.message || data?.code || '';
@@ -788,16 +777,99 @@ function providerMessage(data: any): string {
   return [headline, detailText].filter(Boolean).join(' — ');
 }
 
+/**
+ * WHERE THE CUSTOMER SENTENCE ENDS AND THE EVIDENCE BEGINS.
+ *
+ * A block's saved `error` has two audiences. The creator needs one plain
+ * sentence naming the next action; the workspace owner needs the provider's
+ * own words, because "temporarily unavailable" and "authentication required"
+ * read identically on a card and have nothing in common to fix.
+ *
+ * `classifyError` in ../friendlyErrors splits on this exact marker and shows
+ * only what precedes it, so one stored string serves both: the card stays
+ * plain, and the Technical details disclosure carries the truth.
+ */
+export const TECHNICAL_DETAILS_MARKER = ' Technical details: ';
+
+/** Append owner evidence after the customer sentence, or extend what is there. */
+export function appendTechnicalDetails(message: string, detail: string): string {
+  const extra = String(detail || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  if (!extra) return String(message || '');
+  return String(message || '').includes(TECHNICAL_DETAILS_MARKER.trimEnd())
+    ? `${message} · ${extra}`
+    : `${message}${TECHNICAL_DETAILS_MARKER}${extra}`;
+}
+
+/** Just the sentence a customer should read. */
+export function publicPartOf(message: unknown): string {
+  return String(message || '').split(TECHNICAL_DETAILS_MARKER.trimEnd())[0].trim();
+}
+
+/** Just the evidence, when a message carries any. */
+export function technicalPartOf(message: unknown): string {
+  const parts = String(message || '').split(TECHNICAL_DETAILS_MARKER.trimEnd());
+  return parts.length > 1 ? parts.slice(1).join('').trim() : '';
+}
+
+/**
+ * Keep the provider's own words where the workspace owner can read them.
+ *
+ * The server gateway writes its own `s2v-diagnosis` row for a provider
+ * refusal, but a gateway that never answered leaves no row at all. This sends
+ * the sanitized text to the shared vv-job-failure sink Health already reads.
+ */
+async function reportProviderFailure(input: {
+  provider: VideoProvider;
+  model: unknown;
+  status: number;
+  code?: string;
+  raw: string;
+  refunded?: number;
+}): Promise<void> {
+  try {
+    await callHook('vv-job-failure', {
+      app: 'script-to-video',
+      provider: input.provider,
+      model: String(input.model || ''),
+      errorClass: input.code || (input.status ? `provider_http_${input.status}` : 'provider_submit_failed'),
+      message: input.raw,
+      refundedCredits: Math.max(0, Math.round(Number(input.refunded) || 0)),
+    });
+  } catch { /* logging never masks the generation error */ }
+}
+
+const TRANSIENT_SUBMIT_STATUSES = [408, 425, 429, 500, 502, 503, 504];
+
+/**
+ * One refused submit, as an Error the recovery ladder can reason about instead
+ * of regexing a sentence: `status`, `code` and `transient` are what
+ * ./resilience reads, so a dropped connection is sent again and an empty
+ * wallet is not.
+ */
+function submitFailure(status: number, data: any): Error {
+  const httpStatus = Number(status) || 0;
+  const code = String(data?.code || data?.error?.code || data?.data?.code || '').trim();
+  const raw = providerMessage(data) || (() => { try { return JSON.stringify(data || {}); } catch { return ''; } })();
+  const error: any = new Error(classifySubmitError(httpStatus, data));
+  error.status = httpStatus;
+  if (code) error.code = code;
+  error.providerRaw = raw;
+  error.transient = TRANSIENT_SUBMIT_STATUSES.includes(httpStatus)
+    || /temporarily unavailable|service unavailable|\boutage\b|upstream|bad gateway|gateway time|timed? out|timeout|failed to fetch|network ?error|econnreset|etimedout|socket hang up/i.test(`${code} ${raw}`);
+  return error;
+}
+
 function classifySubmitError(status: number, data: any): string {
   const code = String(data?.code || data?.error?.code || data?.data?.code || '').trim();
   const raw = providerMessage(data) || (() => { try { return JSON.stringify(data || {}); } catch { return ''; } })();
-  // Keep provider diagnostics in the console/owner diagnosis path only. Scene
-  // rows are customer-visible and must contain a specific recovery action, not
-  // raw provider payloads, key-management URLs, codes, or spend details.
   console.error('[ScriptToVideo] provider submit rejected', { status, code: code || 'provider_error', raw });
-  const message = (publicMessage: string) => publicMessage;
+  // The customer sentence names the recovery action. The provider's own words,
+  // status and code follow the marker, so they stay off the card while still
+  // reaching the Technical details disclosure and the owner's failure log.
+  const evidence = [code ? `code=${code}` : '', status ? `http=${status}` : '', raw].filter(Boolean).join(' · ');
+  const message = (publicMessage: string) => appendTechnicalDetails(publicMessage, evidence);
   if (code === 'cast_approval_required') return message('Approve every retained character sheet, or confirm that no cast is needed, before Start.');
-  if (code === 'workspace_service_credential_unavailable') return message(TAB_REQUIRED_MESSAGE);
+  if (code === 'workspace_service_credential_unavailable') return message(SERVICE_CREDENTIAL_MESSAGE);
   if (code === 'no_credentials' || code === 'workspace_token_invalid' || /\b(?:no_credentials|workspace_token_invalid)\b/i.test(raw) || status === 401) return message('Your workspace session could not be verified. Refresh and retry; no render was submitted.');
   if (code === 'not_a_workspace_member' || /\bnot_a_workspace_member\b/i.test(raw)) return message('This signed-in account is not a member of this workspace. No render was submitted.');
   if (status === 403) return message('The provider refused this workspace or task owner. No render was submitted; the selected film remains paused.');
@@ -815,29 +887,37 @@ function classifySubmitError(status: number, data: any): string {
 
 /** Submit one generation through the server hook. The hook applies the
  * duration fallback and rejects placeholder failure ids itself. */
-async function submitViaHook(provider: VideoProvider, body: Record<string, unknown>, safeMaxDuration: number, creditKey?: string): Promise<{ ok: true; jobId: string; warning?: string; referenceFallback?: boolean } | { ok: false; status: number; data: any }> {
+async function submitViaHook(provider: VideoProvider, body: Record<string, unknown>, safeMaxDuration: number, creditKey?: string, refundOnFailure = true): Promise<{ ok: true; jobId: string; warning?: string; referenceFallback?: boolean } | { ok: false; status: number; data: any }> {
   const key = String(creditKey || '').trim();
   const seconds = Math.max(1, Math.round(Number(body.duration) || 0));
   if (!key) throw new Error('A stable scene credit key is required before video submission.');
-  const browserProvider = provider === 'kling' || provider === 'openrouter';
-  if (browserProvider) {
-    const access = await callGenerateHook({ op: 'access-check' });
-    if (!access?.approved) throw new Error(String(access?.error || 'This account is not approved for video generation.'));
-    try {
-      await authorizeCredits({ seconds, entryKey: key, source: 'script-to-video', note: `${provider} scene clip` });
-    } catch (error: any) {
-      if (error?.code === 'insufficient_credits') throw new Error(`insufficient_credits: ${String(error?.message || error)}`);
-      throw error;
-    }
-    try {
-      return await submitWithBrowserWorkspaceCredential(provider, body);
-    } catch (browserError: any) {
-      await refundCreditsStrict(key, 'The browser-authenticated provider submit was rejected');
-      throw new Error(classifySubmitError(Number(browserError?.status) || 0, browserError?.data || { error: String(browserError?.message || browserError) }));
-    }
+  const refundSubmitFailure = async (reason: string): Promise<void> => {
+    if (refundOnFailure) await refundCreditsStrict(key, reason);
+  };
+  // Priced exactly as stv-scene-generate re-prices this body server-side, so
+  // the hold taken here is the one the gateway accepts.
+  const engine = String(body.model || '').trim() || VIDEO_MODEL.apiModel;
+  const pricing = {
+    seconds,
+    resolution: String(body.resolution || '720p'),
+    aspectRatio: String(body.aspectRatio || '16:9'),
+    audio: body.generateAudio === true,
+    mode: String(body.mode || 'std'),
+  };
+  const quote = quoteGeneration(engine, pricing);
+  if (!quote.priced && !getCachedCredits()?.unlimited) {
+    throw new Error(`${quote.label} has no confirmed price yet, so it cannot be billed. Choose another model for this film; nothing was charged.`);
   }
   try {
-    await authorizeCredits({ seconds, entryKey: key, source: 'script-to-video', note: `${provider} scene clip` });
+    await authorizeCredits({
+      seconds,
+      engine,
+      options: pricing,
+      entryKey: key,
+      source: 'script-to-video',
+      label: `${quote.label} · ${seconds}s scene`,
+      note: `${provider} scene clip`,
+    });
   } catch (error: any) {
     if (error?.code === 'insufficient_credits') throw new Error(`insufficient_credits: ${String(error?.message || error)}`);
     throw error;
@@ -845,16 +925,10 @@ async function submitViaHook(provider: VideoProvider, body: Record<string, unkno
 
   let out: any;
   try {
-    out = await callGenerateHook({ op: 'submit', provider, body, safeMaxDuration, creditKey: key });
+    out = await callGenerateHook({ op: 'submit', provider, body, safeMaxDuration, creditKey: key, refundOnFailure });
   } catch (error: any) {
-    if ((provider === 'kling' || provider === 'openrouter') && isBackendCredentialFailure(error?.message || error)) {
-      try { return await submitWithBrowserWorkspaceCredential(provider, body); }
-      catch (browserError: any) {
-        await refundCreditsStrict(key, 'The browser-authenticated provider submit was rejected');
-        throw new Error(classifySubmitError(Number(browserError?.status) || 0, browserError?.data || { error: String(browserError?.message || browserError) }));
-      }
-    }
-    await refundCreditsStrict(key, 'The Script-to-Video gateway did not accept the scene submit');
+    await refundSubmitFailure('The Script-to-Video gateway did not accept the scene submit');
+    void reportProviderFailure({ provider, model: body.model, status: Number(error?.status) || 0, code: String(error?.code || '') || undefined, raw: String(error?.message || error), refunded: refundOnFailure ? seconds : 0 });
     throw error;
   }
   // success:true + operationId (status 'processing') is an accepted async job:
@@ -871,14 +945,16 @@ async function submitViaHook(provider: VideoProvider, body: Record<string, unkno
   const detail = out?.data && typeof out.data === 'object'
     ? { ...out, ...out.data }
     : { ...out, data: out?.data || null };
-  if ((provider === 'kling' || provider === 'openrouter') && (isBackendCredentialFailure(JSON.stringify(detail)) || [401, 403].includes(Number(out?.httpStatus)))) {
-    try { return await submitWithBrowserWorkspaceCredential(provider, body); }
-    catch (browserError: any) {
-      await refundCreditsStrict(key, 'The browser-authenticated provider submit was rejected');
-      throw new Error(classifySubmitError(Number(browserError?.status) || 0, browserError?.data || { error: String(browserError?.message || browserError) }));
-    }
+  if (detail?.code === 'insufficient_credits') {
+    openPricing('credits', {
+      required: Math.max(0, Math.round(Number(detail.required) || quote.credits)),
+      balance: Math.max(0, Math.round(Number(detail.balance) || 0)),
+      seconds,
+      label: `${quote.label} · ${seconds}s scene`,
+    });
   }
-  await refundCreditsStrict(key, 'The provider rejected the scene before returning a job id');
+  await refundSubmitFailure('The provider rejected the scene before returning a job id');
+  void reportProviderFailure({ provider, model: body.model, status: Number(out?.httpStatus) || 0, code: String(detail?.code || '') || undefined, raw: providerMessage(detail), refunded: refundOnFailure ? seconds : 0 });
   return { ok: false, status: Number(out?.httpStatus) || 0, data: detail };
 }
 
@@ -906,44 +982,13 @@ async function submitWithPromptSafetyRetry(
   body: Record<string, unknown>,
   safeMaxDuration: number,
   creditKey?: string,
+  refundOnFailure = true,
 ): Promise<{ ok: true; jobId: string; warning?: string; referenceFallback?: boolean } | { ok: false; status: number; data: any }> {
   const initialBody = { ...body, prompt: scrubProviderPrompt(String(body.prompt || '')) };
   console.info('[ScriptToVideo] final provider prompt', initialBody.prompt);
-  // Google is submitted through stv-scene-generate, which owns the one safe
-  // retry centrally. Kling/OpenRouter submit from the signed-in browser and
-  // therefore need the equivalent retry here. Never stack both layers.
-  if (provider === 'google') return submitViaHook(provider, initialBody, safeMaxDuration, creditKey);
-  try {
-    const first = await submitViaHook(provider, initialBody, safeMaxDuration, creditKey);
-    if (first.ok || !providerRejectedPrompt(first.status, first.data)) return first;
-    const retryBody = { ...initialBody, prompt: rewritePromptForSafeRetry(String(initialBody.prompt || '')) };
-    console.info('[ScriptToVideo] safe-retry provider prompt', retryBody.prompt);
-    const retry = await submitViaHook(provider, retryBody, safeMaxDuration, creditKey);
-    if (!retry.ok) {
-      const verbatim = providerMessage(retry.data) || (() => { try { return JSON.stringify(retry.data); } catch { return String(retry.data || ''); } })();
-      console.error('[ScriptToVideo] safety-rewritten prompt rejected', verbatim);
-      throw new Error(classifySubmitError(retry.status, retry.data));
-    }
-    return { ...retry, warning: [retry.warning, 'The provider rejected the first prompt; one provider-safe rewrite was accepted.'].filter(Boolean).join(' ') };
-  } catch (firstError: any) {
-    if (/scene credits were refunded|provider rejected these scene settings|provider blocked this scene/i.test(String(firstError?.message || ''))) throw firstError;
-    if (!providerRejectedPrompt(Number(firstError?.status) || 0, firstError?.message || firstError)) throw firstError;
-    const retryBody = { ...initialBody, prompt: rewritePromptForSafeRetry(String(initialBody.prompt || '')) };
-    console.info('[ScriptToVideo] safe-retry provider prompt', retryBody.prompt);
-    try {
-      const retry = await submitViaHook(provider, retryBody, safeMaxDuration, creditKey);
-      if (!retry.ok) {
-        const verbatim = providerMessage(retry.data) || (() => { try { return JSON.stringify(retry.data); } catch { return String(retry.data || ''); } })();
-        console.error('[ScriptToVideo] safety-rewritten prompt rejected', verbatim);
-      throw new Error(classifySubmitError(retry.status, retry.data));
-      }
-      return { ...retry, warning: [retry.warning, 'The provider rejected the first prompt; one provider-safe rewrite was accepted.'].filter(Boolean).join(' ') };
-    } catch (retryError: any) {
-      if (/scene credits were refunded|provider rejected these scene settings|provider blocked this scene/i.test(String(retryError?.message || ''))) throw retryError;
-      console.error('[ScriptToVideo] safety-rewritten retry failed', String(retryError?.message || retryError));
-      throw new Error('The provider rejected the safer prompt before delivery. The scene credits were refunded. Adjust this scene or choose another model, then retry only this scene.');
-    }
-  }
+  // Every provider here is submitted through stv-scene-generate, which owns
+  // the one safe prompt retry. Never stack a second retry layer on top.
+  return submitViaHook(provider, initialBody, safeMaxDuration, creditKey, refundOnFailure);
 }
 
 export const VideoModelService = {
@@ -958,7 +1003,10 @@ export const VideoModelService = {
     // The length the caller asked for, bounded only by what this provider can
     // actually render — never rounded down onto a UI ladder.
     const duration = resolveDuration(params.durationS, cfg);
-    const assets = (params.referenceAssets || []).filter((a) => a && /^https:\/\//.test(String(a.url || '')) && !a.storyboardOnly && a.type !== 'storyboard');
+    // Storyboard frames reach only the models that accept them as image input
+    // (Gemini Omni Flash and Seedance 2.5); other routes keep them as a visual guide.
+    const acceptsStoryboard = cfg.id === VIDEO_MODEL.id || cfg.id === SEEDANCE_2_5.id;
+    const assets = (params.referenceAssets || []).filter((a) => a && /^https:\/\//.test(String(a.url || '')) && !a.storyboardOnly && (a.type !== 'storyboard' || acceptsStoryboard));
     const seed = assets.find((a) => a.role === 'first_frame') || null;
     // Only Gemini Omni can combine the mandatory continuity frame with asset
     // references. Every other connected route reserves its image capacity for
@@ -1045,17 +1093,17 @@ export const VideoModelService = {
       await recordEvidence(runwaySeed ? [runwaySeed] : []);
       console.info('[ScriptToVideo] final provider prompt', runwayBody.promptText);
       try {
-        const kickoff = await runwaySubmitVideo(runwayBody, { seconds: duration, creditKey: params.creditKey });
+        const kickoff = await runwaySubmitVideo(runwayBody, { seconds: duration, creditKey: params.creditKey, refundOnFailure: params.refundOnFailure });
         return completedJob(`runway:${kickoff.taskId}`, runwaySeed ? [runwaySeed] : []);
       } catch (firstError: any) {
         const status = Number(firstError?.status) || 0;
         if (!providerRejectedPrompt(status, firstError?.message || firstError)) {
-          throw new Error(classifySubmitError(status, { error: String(firstError?.message || firstError) }));
+          throw submitFailure(status, { error: String(firstError?.message || firstError) });
         }
         runwayBody.promptText = capText(rewritePromptForSafeRetry(String(runwayBody.promptText || '')), cfg.promptMaxChars);
         console.info('[ScriptToVideo] safe-retry provider prompt', runwayBody.promptText);
         try {
-          const retry = await runwaySubmitVideo(runwayBody, { seconds: duration, creditKey: params.creditKey });
+          const retry = await runwaySubmitVideo(runwayBody, { seconds: duration, creditKey: params.creditKey, refundOnFailure: params.refundOnFailure });
           return completedJob(`runway:${retry.taskId}`, runwaySeed ? [runwaySeed] : [], 'The provider rejected the first prompt; one provider-safe rewrite was accepted.');
         } catch (retryError: any) {
           throw new Error(`The provider rejected the safety-rewritten prompt. Provider error (verbatim): ${String(retryError?.message || retryError)}`);
@@ -1090,8 +1138,8 @@ export const VideoModelService = {
         });
         if (multiImage) {
           await recordEvidence(refs);
-          const attempt = await submitWithPromptSafetyRetry('kling', multiImage.body, cfg.safeMaxDuration, params.creditKey);
-          if (!attempt.ok) throw new Error(classifySubmitError(attempt.status, attempt.data));
+          const attempt = await submitWithPromptSafetyRetry('kling', multiImage.body, cfg.safeMaxDuration, params.creditKey, params.refundOnFailure);
+          if (attempt.ok === false) throw submitFailure(attempt.status, attempt.data);
           return completedJob(attempt.jobId, refs);
         }
       }
@@ -1124,8 +1172,8 @@ export const VideoModelService = {
         delete klingBody.aspectRatio;
       }
       await recordEvidence(startFrameAsset ? [startFrameAsset] : []);
-      const attempt = await submitWithPromptSafetyRetry('kling', klingBody, cfg.safeMaxDuration, params.creditKey);
-      if (!attempt.ok) throw new Error(classifySubmitError(attempt.status, attempt.data));
+      const attempt = await submitWithPromptSafetyRetry('kling', klingBody, cfg.safeMaxDuration, params.creditKey, params.refundOnFailure);
+      if (attempt.ok === false) throw submitFailure(attempt.status, attempt.data);
       return completedJob(attempt.jobId, startFrameAsset ? [startFrameAsset] : []);
     }
 
@@ -1168,8 +1216,8 @@ export const VideoModelService = {
     await recordEvidence(usedInputs);
     // The hook retries once at safeMaxDuration when a long clip is rejected,
     // then once without image guidance when a 400 names reference inputs.
-    const attempt = await submitWithPromptSafetyRetry(cfg.provider, sanitizedBody, cfg.safeMaxDuration, params.creditKey);
-    if (!attempt.ok) throw new Error(classifySubmitError(attempt.status, attempt.data));
+    const attempt = await submitWithPromptSafetyRetry(cfg.provider, sanitizedBody, cfg.safeMaxDuration, params.creditKey, params.refundOnFailure);
+    if (attempt.ok === false) throw submitFailure(attempt.status, attempt.data);
     if (attempt.referenceFallback) await recordReferenceFallback(usedInputs);
     return completedJob(attempt.jobId, attempt.referenceFallback ? [] : usedInputs, attempt.warning);
   },
@@ -1177,40 +1225,11 @@ export const VideoModelService = {
   /** One status check for a running job, answered by the server hook. Kling
    * jobs carry a 'kling:' prefix on their stored id, so polling routes
    * correctly even after a reload (the hook reads the prefix). */
-  async getGenerationStatus(jobId: string, opts: { creditKey?: string; model?: VideoModelConfig } = {}): Promise<VideoJobStatus> {
-    if (jobId.indexOf(BROWSER_KLING_PREFIX) === 0 || jobId.indexOf(BROWSER_VEO_PREFIX) === 0) {
-      const kling = jobId.indexOf(BROWSER_KLING_PREFIX) === 0;
-      const rawId = jobId.slice((kling ? BROWSER_KLING_PREFIX : BROWSER_VEO_PREFIX).length);
-      const path = kling
-        ? `/api/generate/kling/status/${encodeURIComponent(rawId)}`
-        : `/api/veo/status/${encodeURIComponent(rawId)}`;
-      try {
-        const state = await browserWorkspaceJson(path, { method: 'GET' });
-        const status = String(state?.status || '').toLowerCase();
-        const videoUrl = String(state?.videoUrl || state?.video_url || '');
-        if (['completed', 'succeeded', 'done'].includes(status) && videoUrl) return { status: 'completed', videoUrl, progress: 100 };
-        if (['failed', 'error', 'expired', 'cancelled', 'canceled', 'rejected'].includes(status)) {
-          if (opts.creditKey) await refundCreditsStrict(opts.creditKey, `${kling ? 'Kling' : 'Seedance'} ended ${status}`);
-          return { status: 'failed', error: String(state?.errorMessage || state?.error || `The provider ended this clip ${status}.`) };
-        }
-        return { status: 'processing', progress: Number(state?.progress) || undefined };
-      } catch (error: any) {
-        if (Number(error?.status) === 401) {
-          if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The browser-authenticated provider task could not be reconciled');
-          return { status: 'failed', error: 'Your workspace session could not be verified while checking this render. Refresh and retry only this scene.' };
-        }
-        if (Number(error?.status) === 403) {
-          if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The provider rejected this workspace or task owner');
-          return { status: 'failed', error: 'The provider refused this workspace or task owner. The selected film remains paused; retry on the same model after access is restored.' };
-        }
-        if ([404, 410].includes(Number(error?.status))) {
-          if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The provider no longer has this operation');
-          return { status: 'failed', error: 'This render is no longer available at the provider. Its scene credits were refunded. Retry only this scene; completed scenes are safe.' };
-        }
-        console.warn('[ScriptToVideo] transient provider status error', String(error?.message || error));
-        return { status: 'processing', error: 'The provider status service is temporarily unavailable.' };
-      }
-    }
+  async getGenerationStatus(jobId: string, opts: { creditKey?: string; model?: VideoModelConfig; refundOnFailure?: boolean } = {}): Promise<VideoJobStatus> {
+    // Blocks submitted before Seedance and Kling moved onto the server function
+    // carry browser-* ids. The hook polls the same tasks under its own prefixes.
+    if (jobId.indexOf(BROWSER_KLING_PREFIX) === 0) jobId = `kling:${jobId.slice(BROWSER_KLING_PREFIX.length)}`;
+    else if (jobId.indexOf(BROWSER_VEO_PREFIX) === 0) jobId = `seedance:${jobId.slice(BROWSER_VEO_PREFIX.length)}`;
     if (jobId.indexOf('runway:') === 0) {
       try {
         const result = await checkRunway(jobId.slice('runway:'.length));
@@ -1219,7 +1238,7 @@ export const VideoModelService = {
         }
         if (result.status === 'failed' || result.status === 'cancelled') {
           const reason = String(result.raw?.error?.message || result.raw?.error || 'no successful output');
-          if (opts.creditKey) void refundCredits(opts.creditKey, `Runway ended ${result.status}`);
+          if (opts.creditKey && opts.refundOnFailure !== false) void refundCredits(opts.creditKey, `Runway ended ${result.status}`);
           return { status: 'failed', error: `Runway ended this clip ${result.status}: ${reason}. The credits were refunded automatically.` };
         }
         // 'uncertain' and 'persisting' keep polling on purpose and are NEVER
@@ -1231,14 +1250,14 @@ export const VideoModelService = {
     }
     let out: any;
     try {
-      out = await callGenerateHook({ op: 'status', operationId: jobId, creditKey: opts.creditKey });
+      out = await callGenerateHook({ op: 'status', operationId: jobId, creditKey: opts.creditKey, refundOnFailure: opts.refundOnFailure !== false }, 20_000);
     } catch (e: any) {
       return { status: 'processing', error: String(e?.message || e) };
     }
     const status = String(out?.status || '').toLowerCase();
     if (status === 'completed' && out?.videoUrl) return { status: 'completed', videoUrl: String(out.videoUrl), progress: 100 };
     if (status === 'failed') {
-      if (opts.creditKey) await refundCreditsStrict(opts.creditKey, 'The render failed at the provider');
+      if (opts.creditKey && opts.refundOnFailure !== false) await refundCreditsStrict(opts.creditKey, 'The render failed at the provider');
       return { status: 'failed', error: classifySubmitError(Number(out?.httpStatus) || 0, out) };
     }
     // Anything else is still running. 'processing' with a progress message
@@ -1249,7 +1268,7 @@ export const VideoModelService = {
 
   /** Poll a job to completion; resolves with the clip URL or throws with the
    * provider's reason. Times out so a dead job never hangs a scene forever. */
-  async getVideoResult(jobId: string, opts: { onProgress?: (p: number) => void; timeoutMs?: number; creditKey?: string; model?: VideoModelConfig } = {}): Promise<string> {
+  async getVideoResult(jobId: string, opts: { onProgress?: (p: number) => void; timeoutMs?: number; creditKey?: string; model?: VideoModelConfig; refundOnFailure?: boolean } = {}): Promise<string> {
     // The FILM's own model decides how patiently its job is polled. Seedance
     // kicks off asynchronously and routinely needs longer than Omni Flash's
     // eight minutes — polling it on another model's budget is what turned a
@@ -1259,7 +1278,7 @@ export const VideoModelService = {
     try {
       const result = await poll(async () => {
         if (cancelled.has(jobId)) { cancelled.delete(jobId); throw new Error('This generation was cancelled.'); }
-        const status = await this.getGenerationStatus(jobId, { creditKey: opts.creditKey, model: cfg });
+        const status = await this.getGenerationStatus(jobId, { creditKey: opts.creditKey, model: cfg, refundOnFailure: opts.refundOnFailure });
         if (status.status === 'processing' && status.error) throw new Error(`The video service stopped answering: ${status.error}`);
         return status;
       }, {
@@ -1275,7 +1294,12 @@ export const VideoModelService = {
       return result.videoUrl;
     } catch (e: any) {
       if (e?.name === 'PollTimeoutError') {
-        throw new Error(`The render took too long (${Math.round(timeout / 60000)} minutes). Retry the scene.`);
+        if (opts.creditKey && opts.refundOnFailure !== false) await refundCreditsStrict(opts.creditKey, 'The clip exceeded the visible render timeout');
+        throw new Error(`The render did not finish within ${Math.round(timeout / 60000)} minutes. If the provider never delivers it, its scene credits are refunded. Tap Retry; completed scenes are safe.`);
+      }
+      const message = String(e?.message || e);
+      if (opts.creditKey && opts.refundOnFailure !== false && !/cancelled/i.test(message)) {
+        await refundCreditsStrict(opts.creditKey, 'The clip polling loop failed before delivery');
       }
       throw e;
     }
@@ -1299,13 +1323,12 @@ export const VideoModelService = {
     const instruction = capText(String(params.instruction || '').trim(), VIDEO_MODEL.promptMaxChars);
     if (!instruction) throw new Error('Describe the exact change you want in this clip.');
     const editWindow = Math.min(VIDEO_MODEL.safeMaxDuration, sourceDuration);
-    const token = await getWorkspaceToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(token ? { 'X-Workspace-DB-Token': token } : {}) };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     let editableUrl = params.sourceUrl;
     let remainderUrl = '';
     if (sourceDuration > editWindow + 0.05) {
       const trim = async (startSec: number, endSec: number) => {
-        const res = await fetch('/api/video/clip', {
+        const res = await workspaceFetch('/api/video/clip', {
           method: 'POST', headers,
           body: JSON.stringify({ videoUrlOrKey: params.sourceUrl, startSec, endSec, workspaceId: WORKSPACE_ID }),
         });
@@ -1325,7 +1348,7 @@ export const VideoModelService = {
       resolution: '720p',
       generateAudio: params.generateAudio !== false,
     }, VIDEO_MODEL.safeMaxDuration, params.creditKey);
-    if (!attempt.ok) throw new Error(classifySubmitError(attempt.status, attempt.data));
+    if (attempt.ok === false) throw submitFailure(attempt.status, attempt.data);
     const editedUrl = await this.getVideoResult(attempt.jobId, { model: VIDEO_MODEL, creditKey: params.creditKey });
     if (!remainderUrl) {
       return { videoUrl: editedUrl, operationId: attempt.jobId, model: VIDEO_MODEL.apiModel, editedWindowSec: editWindow, preservedRemainderSec: 0, assembledFromWindow: false, boundaryEvidence: 'The entire source fit the verified edit window.' };
@@ -1347,7 +1370,7 @@ export const VideoModelService = {
     }
     let boundaryEvidence = 'Splice completed; review audio and visual continuity at the edit boundary.';
     try {
-      const probe = await fetch('/api/video/frames', {
+      const probe = await workspaceFetch('/api/video/frames', {
         method: 'POST', headers,
         body: JSON.stringify({ videoUrl, timestamps: [Math.max(0.1, editWindow - 0.1), editWindow + 0.1], workspaceId: WORKSPACE_ID }),
       });

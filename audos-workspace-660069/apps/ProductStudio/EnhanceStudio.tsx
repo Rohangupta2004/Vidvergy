@@ -381,7 +381,7 @@ export default function EnhanceStudio({ videoUrl, title, accent, onBack }: {
           <span style={{ display: 'block', fontSize: 11.5, color: S.muted }}>Auto cuts · captions · trim · colour · export — on your generated video</span>
         </div>
         {enhancedUrl ? (
-          <a href={enhancedUrl} download target="_blank" rel="noreferrer" className="ps-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, border: 'none', background: S.success, color: '#FFFFFF', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }} data-testid="button-download-enhanced">
+          <a href={enhancedUrl} download target="_blank" rel="noreferrer" className="ps-btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 14px', borderRadius: 10, border: 'none', background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }} data-testid="button-download-enhanced">
             <Download size={13} /> Download enhanced MP4
           </a>
         ) : null}
@@ -438,7 +438,7 @@ export default function EnhanceStudio({ videoUrl, title, accent, onBack }: {
                 {cuts.map((c, i) => (
                   <span key={i} title={'Cut ' + formatTime(c.start) + ' → ' + formatTime(c.end)} style={{ position: 'absolute', top: 0, bottom: 0, left: (c.start / timelineDur) * 100 + '%', width: Math.max(0.6, ((c.end - c.start) / timelineDur) * 100) + '%', background: 'color-mix(in srgb, var(--space-semantic-danger-500) 70%, transparent)' }} />
                 ))}
-                <span style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: '#1A1000', opacity: 0.9, left: (timelineDur ? (playheadT / timelineDur) * 100 : 0) + '%' }} />
+                <span style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: 'var(--vg-text)', opacity: 0.9, left: (timelineDur ? (playheadT / timelineDur) * 100 : 0) + '%' }} />
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, color: S.muted, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>
                 <span>0:00</span>
@@ -471,7 +471,7 @@ export default function EnhanceStudio({ videoUrl, title, accent, onBack }: {
             {(busy || phase === 'done') && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ height: 6, borderRadius: 999, background: S.panelStrong, overflow: 'hidden', border: `1px solid ${S.border}` }}>
-                  <div style={{ height: '100%', width: progressPct + '%', borderRadius: 999, background: 'linear-gradient(90deg, var(--space-brand-primary-500), var(--space-brand-highlight-600))', transition: 'width .4s ease' }} />
+                  <div style={{ height: '100%', width: progressPct + '%', borderRadius: 999, background: 'var(--vg-accent)', transition: 'width .4s ease' }} />
                 </div>
                 <p role="status" style={{ margin: '6px 0 0', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: phase === 'done' ? S.success : S.brand }} data-testid="enhance-progress-note">
                   {busy ? <Loader2 size={12} className="rc-spin" /> : <Check size={12} />} {phaseNote}
@@ -573,13 +573,13 @@ export default function EnhanceStudio({ videoUrl, title, accent, onBack }: {
           </SectionCard>
 
           {/* EXPORT */}
-          <div style={{ borderRadius: 14, border: '1px solid color-mix(in srgb, var(--space-semantic-success-500) 40%, transparent)', background: S.panel, padding: 14 }}>
+          <div style={{ borderRadius: 14, border: '1px solid color-mix(in srgb, var(--vg-accent) 40%, transparent)', background: S.panel, padding: 14 }}>
             <button
               type="button"
               onClick={() => void runExport()}
               disabled={exporting || busy}
               className="ps-btn"
-              style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 14px', borderRadius: 11, border: 'none', background: exporting ? S.panelStrong : S.success, color: exporting ? S.muted : '#FFFFFF', cursor: exporting || busy ? 'not-allowed' : 'pointer', fontSize: 13.5, fontWeight: 800 }}
+              style={{ width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 14px', borderRadius: 11, border: 'none', background: exporting ? S.panelStrong : 'var(--vg-btn)', color: exporting ? S.muted : 'var(--vg-on-btn)', cursor: exporting || busy ? 'not-allowed' : 'pointer', fontSize: 13.5, fontWeight: 800 }}
               data-testid="button-export-enhanced"
             >
               {exporting ? <Loader2 size={15} className="rc-spin" /> : <Download size={15} />}

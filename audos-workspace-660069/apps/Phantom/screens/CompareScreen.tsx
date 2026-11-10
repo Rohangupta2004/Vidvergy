@@ -20,7 +20,7 @@ import {
   ArrowRight, CheckCircle2, Download, ExternalLink, Lightbulb, MessageSquare, Pencil, RefreshCw, Search, Sparkles, Target, TrendingUp,
 } from 'lucide-react';
 import { Competitor, Insights, MATRIX_ROWS, Matrix, Profile, buildDeterministicResearch, buildInsights, buildMatrix } from '../store';
-import { CARD, CARD_HI, INK, INK_DEEP, LINE, LINE_HI, MONO, TEXT, TEXT_DIM, TEXT_MUTED, readableOn, rgba } from '../theme';
+import { CARD, CARD_HI, DANGER, INK, INK_DEEP, LINE, LINE_HI, MONO, SUCCESS, TEXT, TEXT_DIM, TEXT_MUTED, readableOn, rgba } from '../theme';
 import { BrandMark, Button, LogStream, Notice, Panel, SectionTitle, Spinner, useAccent } from '../ui';
 
 interface Props {
@@ -422,13 +422,13 @@ export default function CompareScreen({
                 icon={<TrendingUp size={14} />}
                 title="What competitors do better"
                 lines={insights.competitorsBetter}
-                tone="#991B1B"
+                tone={DANGER}
               />
               <InsightBlock
                 icon={<Sparkles size={14} />}
                 title="Your unique advantages"
                 lines={insights.yourAdvantages}
-                tone="#166534"
+                tone={SUCCESS}
               />
               <InsightBlock
                 icon={<Target size={14} />}
@@ -440,7 +440,7 @@ export default function CompareScreen({
                 icon={<MessageSquare size={14} />}
                 title="Messaging improvements"
                 lines={insights.messagingImprovements}
-                tone="#1D4ED8"
+                tone={TEXT_DIM}
               />
               <div style={{
                 borderTop: `1px solid ${LINE}`, paddingTop: 15, marginTop: 4,
@@ -471,7 +471,7 @@ export default function CompareScreen({
             {insights.research.findings.filter((item) => `${item.category} ${item.claim} ${item.evidence}`.toLowerCase().includes(findingQuery.toLowerCase())).map((item) => (
               <div key={item.id} style={{ padding: 12, border: `1px solid ${LINE}`, borderRadius: 10, background: CARD }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6, fontSize: 10.8, fontFamily: MONO }}>
-                  <span style={{ color: item.evidenceType === 'verified' ? '#166534' : item.evidenceType === 'hypothesis' ? accent : TEXT_MUTED }}>{item.evidenceType.toUpperCase()}</span>
+                  <span style={{ color: item.evidenceType === 'verified' ? SUCCESS : item.evidenceType === 'hypothesis' ? accent : TEXT_MUTED }}>{item.evidenceType.toUpperCase()}</span>
                   <span style={{ color: TEXT_MUTED }}>{item.confidence} confidence · {new Date(item.observedAt).toLocaleDateString()}</span>
                   {item.sourceUrl ? <a href={item.sourceUrl} target="_blank" rel="noreferrer" style={{ marginLeft: 'auto', color: accent, display: 'inline-flex', gap: 4, alignItems: 'center' }}>Source <ExternalLink size={11} /></a> : null}
                 </div>

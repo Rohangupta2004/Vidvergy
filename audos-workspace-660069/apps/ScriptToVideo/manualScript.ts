@@ -222,6 +222,10 @@ export function buildManualScenePrompt(params: {
   /** A direction the customer added after the first attempt. */
   revisionNote?: string | null;
   maxChars?: number;
+  /** The film's chosen look, stated first so the model never guesses it. */
+  styleLead?: string;
+  /** Things that must not happen in the clip (morphing, extra fingers…). */
+  mustNot?: string[];
 }): string {
   const { scene } = params;
   const maxChars = Math.max(200, params.maxChars || 10000);
@@ -229,27 +233,49 @@ export function buildManualScenePrompt(params: {
 
   if (scene.visual) body.push(scene.visual);
   if (scene.camera) body.push(`Camera: ${scene.camera}`);
-  for (const entry of scene.dialogue) body.push(`Dialogue — ${entry.speaker}: "${entry.line}"`);
-  if (scene.dialogue.length) {
+  const onCamera = scene.dialogue.filter((entry) => !isNarratorSpeaker(entry.speaker));
+  const narration = scene.dialogue.filter((entry) => isNarratorSpeaker(entry.speaker));
+  for (const entry of onCamera) body.push(`Dialogue — ${entry.speaker}: "${entry.line}"`);
+  if (onCamera.length) {
     body.push('The speaker visibly says these exact words on camera, lips synchronized to the line. No other speech, no subtitles.');
+  }
+  for (const entry of narration) body.push(`Narration (voice-over only): "${entry.line}"`);
+  if (narration.length) {
+    body.push('The narrator is an off-screen voice only — never show a narrator, presenter or host on camera, and no one in frame lip-syncs the narration.');
   }
   if (params.continuity) {
     body.push('Continue seamlessly from the reference frame’s exact state — same character, wardrobe, lighting and position. No reset, no greeting, no recap.');
   }
   if (params.revisionNote) body.push(`Direction: ${params.revisionNote}`);
 
+  // The pasted scene text stays verbatim; the style lead and the guard lines
+  // are fixed instructions around it, kept short on a 2,500-character model so
+  // the creator's own words keep the room.
+  const compact = maxChars <= 3000;
   const style = String(params.globalStyle || '').trim();
-  const tail = style ? `Overall style: ${capText(style, 2000)}` : '';
-  const room = tail ? Math.max(160, maxChars - tail.length - 1) : maxChars;
+  const mustNot = (params.mustNot || []).map((item) => String(item || '').trim()).filter(Boolean);
+  const head = params.styleLead ? `STYLE: ${capText(String(params.styleLead), compact ? 220 : 600)}` : '';
+  const tail = [
+    style ? `Overall style: ${capText(style, compact ? 700 : 2000)}` : '',
+    mustNot.length ? capText(`Physical plausibility: feet plant before the body moves, momentum carries through and settles, cloth and hair swing then come to rest, hands keep five fingers and hold props with visible contact, and everything moves at real-time speed.\nMust NOT happen: ${mustNot.join('; ')}.`, compact ? 520 : 1400) : '',
+  ].filter(Boolean).join('\n');
+  const room = Math.max(160, maxChars - (tail ? tail.length + 1 : 0) - (head ? head.length + 1 : 0));
   const text = capText(body.join('\n'), room);
-  return tail ? `${text}\n${tail}` : text;
+  return [head, text, tail].filter(Boolean).join('\n');
 }
 
 /** The negative prompt a manual scene renders with. A scene with no dialogue
  * must not have the model inventing speech. */
 export function manualSceneNegative(scene: ParsedScene): string {
   const base = 'on-screen text, captions, subtitles, watermarks, logos, UI elements, warped anatomy';
-  return scene.dialogue.length ? base : `${base}, speaking to camera, moving lips as if speaking, voice-over`;
+  if (!scene.dialogue.length) return `${base}, speaking to camera, moving lips as if speaking, voice-over`;
+  return scene.dialogue.some((entry) => !isNarratorSpeaker(entry.speaker))
+    ? base
+    : `${base}, narrator on camera, presenter or host on camera, speaking to camera, moving lips as if speaking`;
+}
+
+function isNarratorSpeaker(speaker: string): boolean {
+  return /^(narrator|voice[ -]?over|vo)$/i.test(String(speaker || '').trim());
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +326,15 @@ Output: { "scenes": ParsedScene[], "globalStyle": string }
 globalStyle should be a one-sentence visual style note naming camera language, motivated light source, palette and medium.
 Each scene has one clear physical action. State every visible character's fixed appearance and position in frame, specific camera framing/movement, motivated lighting, object contact, weight, direction and end pose. Obey real physics. Ban vague filler (including “something exciting happens” and “cinematic moment”), teleporting, sudden appearances, identity/wardrobe morphing and dialogue cut in half.
 Every spoken line must be attributed to a named character or to Narrator. Never use an unattributed Speaker placeholder.
-If the source explicitly asks for visible copy (URL, brand name, tagline, CTA, statistic, label or end card), copy it exactly into onScreenText and keep it out of visual. Do not invent visible copy.`;
+If the source explicitly asks for visible copy (URL, brand name, tagline, CTA, statistic, label or end card), copy it exactly into onScreenText and keep it out of visual. Do not invent visible copy.
+
+STORY CRAFT (hard rules):
+- Scene 1 is the HOOK: open on the most striking, specific image or action within its first 2 seconds. No slow establishing shot, logo reveal or greeting first.
+- Every scene carries ONE clear story beat that moves the film forward (hook, problem or desire, turn, payoff, close or call to action, adapted to the brief). The scene title names that beat.
+- Characters stay consistent: give every recurring character one fixed appearance (age band, face and hair, build, wardrobe and colours) and repeat it word for word in the visual of every scene where they appear. Never rename, re-age or re-dress them.
+- visual is a concrete, filmable video prompt: the subject and their exact frame position, the one action, the setting with two or three specific props or textures, shot size, lens feel, motivated light, colour palette and the end pose. Never abstract wording such as "success", "innovation" or "a sense of".
+- Spoken lines must fit their scene at about 2.5 English words per second, leaving room for the action.
+- The durationSec values of all scenes must add up EXACTLY to the requested runtime.`;
 
 /** Models love wrapping JSON in \`\`\`json fences; strip them before parsing. */
 function stripJsonFences(text: string): string {
@@ -312,6 +346,41 @@ function stripJsonFences(text: string): string {
   const last = t.lastIndexOf('}');
   if (first >= 0 && last > first) return t.slice(first, last + 1);
   return t;
+}
+
+/** Re-time a writer's scene lengths so they add up to the requested runtime
+ * using only legal per-scene durations. Squared distance from the writer's own
+ * lengths keeps the change spread evenly instead of landing on one scene.
+ * Returns null when no legal combination exists for this scene count. */
+export function fitDurationsToTotal(current: number[], total: number, options: { modelMinDuration?: number; modelMaxDuration?: number; modelSupportedDurations?: number[] }): number[] | null {
+  const n = current.length;
+  const wanted = Math.round(Number(total));
+  if (!n || !Number.isFinite(wanted) || wanted <= 0 || wanted > 3600) return null;
+  const min = Math.max(1, Math.round(Number(options.modelMinDuration) || 4));
+  const max = Math.max(min, Math.round(Number(options.modelMaxDuration) || 10));
+  const fixed = (options.modelSupportedDurations || []).map((value) => Math.round(Number(value))).filter((value) => Number.isFinite(value) && value >= min && value <= max);
+  const allowed = (fixed.length ? Array.from(new Set(fixed)) : Array.from({ length: max - min + 1 }, (_, index) => min + index)).sort((a, b) => a - b);
+  const cost: Float64Array[] = Array.from({ length: n + 1 }, () => new Float64Array(wanted + 1).fill(Number.POSITIVE_INFINITY));
+  const pick: Int16Array[] = Array.from({ length: n + 1 }, () => new Int16Array(wanted + 1));
+  cost[0][0] = 0;
+  for (let i = 0; i < n; i += 1) {
+    const own = Number(current[i]) || allowed[0];
+    for (let sum = 0; sum <= wanted; sum += 1) {
+      const base = cost[i][sum];
+      if (base === Number.POSITIVE_INFINITY) continue;
+      for (const value of allowed) {
+        const next = sum + value;
+        if (next > wanted) break;
+        const candidate = base + (value - own) * (value - own);
+        if (candidate < cost[i + 1][next]) { cost[i + 1][next] = candidate; pick[i + 1][next] = value; }
+      }
+    }
+  }
+  if (cost[n][wanted] === Number.POSITIVE_INFINITY) return null;
+  const out: number[] = new Array(n);
+  let remaining = wanted;
+  for (let i = n; i > 0; i -= 1) { out[i - 1] = pick[i][remaining]; remaining -= pick[i][remaining]; }
+  return out;
 }
 
 function clampDuration(value: unknown, options: { modelMinDuration?: number; modelMaxDuration?: number; modelSupportedDurations?: number[] }): number {
@@ -382,9 +451,15 @@ export async function aiFormatScript(raw: string, options: { audioEnabled?: bool
 
   if (!scenes.length) throw new Error('The formatter found no filmable scenes in that text — add a little more detail and try again.');
   const exactDurations = (options.targetSceneDurations || []).map((value) => Math.round(Number(value))).filter((value) => value > 0);
-  if (exactDurations.length) {
-    if (scenes.length !== exactDurations.length) throw new Error(`The writer returned ${scenes.length} scenes, but this model needs exactly ${exactDurations.length} big scenes (${exactDurations.join('s, ')}s). Retry the script step; no generation was started.`);
+  const wantedTotal = Math.max(0, Math.round(Number(options.targetDuration) || 0));
+  if (exactDurations.length && scenes.length === exactDurations.length) {
     scenes.forEach((scene, index) => { scene.durationSec = exactDurations[index]; });
+  } else if (wantedTotal > 0) {
+    // The writer chose a different number of scenes: keep its story and re-time
+    // the scenes to the selected runtime instead of failing the whole step.
+    const fitted = fitDurationsToTotal(scenes.map((scene) => scene.durationSec), wantedTotal, options);
+    if (fitted) scenes.forEach((scene, index) => { scene.durationSec = fitted[index]; });
+    else if (exactDurations.length) throw new Error(`The writer returned ${scenes.length} scenes, but this model needs exactly ${exactDurations.length} big scenes (${exactDurations.join('s, ')}s). Retry the script step; no generation was started.`);
   }
   const exactTotal = scenes.reduce((sum, scene) => sum + scene.durationSec, 0);
   if (Number(options.targetDuration) > 0 && exactTotal !== Math.round(Number(options.targetDuration))) throw new Error(`The writer returned ${exactTotal}s, not the selected ${Math.round(Number(options.targetDuration))}s. Retry the script step; no generation was started.`);

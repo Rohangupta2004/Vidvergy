@@ -21,6 +21,7 @@
 import { DEFAULT_VIDEO_MODEL, getVideoModel } from '../apps/Create/videoTypes';
 import { postGeneration } from './videoEngineClient';
 import type { AppId } from './appIds';
+import { sharedUnlessDelegated } from './tenant-delegation-scope';
 import {
   callHook,
   getSessionId,
@@ -688,7 +689,7 @@ export async function listRows<T = any>(table: string): Promise<T[]> {
     let offset = 0;
     while (true) {
       const res = await client
-        .from(table, { shared: true })
+        .from(table, sharedUnlessDelegated())
         .orderBy('created_at', 'desc')
         .limit(pageSize)
         .offset(offset)

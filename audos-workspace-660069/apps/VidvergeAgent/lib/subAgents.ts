@@ -1,3 +1,5 @@
+import { pricingRuleText } from '../../../lib/pricing';
+
 /** Verger's visible specialist roster. Every specialist returns JSON so the browser can execute real hooks and feed results back to the Orchestrator. */
 export interface SubAgentType {
   id: 'brand' | 'concept' | 'generation' | 'editor' | 'qa' | 'library';
@@ -35,7 +37,7 @@ export const SUB_AGENT_TYPES: SubAgentType[] = [
     name: 'Generation agent',
     focus: 'Chooses the studio and engine',
     draws: ['sceneforge', 'script-to-video', 'ugc-studio', 'faceless', 'video-enhancer'],
-    prompt: `${JSON_RULES} Choose the real Vidverge studio and engine for each step. For an http(s) website URL with saved Brand Kit context, choose motion.engine in saas-launch mode, preserve sourceUrl, infer 30 seconds and a suitable 9:16 or 16:9 ratio when omitted, and ask no requirements question. Calculate exact generated seconds at 1 credit per second. Every paid action must have spendsCredits:true and an exact estimatedCredits; never submit or imply approval.`,
+    prompt: `${JSON_RULES} Choose the real Vidverge studio and engine for each step. For an http(s) website URL with saved Brand Kit context, choose motion.engine in saas-launch mode, preserve sourceUrl, infer 30 seconds and a suitable 9:16 or 16:9 ratio when omitted, and ask no requirements question. Calculate exact generated seconds per engine and price them by engine. ${pricingRuleText()} Every paid action must have spendsCredits:true and an exact estimatedCredits; never submit or imply approval.`,
   },
   {
     id: 'editor',

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronDown, Loader2, RotateCw, X } from 'lucide-react';
 
-interface JobRow {
+export interface JobRow {
   id: string;
   appId: string;
   app: string;
@@ -116,7 +116,7 @@ async function querySource(source: Source): Promise<JobRow[]> {
   return rows.map((row: Record<string, any>) => mapRow(source, row)).filter(Boolean) as JobRow[];
 }
 
-async function loadJobs(): Promise<JobRow[]> {
+export async function loadBackgroundJobs(): Promise<JobRow[]> {
   const settled = await Promise.allSettled(SOURCES.map(querySource));
   const rows = settled.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
   const unique = new Map<string, JobRow>();
@@ -145,7 +145,7 @@ export default function BackgroundJobsTray({
 
   const refresh = async () => {
     try {
-      const next = await loadJobs();
+      const next = await loadBackgroundJobs();
       setJobs(next);
       setError('');
     } catch (reason: any) {

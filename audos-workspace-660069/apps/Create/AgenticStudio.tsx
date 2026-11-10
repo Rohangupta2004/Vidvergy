@@ -107,15 +107,15 @@ const STATUS_META: Record<
   ShotState['status'],
   { label: string; color: string; background: string; spin?: boolean }
 > = {
-  pending: { label: 'queued', color: T.muted, background: 'rgba(122,96,48,0.12)' },
+  pending: { label: 'queued', color: T.muted, background: 'var(--vg-raised)' },
   deciding: { label: 'routing', color: T.accentFg, background: T.accentSoft, spin: true },
   submitting: { label: 'starting', color: T.accentFg, background: T.accentSoft, spin: true },
   rendering: { label: 'rendering', color: T.accentFg, background: T.accentSoft, spin: true },
   analyzing: { label: 'analysing', color: T.accentFg, background: T.accentSoft, spin: true },
-  regenerating: { label: 'regenerating', color: '#B45309', background: 'rgba(180,83,9,0.12)', spin: true },
-  done: { label: 'done', color: T.success, background: 'rgba(22,101,52,0.12)' },
-  failed: { label: 'failed', color: T.danger, background: 'rgba(153,27,27,0.1)' },
-  skipped: { label: 'skipped', color: T.muted, background: 'rgba(122,96,48,0.12)' },
+  regenerating: { label: 'regenerating', color: 'var(--vg-warning)', background: 'var(--vg-warning-bg)', spin: true },
+  done: { label: 'done', color: T.success, background: 'var(--vg-success-bg)' },
+  failed: { label: 'failed', color: T.danger, background: 'var(--vg-danger-bg)' },
+  skipped: { label: 'skipped', color: T.muted, background: 'var(--vg-raised)' },
 };
 
 const ENGINE_LABEL: Record<string, string> = {
@@ -151,7 +151,7 @@ function ShotCard({
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        borderColor: shot.status === 'failed' ? 'rgba(153,27,27,0.36)' : drifted ? 'rgba(180,83,9,0.34)' : T.border,
+        borderColor: shot.status === 'failed' ? 'color-mix(in srgb, var(--vg-danger) 36%, transparent)' : drifted ? 'color-mix(in srgb, var(--vg-warning) 34%, transparent)' : T.border,
       }}
       data-testid={`card-shot-${shot.index}`}
       data-status={shot.status}
@@ -162,7 +162,7 @@ function ShotCard({
           aspectRatio: aspect === '9:16' ? '9 / 12' : '16 / 9',
           minHeight: 124,
           overflow: 'hidden',
-          background: '#1A1000',
+          background: 'var(--vg-bg)',
         }}
       >
         {shot.clipUrl ? (
@@ -193,7 +193,7 @@ function ShotCard({
               alignItems: 'center',
               justifyContent: 'center',
               color: shot.status === 'failed' ? T.danger : T.muted,
-              background: shot.status === 'failed' ? 'rgba(153,27,27,0.06)' : undefined,
+              background: shot.status === 'failed' ? 'var(--vg-danger-bg)' : undefined,
             }}
           >
             {shot.status === 'failed' ? <AlertTriangle size={22} /> : <Film size={21} style={{ opacity: 0.4 }} />}
@@ -206,8 +206,8 @@ function ShotCard({
             left: 9,
             padding: '4px 8px',
             borderRadius: 8,
-            color: '#fff',
-            background: 'rgba(26,16,0,0.7)',
+            color: 'var(--vg-text)',
+            background: 'rgba(0,0,0,0.7)',
             backdropFilter: 'blur(5px)',
             fontSize: 11,
             fontWeight: 700,
@@ -223,8 +223,8 @@ function ShotCard({
               right: 9,
               padding: '4px 8px',
               borderRadius: 8,
-              color: '#FFFFFF',
-              background: 'rgba(180,120,0,0.75)',
+              color: 'var(--vg-on-btn)',
+              background: 'rgba(212,175,55,0.9)',
               backdropFilter: 'blur(5px)',
               fontSize: 10.5,
               fontWeight: 700,
@@ -277,9 +277,9 @@ function ShotCard({
               borderRadius: 8,
               fontSize: 11.5,
               fontWeight: 600,
-              color: '#B45309',
-              background: 'rgba(180,83,9,0.1)',
-              border: '1px solid rgba(180,83,9,0.28)',
+              color: 'var(--vg-warning)',
+              background: 'var(--vg-warning-bg)',
+              border: '1px solid color-mix(in srgb, var(--vg-warning) 28%, transparent)',
             }}
             data-testid={`notice-regenerating-${shot.index}`}
           >
@@ -331,7 +331,7 @@ function ShotCard({
               margin: 0,
               fontSize: 11,
               lineHeight: 1.5,
-              color: shot.continuityVerdict.passed ? T.success : '#B45309',
+              color: shot.continuityVerdict.passed ? T.success : 'var(--vg-warning)',
             }}
             data-testid={`text-continuity-${shot.index}`}
           >
@@ -345,8 +345,8 @@ function ShotCard({
             style={{
               padding: '8px 9px',
               borderRadius: 8,
-              color: '#991B1B',
-              background: 'rgba(153,27,27,0.08)',
+              color: 'var(--vg-danger)',
+              background: 'var(--vg-danger-bg)',
               fontSize: 11,
               lineHeight: 1.45,
               wordBreak: 'break-word',
@@ -597,7 +597,7 @@ function UploadTile({
           overflow: 'hidden',
           color: url ? T.accentFg : T.muted,
           border: `1px solid ${url ? T.accentBorder : T.border}`,
-          background: url ? T.accentSoft : 'rgba(180,120,0,0.05)',
+          background: url ? T.accentSoft : 'var(--vg-raised)',
         }}
       >
         {url ? <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : icon}
@@ -819,8 +819,8 @@ function PlanView() {
                     borderRadius: 8,
                     fontSize: 11.5,
                     fontWeight: 700,
-                    color: '#fff',
-                    background: 'linear-gradient(135deg, #E8B737, #C8920A)',
+                    color: 'var(--vg-on-btn)',
+                    background: 'var(--vg-btn)',
                   }}
                 >
                   {shot.index}
@@ -836,7 +836,7 @@ function PlanView() {
                     padding: '6px 10px',
                     borderRadius: 9,
                     border: `1px solid ${T.border}`,
-                    background: '#FFFFFF',
+                    background: 'var(--vg-raised)',
                     color: T.text,
                     fontSize: 12.5,
                     fontWeight: 700,
@@ -1087,8 +1087,8 @@ function BoardView() {
             gap: 16,
             flexWrap: 'wrap',
             marginBottom: 20,
-            borderColor: 'rgba(180,83,9,0.32)',
-            background: 'rgba(180,83,9,0.06)',
+            borderColor: 'color-mix(in srgb, var(--vg-warning) 32%, transparent)',
+            background: 'var(--vg-warning-bg)',
           }}
           data-testid="card-repair"
         >

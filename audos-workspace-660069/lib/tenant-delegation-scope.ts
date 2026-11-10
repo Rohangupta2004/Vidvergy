@@ -53,6 +53,16 @@ export function hasTenantDelegationAuth(): boolean {
 }
 
 /**
+ * WorkspaceDB read options for tables the public site reads in shared scope.
+ * Every Agent Store buyer shares this workspace's database, so a shared read
+ * would hand an installed buyer other buyers' rows: under delegation the read
+ * stays in the buyer's own session scope.
+ */
+export function sharedUnlessDelegated(): { shared: true } | undefined {
+  return hasTenantDelegationAuth() ? undefined : { shared: true };
+}
+
+/**
  * U7 — task-mode Product Run artifact context (injected server-side into the
  * release-owned document; carries NO ids and NO credentials). Its presence
  * means the canonical task conversation lives in the PARENT chrome and this

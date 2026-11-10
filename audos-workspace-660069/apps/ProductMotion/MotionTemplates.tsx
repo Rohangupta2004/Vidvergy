@@ -404,7 +404,7 @@ export function MotionStyleShowreel({
     >
       <div key={active.id} style={{ position: 'relative' }}>
         <MotionTemplatePreview template={active} />
-        <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 5, padding: '4px 8px', borderRadius: 999, color: '#fff', background: 'rgba(2,6,23,.72)', backdropFilter: 'blur(8px)', fontSize: 9, fontWeight: 850, letterSpacing: '.08em', textTransform: 'uppercase' }}>
+        <span style={{ position: 'absolute', top: 10, left: 10, zIndex: 5, padding: '4px 8px', borderRadius: 999, color: '#fff', background: 'rgba(0,0,0,.72)', backdropFilter: 'blur(8px)', fontSize: 9, fontWeight: 850, letterSpacing: '.08em', textTransform: 'uppercase' }}>
           ● Live motion preview
         </span>
       </div>
@@ -415,7 +415,7 @@ export function MotionStyleShowreel({
           <strong style={{ display: 'block', fontSize: 13 }}>{active.label}</strong>
           <span style={{ display: 'block', marginTop: 2, color: 'var(--space-text-muted)', fontSize: 10.5 }}>{activeIndex + 1} of {PRESENTATION_TEMPLATES.length} · {active.description}</span>
         </div>
-        <button type="button" onClick={() => onSelect(active.label as MotionTemplate)} style={{ minHeight: 32, padding: '0 11px', borderRadius: 9, border: selected === active.label ? '1px solid var(--space-brand-primary-500)' : '1px solid var(--space-border-default)', color: selected === active.label ? 'var(--space-text-on-primary)' : 'var(--space-text-primary)', background: selected === active.label ? 'var(--space-brand-primary-600)' : 'var(--space-surface-card)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>{selected === active.label ? 'Selected' : 'Use this style'}</button>
+        <button type="button" onClick={() => onSelect(active.label as MotionTemplate)} style={{ minHeight: 32, padding: '0 11px', borderRadius: 9, border: selected === active.label ? '1px solid var(--space-brand-primary-500)' : '1px solid var(--space-border-default)', color: selected === active.label ? 'var(--vg-text)' : 'var(--space-text-primary)', background: selected === active.label ? 'var(--vg-gold-tint)' : 'var(--space-surface-card)', cursor: 'pointer', fontSize: 10.5, fontWeight: 800 }}>{selected === active.label ? 'Selected' : 'Use this style'}</button>
         <button type="button" onClick={() => setActiveIndex((activeIndex + 1) % PRESENTATION_TEMPLATES.length)} aria-label="Next motion style" style={{ width: 30, height: 30, borderRadius: 9, border: '1px solid var(--space-border-default)', color: 'var(--space-text-primary)', background: 'var(--space-surface-card)', cursor: 'pointer' }}>›</button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PRESENTATION_TEMPLATES.length},1fr)`, gap: 3, padding: '0 12px 11px' }}>
@@ -463,7 +463,7 @@ export function MotionStylePicker({
               <MotionTemplatePreview template={template} />
               <strong style={{ display: 'block', marginTop: 8, paddingRight: 20, fontSize: 11.5 }}>{template.label}</strong>
               <span style={{ display: 'block', marginTop: 3, color: 'var(--space-text-muted)', fontSize: 9.5, lineHeight: 1.35 }}>{template.description}</span>
-              {active ? <span aria-label="Selected" style={{ position: 'absolute', top: 14, right: 14, width: 20, height: 20, display: 'grid', placeItems: 'center', borderRadius: 999, color: 'var(--space-text-on-primary)', background: 'var(--space-brand-primary-600)', fontSize: 11, fontWeight: 900 }}>✓</span> : null}
+              {active ? <span aria-label="Selected" style={{ position: 'absolute', top: 14, right: 14, width: 20, height: 20, display: 'grid', placeItems: 'center', borderRadius: 999, color: 'var(--vg-on-btn)', background: 'var(--vg-accent)', fontSize: 11, fontWeight: 900 }}>✓</span> : null}
             </button>
           );
         })}

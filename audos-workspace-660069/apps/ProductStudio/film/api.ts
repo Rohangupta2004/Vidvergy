@@ -693,19 +693,20 @@ export function stageIndex(status: FilmStatus | null): number {
  * hook) and are excluded from the main ad's storyboard and composition. */
 export const VARIATION_IDX_BASE = 100;
 
-// Design tokens — matches the Product Studio light warm-gold surfaces.
+// Design tokens — Vidverge dark gold surfaces. Literal hex: several call
+// sites append hex alpha (`${T.coral}55`), which a var() string would break.
 export const T = {
-  canvas: '#FFFDF4',
-  raised: '#FFFFFF',
-  line: 'rgba(180,120,0,0.14)',
-  lineStrong: 'rgba(180,120,0,0.36)',
-  bone: '#1A1000',
-  muted: '#7A6030',
-  dim: '#A08B5F',
-  coral: '#C8920A',
-  gold: '#B45309',
-  done: '#166534',
-  fault: '#991B1B',
+  canvas: '#0B0D12',
+  raised: '#12141B',
+  line: '#2A2E3A',
+  lineStrong: '#3A3F4D',
+  bone: '#F5F6F8',
+  muted: '#C3C7D1',
+  dim: '#9AA0AE',
+  coral: '#D4AF37',
+  gold: '#FFB020',
+  done: '#3FB950',
+  fault: '#E5484D',
   mono: "'JetBrains Mono', 'SF Mono', ui-monospace, monospace",
   sans: "'Inter', system-ui, sans-serif",
 } as const;

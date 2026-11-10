@@ -23,9 +23,9 @@ export interface CaptionStyleOption {
 export const STYLE_BRIEFS: { id: string; name: string; desc: string }[] = [
   { id: 'bold-shadow', name: 'Bold Shadow', desc: 'bold white uppercase text with a strong dark drop shadow' },
   { id: 'yellow-pop', name: 'Yellow Pop', desc: 'black bold text on a solid yellow rounded highlight box' },
-  { id: 'neon-glow', name: 'Neon Glow', desc: 'white text with a vivid cyan and magenta neon glow' },
+  { id: 'neon-glow', name: 'Neon Glow', desc: 'white text with a cyan and aqua glow' },
   { id: 'minimal-pill', name: 'Minimal Pill', desc: 'light minimal sans-serif on a subtle translucent dark pill' },
-  { id: 'gradient-punch', name: 'Gradient Punch', desc: 'heavy text filled with a warm orange-to-pink gradient and a thin dark outline' },
+  { id: 'gradient-punch', name: 'Gradient Punch', desc: 'heavy text filled with a warm orange-to-gold gradient and a thin dark outline' },
   { id: 'boxed-classic', name: 'Boxed Classic', desc: 'classic broadcast caption: white text on a semi-transparent black box' },
 ];
 
@@ -60,7 +60,7 @@ function builtinFor(id: string): CaptionRenderFn {
         ctx.shadowBlur = fs * 0.65;
         ctx.fillStyle = '#FFFFFF';
         ctx.fillText(text, x, y);
-        ctx.shadowColor = '#E879F9';
+        ctx.shadowColor = '#2DE1C2';
         ctx.shadowBlur = fs * 0.35;
         ctx.fillText(text, x, y);
       };
@@ -87,7 +87,7 @@ function builtinFor(id: string): CaptionRenderFn {
         ctx.textBaseline = 'middle';
         const grad = ctx.createLinearGradient(x - fs * 3, y, x + fs * 3, y);
         grad.addColorStop(0, '#FB923C');
-        grad.addColorStop(1, '#EC4899');
+        grad.addColorStop(1, '#FFC23D');
         ctx.lineWidth = Math.max(1.5, fs * 0.06);
         ctx.strokeStyle = 'rgba(0,0,0,0.8)';
         ctx.strokeText(text.toUpperCase(), x, y);

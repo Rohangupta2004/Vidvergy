@@ -38,7 +38,7 @@ const CSS = `
 .s2v-vc-list { display: flex; flex-direction: column; }
 .s2v-vc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-bottom: 1px solid var(--vg-border); }
 .s2v-vc-row:last-child { border-bottom: 0; }
-.s2v-vc-row.is-selected { border-radius: 10px; background: var(--vg-gradient-selected); box-shadow: inset 3px 0 0 var(--vg-accent); }
+.s2v-vc-row.is-selected { border-radius: 10px; background: var(--vg-gold-tint); box-shadow: inset 3px 0 0 var(--vg-accent); }
 .s2v-vc-info { flex: 1 1 180px; min-width: 0; }
 .s2v-vc-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 14px; font-weight: 700; color: var(--vg-text); }
 .s2v-vc-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

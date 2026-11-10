@@ -1,19 +1,20 @@
 import { useEffect } from 'react';
 
-export type AppId = 'script-to-video' | 'ugc-studio' | 'ads-studio' | 'sceneforge' | 'faceless' | 'video-enhancer' | 'motion' | 'brand-context' | 'cineagent';
+export type AppId = 'script-to-video' | 'video-provider-lab' | 'ugc-studio' | 'ads-studio' | 'sceneforge' | 'faceless' | 'video-enhancer' | 'motion' | 'brand-context' | 'cineagent';
 export type AppView = 'side' | 'popup' | 'hidden' | 'fullscreen';
 
 /** Studio ids that are actually registered in config.json and mountable inline beside the chat. */
-export const EMBEDDABLE_APP_IDS = ['script-to-video', 'ugc-studio', 'ads-studio', 'sceneforge', 'faceless', 'video-enhancer', 'brand-context', 'cineagent'] as const;
+export const EMBEDDABLE_APP_IDS = ['script-to-video', 'video-provider-lab', 'ugc-studio', 'ads-studio', 'sceneforge', 'faceless', 'video-enhancer', 'brand-context', 'cineagent'] as const;
 
 const APP_NAMES: Record<string, string> = {
   'script-to-video': 'Script-to-Video',
+  'video-provider-lab': 'Video Provider Lab',
   'ugc-studio': 'UGC Studio',
   'ads-studio': 'Vergeye Ads Studio',
   sceneforge: 'SceneForge',
   faceless: 'Faceless',
   'video-enhancer': 'Video Enhancer',
-  'brand-context': 'Brand Kit',
+  'brand-context': 'Brand doc',
   cineagent: 'Studio',
 };
 
@@ -40,6 +41,11 @@ const APP_ALIASES: Record<string, AppId> = {
   motion: 'script-to-video',
   'motion-engine': 'script-to-video',
   scripttovideo: 'script-to-video',
+  provider: 'video-provider-lab',
+  'provider-lab': 'video-provider-lab',
+  providerlab: 'video-provider-lab',
+  'video-provider': 'video-provider-lab',
+  videoproviderlab: 'video-provider-lab',
   ugc: 'ugc-studio',
   'ugc-video': 'ugc-studio',
   ugcstudio: 'ugc-studio',
@@ -73,6 +79,7 @@ export function resolveAppId(raw: unknown): AppId | null {
   if (!id) return null;
   if ((EMBEDDABLE_APP_IDS as readonly string[]).includes(id)) return id as AppId;
   if (APP_ALIASES[id]) return APP_ALIASES[id];
+  if (id.includes('provider') || id === 'lab') return 'video-provider-lab';
   if (id.includes('ugc')) return 'ugc-studio';
   if (id.includes('faceless')) return 'faceless';
   if (id.includes('scene') || id.includes('avatar') || id.includes('presenter')) return 'sceneforge';
@@ -123,8 +130,9 @@ export interface AppController {
   appId: AppId;
   schema(): { fields: FieldSpec[]; actions: ActionSpec[] };
   getState(): { values: Record<string, unknown>; screen: string; busy: boolean; can: Record<string, { ok: boolean; reason?: string }> };
-  fill(values: Record<string, unknown>, opts?: { animate?: boolean }): Promise<{ applied: string[]; rejected: Array<{ key: string; reason: string }> }>;
-  run(action: string, opts?: { approvedCredits?: number; note?: string }): Promise<{ ok: boolean; result?: unknown; error?: string }>;
+  /** `autopilotRunId` marks a hands-off Verger Autopilot call; studios may use it to reuse that run's saved work. */
+  fill(values: Record<string, unknown>, opts?: { animate?: boolean; autopilotRunId?: string }): Promise<{ applied: string[]; rejected: Array<{ key: string; reason: string }>; planReused?: boolean; note?: string }>;
+  run(action: string, opts?: { approvedCredits?: number; note?: string; autopilotRunId?: string }): Promise<{ ok: boolean; result?: unknown; error?: string }>;
   subscribe(listener: (event: AppEvent) => void): () => void;
 }
 
@@ -162,8 +170,11 @@ export function rememberAppView(view: AppView): void {
   try { window.localStorage.setItem('verger:app-view', view); } catch { /* preference only */ }
 }
 
-const CONNECT_ATTEMPTS = 3;
-const CONNECT_TIMEOUT_MS = 6_000;
+// Lazy studio chunks and their data providers can take several seconds on a
+// cold open. Give the first mount a real window, then perform exactly one
+// fresh remount. Every attempt is bounded, so a tool card always settles.
+const CONNECT_ATTEMPTS = 2;
+const CONNECT_TIMEOUT_MS = 12_000;
 
 function waitForController(id: AppId, timeoutMs: number): Promise<AppController | null> {
   const current = getAppController(id);
@@ -207,7 +218,7 @@ export async function openApp(rawId: AppId | string, view: AppView = 'side'): Pr
   const resolvedView: 'side' | 'hidden' = view === 'hidden' ? 'hidden' : 'side';
   for (let attempt = 0; attempt < CONNECT_ATTEMPTS; attempt += 1) {
     mountEmbeddedApp(id, resolvedView, attempt > 0);
-    const controller = await waitForController(id, CONNECT_TIMEOUT_MS * (attempt + 1));
+    const controller = await waitForController(id, CONNECT_TIMEOUT_MS);
     if (controller) return controller;
   }
   throw new BridgeConnectError(id);

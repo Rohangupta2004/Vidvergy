@@ -59,7 +59,7 @@ function StatusBadge({ status }: { status: string }) {
     );
   }
   return (
-    <span style={{ ...base, background: 'rgba(200,146,10,0.14)', color: '#B4720A', border: '1px solid rgba(200,146,10,0.3)' }}>
+    <span style={{ ...base, background: 'var(--vg-gold-tint)', color: 'var(--vg-accent)', border: '1px solid var(--line-gold)' }}>
       <Loader2 size={11} className="rst-spin" /> Rendering…
     </span>
   );
@@ -101,7 +101,7 @@ function VideoCard({ job }: { job: any }) {
                 position: 'absolute',
                 inset: 0,
                 background:
-                  'radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--space-brand-primary-600) 28%, transparent), transparent 62%), linear-gradient(180deg, #0D0B05 0%, #050507 100%)',
+                  'radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--space-brand-primary-600) 28%, transparent), transparent 62%), linear-gradient(180deg, var(--vg-bg) 0%, #050507 100%)',
               }}
             />
             {ready ? (
@@ -166,7 +166,7 @@ function VideoCard({ job }: { job: any }) {
               color: 'var(--space-text-secondary)',
               textDecoration: 'none',
               border: '1px solid var(--space-border-default)',
-              background: 'rgba(180,120,0,0.06)',
+              background: 'var(--vg-raised)',
             }}
             data-testid="button-gallery-download"
           >
@@ -278,7 +278,7 @@ export default function MyVideosGallery({ onCreate }: { onCreate: () => void }) 
               border: 'none',
               cursor: 'pointer',
               background: 'var(--space-brand-primary)',
-              boxShadow: '0 8px 24px rgba(200,146,10,0.35)',
+              boxShadow: '0 8px 24px rgba(212,175,55,0.3)',
             }}
             data-testid="button-empty-create"
           >

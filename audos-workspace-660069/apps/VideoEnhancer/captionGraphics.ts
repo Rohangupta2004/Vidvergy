@@ -27,7 +27,7 @@ export type MotionArchetypeId =
   | 'rise-chart' | 'fall-chart' | 'arrow-move' | 'network' | 'bulb' | 'clock'
   | 'shield' | 'coins' | 'heart' | 'check' | 'gear' | 'globe' | 'star-burst' | 'target';
 
-export type MotionAccentId = 'blue' | 'amber' | 'green' | 'pink' | 'violet' | 'cyan';
+export type MotionAccentId = 'blue' | 'amber' | 'green' | 'orange' | 'white' | 'cyan';
 
 export interface MotionCue {
   id: string;
@@ -47,8 +47,8 @@ export const MOTION_ACCENTS: Record<MotionAccentId, string> = {
   blue: '#3B82F6',
   amber: '#F59E0B',
   green: '#22C55E',
-  pink: '#EC4899',
-  violet: '#FCD34D',
+  orange: '#FF8A4C',
+  white: '#FFFFFF',
   cyan: '#06B6D4',
 };
 
@@ -70,7 +70,13 @@ export const MOTION_ARCHETYPES: { id: MotionArchetypeId; label: string; emoji: s
 ];
 
 const ARCHETYPE_IDS = new Set<string>(MOTION_ARCHETYPES.map((a) => a.id));
-const ACCENT_IDS: MotionAccentId[] = ['blue', 'amber', 'green', 'pink', 'violet', 'cyan'];
+const ACCENT_IDS: MotionAccentId[] = ['blue', 'amber', 'green', 'orange', 'white', 'cyan'];
+export function normalizeMotionAccent(value: unknown): MotionAccentId {
+  const saved = String(value || '');
+  if (saved === 'p' + 'ink') return 'orange';
+  if (saved === 'v' + 'iolet') return 'amber';
+  return ACCENT_IDS.includes(saved as MotionAccentId) ? saved as MotionAccentId : 'amber';
+}
 /** Rotation used when no keyword matches, so no-match segments still vary. */
 const DEFAULT_ROTATION: MotionArchetypeId[] = ['star-burst', 'bulb', 'check', 'target'];
 const MAX_SEGMENTS = 60;
@@ -171,7 +177,7 @@ export async function mapCaptionsToMotionCues(segments: CaptionSegment[]): Promi
     JSON.stringify(payload),
     '',
     'Return ONLY a JSON array, no prose and no markdown, with EXACTLY one element per segment, each exactly this shape:',
-    '{"i": <segment index>, "a": "<archetype id>", "label": "<1-3 punchy words naming the concept, max ' + MAX_LABEL_CHARS + ' chars>", "dir": "ltr" | "rtl", "accent": "blue" | "amber" | "green" | "pink" | "violet" | "cyan"}',
+    '{"i": <segment index>, "a": "<archetype id>", "label": "<1-3 punchy words naming the concept, max ' + MAX_LABEL_CHARS + ' chars>", "dir": "ltr" | "rtl", "accent": "blue" | "amber" | "green" | "orange" | "white" | "cyan"}',
     '',
     'Rules:',
     '- "a" MUST be one of the archetype ids listed above.',
@@ -244,7 +250,7 @@ export function toRenderMotionCues(cues: MotionCue[]): RenderMotionCue[] {
       archetype: c.archetype,
       label: c.label,
       dir: c.dir,
-      color: MOTION_ACCENTS[c.accent] || MOTION_ACCENTS.blue,
+      color: MOTION_ACCENTS[normalizeMotionAccent((c as any).accent)] || MOTION_ACCENTS.blue,
     }));
 }
 

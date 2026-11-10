@@ -158,11 +158,14 @@ type StatusPayload = { project: ServerProject; clips: ServerClip[] };
 async function clipStyleRun<T>(payload: Record<string, unknown>): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = getWorkspaceToken();
-  if (token) headers['X-Workspace-DB-Token'] = token;
+  const sessionId = resolveSessionId();
+  if (!token || !sessionId) throw new Error('Your verified session is still loading.');
+  headers['X-Workspace-DB-Token'] = token;
+  headers['X-Session-Id'] = sessionId;
   const res = await fetch(CLIPSTYLE_RUN_ENDPOINT, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ ...payload, session_id: resolveSessionId() }),
+    body: JSON.stringify({ ...payload, session_id: sessionId }),
   });
   const raw = await res.json().catch(() => null);
   // Hook responses may sit at the top level or under `response`.
@@ -437,12 +440,15 @@ export default function ClipStyleWizard({ onExit }: { onExit: () => void }) {
     if (!project || project.status !== 'in_progress') return;
     let stopped = false;
     const poll = async () => {
+      if (stopped) return;
       try {
         const st = await clipStyleRun<StatusPayload>({ op: 'status', project_id: project.id });
         if (stopped) return;
         setProject(st.project);
         setClips(st.clips || []);
-      } catch { /* next interval retries */ }
+      } catch (error) {
+        if (/HTTP\s+(401|403)|verified session/i.test(String(error instanceof Error ? error.message : error))) stopped = true;
+      }
     };
     const timer = window.setInterval(() => { void poll(); }, 5000);
     return () => { stopped = true; window.clearInterval(timer); };
@@ -864,7 +870,7 @@ export default function ClipStyleWizard({ onExit }: { onExit: () => void }) {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 11.5, fontWeight: 800, color: S.brand }}>[{b.code}]</span>
                     <span style={{ fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 120 }}>{b.text}</span>
-                    <span style={{ fontSize: 10.5, color: countWords(prompts[i]) < 25 || countWords(prompts[i]) > 40 ? '#B45309' : S.muted }}>{countWords(prompts[i])} words</span>
+                    <span style={{ fontSize: 10.5, color: countWords(prompts[i]) < 25 || countWords(prompts[i]) > 40 ? 'var(--vg-warning)' : S.muted }}>{countWords(prompts[i])} words</span>
                   </div>
                   <textarea value={prompts[i]} onChange={(e) => setPrompts((cur) => cur.map((p, j) => (j === i ? e.currentTarget.value : p)))} rows={2} className="ps-input" style={{ ...inputStyle, fontSize: 12.5, lineHeight: 1.55, resize: 'vertical' }} data-testid={`input-prompt-${b.code}`} />
                 </div>

@@ -14,14 +14,18 @@
  * produced. Every id in labModels.ts now comes from the documented enum, so a
  * rejection is reported as a rejection, with the exact status and path.
  *
- * This layer deliberately does NOT go through lib/videoEngineClient.ts.
- * That client charges the customer credit ledger and can raise the plans
- * screen; the lab is an owner-only developer panel that should hit the proxies
- * directly and show exactly what they answer.
+ * This layer deliberately does NOT go through lib/videoEngineClient.ts because
+ * a provider comparison must preserve each proxy's exact request and response.
+ * It does use the same customer credit wallet: one stable key is authorized
+ * before submit, explicit provider failures refund it, and durable adoption
+ * carries the key so a reopened run can reconcile the same ledger entry.
  */
 
 import { capPromptText, runwayVideoRatio, clampRunwayDuration } from '../../lib/videoEngines';
+import { authorizeCredits, newChargeKey, refundCreditsStrict } from '../../lib/credits';
 import { getSessionId, callHook, spaceId, workspaceFetch } from '../../lib/workspace';
+import { isSeedance25Operation, readServerVideoStatus } from '../../lib/serverVideoEngines';
+import type { ServerVideoProvider } from '../../lib/serverVideoEngines';
 import type { LabModel, LabRunInput } from './labModels';
 
 // ---------------------------------------------------------------------------
@@ -68,12 +72,16 @@ function veoHeaders(extra?: Record<string, string>): Record<string, string> {
 export class RequestError extends Error {
   status: number;
   path: string;
+  /** The endpoint's response body, verbatim. Never truncated — a rejected
+   *  parameter is named only in here, and a clipped copy of it is useless. */
+  body: string;
 
-  constructor(message: string, status: number, path: string) {
+  constructor(message: string, status: number, path: string, body = '') {
     super(message);
     this.name = 'RequestError';
     this.status = status;
     this.path = path;
+    this.body = body;
   }
 }
 
@@ -110,6 +118,7 @@ async function jsonFetch(url: string, init: RequestInit = {}, options: { skipApp
       providerMessage(data, raw.trim() || `Request failed: ${response.status}`),
       response.status,
       url,
+      raw.trim(),
     );
   }
   return data;
@@ -125,7 +134,14 @@ export function errorText(error: unknown): string {
 export function describeError(error: unknown, tried: string[]): string {
   if (error instanceof RequestError) {
     if (error.status === 400) {
-      return `400 Bad request — the endpoint rejected these parameters. ${error.message}`;
+      // Print the response body in full underneath the summary. The proxy names
+      // the offending field only there, and both Seedance 400 families — the
+      // Audos schema check and a passed-through OpenRouter rejection — are
+      // unreadable without it.
+      const verbatim = error.body && error.body !== error.message
+        ? `\n\nFull response from ${error.path}:\n${error.body}`
+        : '';
+      return `400 Bad request — the endpoint rejected these parameters. ${error.message}${verbatim}`;
     }
     if (error.status === 401) {
       return `401 Unauthorized — this page sent no workspace credential. Reload the space and retry. (${error.message})`;
@@ -330,6 +346,7 @@ export async function adoptLabOperation(
       duration: Math.max(1, Math.min(30, Math.round(Number(input.duration) || 5))),
       cost: kickoff?.cost == null ? null : String(kickoff.cost),
       estimated_duration: kickoff?.estimatedDuration == null ? null : String(kickoff.estimatedDuration),
+      credit_key: ctx.creditKey || null,
     });
   } catch (error) {
     // A reopen or a second surface can race with the first registration. The
@@ -445,15 +462,32 @@ type ProviderRead =
  * the browser settles those runs instead of the server worker.
  */
 async function readProviderStatus(provider: string, operationId: string): Promise<ProviderRead> {
+  // Kling and Seedance 2.5 bill the workspace that holds the credential, so a
+  // visitor's own token cannot read them; the server function reads them on
+  // this workspace's signed identity.
+  const serverProvider: ServerVideoProvider | null = provider === 'kling'
+    ? 'kling'
+    : provider === 'veo' && isSeedance25Operation(operationId) ? 'seedance' : null;
+  if (serverProvider) {
+    try {
+      const read = await readServerVideoStatus(serverProvider, operationId);
+      if (read.status === 'completed' && read.videoUrl) return { kind: 'completed', url: read.videoUrl };
+      if (read.status === 'failed') return { kind: 'failed', error: read.error || 'The provider reported this render as failed.' };
+      if (read.error) return { kind: 'unknown', note: read.error };
+      return { kind: 'processing', status: 'processing', progress: read.progress };
+    } catch (error) {
+      return { kind: 'unknown', note: errorText(error) };
+    }
+  }
   if (!workspaceToken()) return { kind: 'unknown', note: 'no workspace credential — reload the space' };
   const path = provider === 'kling' || provider === 'runway' || provider === 'higgsfield'
     ? `/api/generate/${provider}/status/${encodeURIComponent(operationId)}`
     : `/api/veo/status/${encodeURIComponent(operationId)}`;
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await workspaceFetch(path, {
       headers: path.startsWith('/api/veo/') ? veoHeaders() : workspaceHeaders(),
-    });
+    }, { skipAppId: path.startsWith('/api/veo/') });
   } catch (error) {
     return { kind: 'unknown', note: errorText(error) };
   }
@@ -641,6 +675,8 @@ export interface RunContext {
   register: (cancel: () => void) => void;
   /** Called once the operation is saved in the server ledger, with its row id. */
   adopted?: (jobId: number) => void;
+  /** Stable Vidverge wallet key for this logical run. */
+  creditKey?: string;
 }
 
 export interface RunResult {
@@ -668,12 +704,14 @@ export async function adoptExternalOperation(opts: {
   note?: (text: string) => void;
   register?: (cancel: () => void) => void;
   onAdopted?: (jobId: number) => void;
+  creditKey?: string;
 }): Promise<RunResult | null> {
   const ctx: RunContext = {
     note: opts.note || (() => undefined),
     tried: () => undefined,
     register: opts.register || (() => undefined),
     adopted: opts.onAdopted,
+    creditKey: opts.creditKey || `external:${opts.provider}:${opts.operationId}`,
   };
   const model = {
     modelId: opts.modelId,
@@ -776,6 +814,116 @@ function pollVeoStatus(ctx: RunContext, operationId: string, label: string, capM
   return poller.promise;
 }
 
+/**
+ * What the lab is actually allowed to send for THIS model.
+ *
+ * The run form keeps its values when the selected model changes, so a negative
+ * prompt typed for Kling, a 1080p picked for Veo, or a ratio that only Seedance
+ * 2.0 Fast offers all survived into the next submit. The proxy validates per
+ * model and rejects the whole request, which is where the Seedance 2.5
+ * "HTTP 400 Bad Request" runs came from — confirmed against the live endpoint:
+ *   negativePrompt   → "Seedance 2.5 does not expose negativePrompt"
+ *   resolution 1080p → "Seedance 2.5 supports only 480p or 720p"
+ *   aspectRatio 9:21 → invalid_enum_value (16:9 4:3 1:1 3:4 9:16 21:9)
+ *   duration 7.5/31  → "must be an integer from 4 to 30 seconds"
+ *   prompt < 10 chars→ "String must contain at least 10 character(s)"
+ * A value the model cannot take is dropped or snapped to the nearest legal one
+ * and announced, never sent and never silently swallowed.
+ */
+function orientationOf(ratio: string): number {
+  const [w, h] = String(ratio).split(':').map((part) => Number(part) || 0);
+  return w > 0 && h > 0 ? w / h : 1;
+}
+
+export interface GroupARequestPlan {
+  prompt: string;
+  aspectRatio: string;
+  resolution: string;
+  duration: number;
+  negativePrompt: string;
+  adjustments: string[];
+}
+
+export function planGroupARequest(model: LabModel, input: LabRunInput): GroupARequestPlan {
+  const adjustments: string[] = [];
+  const prompt = capPromptText(input.prompt, 10000);
+  if (prompt.trim().length < 10) {
+    throw new Error(`${model.name} needs a prompt of at least 10 characters. Describe the shot in a sentence and run it again.`);
+  }
+
+  const allowedRatios = model.params.aspectRatios;
+  let aspectRatio = String(input.aspectRatio || '');
+  if (allowedRatios.length && allowedRatios.indexOf(aspectRatio) < 0) {
+    const target = orientationOf(aspectRatio);
+    const nearest = allowedRatios
+      .slice()
+      .sort((a, b) => Math.abs(orientationOf(a) - target) - Math.abs(orientationOf(b) - target))[0];
+    adjustments.push(`${model.name} does not offer ${aspectRatio || 'that aspect ratio'}; used the closest it accepts, ${nearest}.`);
+    aspectRatio = nearest;
+  }
+
+  const allowedResolutions = model.params.resolutions;
+  let resolution = String(input.resolution || '');
+  if (resolution && allowedResolutions.length && allowedResolutions.indexOf(resolution) < 0) {
+    const nearest = allowedResolutions[allowedResolutions.length - 1];
+    adjustments.push(`${model.name} supports only ${allowedResolutions.join(' / ')}; used ${nearest} instead of ${resolution}.`);
+    resolution = nearest;
+  }
+
+  let duration = Number(input.duration);
+  if (!Number.isInteger(duration)) {
+    if (!Number.isFinite(duration)) throw new Error(`${model.name} duration must be a whole number of seconds.`);
+    const rounded = Math.round(duration);
+    adjustments.push(`${model.name} takes whole seconds only; used ${rounded}s instead of ${duration}s.`);
+    duration = rounded;
+  }
+  if (model.params.durations.length && model.params.durations.indexOf(duration) < 0) {
+    throw new Error(`${model.name} accepts ${model.params.durations.join(' / ')} seconds.`);
+  }
+  if (model.params.durationMin !== null && model.params.durationMax !== null
+    && (duration < model.params.durationMin || duration > model.params.durationMax)) {
+    throw new Error(`${model.name} accepts ${model.params.durationMin}–${model.params.durationMax} seconds.`);
+  }
+
+  // Dropped rather than snapped: there is no "nearest" negative prompt, and
+  // sending it is what fails the whole Seedance request.
+  let negativePrompt = '';
+  if (input.negativePrompt.trim()) {
+    if (model.params.negativePrompt) negativePrompt = capPromptText(input.negativePrompt, 10000);
+    else adjustments.push(`${model.name} does not accept a negative prompt, so it was left out — put those instructions in the prompt itself.`);
+  }
+
+  return { prompt, aspectRatio, resolution, duration, negativePrompt, adjustments };
+}
+
+/**
+ * The proxy sometimes answers 200 with an operation id of the form
+ * `openrouter_error_<uuid>` instead of a real job, so the failure looks like a
+ * success and the only text on the body is the generic "Video generation
+ * started" message. Ask the status endpoint what actually went wrong — from the
+ * browser, which is the only caller that endpoint accepts for this model — and
+ * report that rather than the kickoff's own cheerful copy.
+ */
+async function explainSyntheticOperation(modelName: string, operationId: string, kickoff: any): Promise<string> {
+  let upstream = '';
+  try {
+    const response = await workspaceFetch(`/api/veo/status/${encodeURIComponent(operationId)}`, { headers: veoHeaders() }, { skipAppId: true });
+    const raw = await response.text();
+    let parsed: any = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
+    upstream = providerMessage(parsed?.errorMessage || parsed?.error, raw.trim());
+  } catch (error) {
+    upstream = `the status endpoint could not be reached (${errorText(error)})`;
+  }
+  let kickoffBody = '';
+  try { kickoffBody = JSON.stringify(kickoff); } catch { kickoffBody = String(kickoff); }
+  return [
+    `${modelName} was rejected upstream. The proxy answered HTTP 200 with the synthetic id ${operationId}, which is a failure wearing a success status — there is no job behind it, so nothing was rendered.`,
+    upstream ? `Upstream reason: ${upstream}` : 'The status endpoint returned no reason for this id.',
+    kickoffBody ? `Kickoff response: ${kickoffBody}` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
 async function runGroupA(ctx: RunContext, model: LabModel, input: LabRunInput): Promise<RunResult> {
   const path = '/api/veo/generate/video';
   const useReferences = input.imageRole === 'reference' && model.params.referenceImages;
@@ -790,25 +938,20 @@ async function runGroupA(ctx: RunContext, model: LabModel, input: LabRunInput): 
   const firstFrame = !useReferences && input.images.length ? input.images[0] : '';
   const lastFrame = useFrames && input.images.length > 1 ? input.images[1] : '';
 
-  if (!Number.isInteger(input.duration)) throw new Error(`${model.name} duration must be a whole number of seconds.`);
-  if (model.params.durationMin !== null && model.params.durationMax !== null
-    && (input.duration < model.params.durationMin || input.duration > model.params.durationMax)) {
-    throw new Error(`${model.name} accepts ${model.params.durationMin}–${model.params.durationMax} seconds.`);
-  }
-  if (model.params.durations.length && model.params.durations.indexOf(input.duration) < 0) {
-    throw new Error(`${model.name} accepts ${model.params.durations.join(' / ')} seconds.`);
-  }
   if (useFrames && (!firstFrame || !lastFrame)) throw new Error('First + last frame mode needs two images in that order.');
+
+  const plan = planGroupARequest(model, input);
+  for (const adjustment of plan.adjustments) ctx.note(adjustment);
 
   const body: Record<string, unknown> = {
     model: model.modelId,
-    prompt: capPromptText(input.prompt, 10000),
-    aspectRatio: input.aspectRatio,
-    duration: input.duration,
+    prompt: plan.prompt,
+    aspectRatio: plan.aspectRatio,
+    duration: plan.duration,
     generateAudio: Boolean(input.audio),
   };
-  if (input.resolution) body.resolution = input.resolution;
-  if (input.negativePrompt.trim()) body.negativePrompt = capPromptText(input.negativePrompt, 10000);
+  if (plan.resolution) body.resolution = plan.resolution;
+  if (plan.negativePrompt) body.negativePrompt = plan.negativePrompt;
   if (firstFrame) body.imageData = firstFrame;
   if (lastFrame) body.lastFrameImage = { imageData: lastFrame, mimeType: dataUrlMimeType(lastFrame) };
   if (referenceImages.length) body.referenceImages = referenceImages;
@@ -831,16 +974,14 @@ async function runGroupA(ctx: RunContext, model: LabModel, input: LabRunInput): 
   const operationId = String(start?.operationId || start?.operation_id || '');
   if (!operationId) throw new Error(`${model.name} accepted the request but returned no operationId.`);
   if (/_error_/.test(operationId)) {
-    throw new Error(
-      `${model.name} was rejected upstream — the proxy answered 200 with synthetic id ${operationId}. `
-      + providerMessage(start?.errorMessage || start?.message),
-    );
+    throw new Error(await explainSyntheticOperation(model.name, operationId, start));
   }
 
   const adopted = await adoptLabOperation(ctx, 'veo', model, input, operationId, start);
   if (adopted) return adopted;
   const videoUrl = await pollVeoStatus(ctx, operationId, model.name, model.capMs);
   const detail = [
+    plan.adjustments.join(' '),
     start?.cost !== undefined && start?.cost !== null ? `Proxy quoted $${String(start.cost)}.` : '',
     referenceImages.length ? `Sent ${referenceImages.length} image reference(s).` : '',
     lastFrame ? 'Sent imageData as the first frame and lastFrameImage as the final frame.' : '',
@@ -1345,21 +1486,56 @@ async function runKlingLipSync(ctx: RunContext, model: LabModel, input: LabRunIn
 // Dispatch
 // ---------------------------------------------------------------------------
 
-export function runLabModel(model: LabModel, input: LabRunInput, ctx: RunContext): Promise<RunResult> {
-  switch (model.runner) {
-    case 'group-a': return runGroupA(ctx, model, input);
-    case 'veo-managed': return runVeoManaged(ctx, model, input);
-    case 'runway': return runRunway(ctx, model, input);
-    case 'higgsfield': return runHiggsfield(ctx, model, input);
-    case 'kling':
-      if (model.params.extend) return runKlingExtend(ctx, model, input);
-      if (model.params.lipSync) return runKlingLipSync(ctx, model, input);
-      if (model.params.multiImage) return runKlingMultiImage(ctx, model, input);
-      return runKling(ctx, model, input);
-    default:
-      return Promise.reject(new Error(
-        model.unavailableReason || `${model.name} has no endpoint on this platform, so the lab will not call one.`,
-      ));
+export async function runLabModel(model: LabModel, input: LabRunInput, ctx: RunContext): Promise<RunResult> {
+  const creditKey = ctx.creditKey || newChargeKey('provider-lab');
+  const seconds = Math.max(1, Math.round(Number(input.duration) || 5));
+  const meteredContext: RunContext = { ...ctx, creditKey };
+  // Check the request against the model BEFORE the wallet moves. A parameter
+  // this model cannot take would otherwise be charged, rejected at submit and
+  // refunded a moment later — three ledger events for a request that never had
+  // a chance.
+  if (model.runner === 'group-a') planGroupARequest(model, input);
+  const raw = input as unknown as Record<string, unknown>;
+  const labEngine = model.runner === 'kling' && model.params.extend
+    ? 'kling-extend'
+    : model.runner === 'kling' && model.params.lipSync
+      ? 'kling-lip-sync'
+      : model.modelId;
+  await authorizeCredits({
+    seconds,
+    engine: labEngine,
+    options: {
+      seconds,
+      resolution: typeof raw.resolution === 'string' ? raw.resolution : undefined,
+      aspectRatio: typeof raw.aspectRatio === 'string' ? raw.aspectRatio : undefined,
+      audio: raw.generateAudio === true || raw.audio === true,
+      mode: typeof raw.mode === 'string' ? raw.mode : undefined,
+    },
+    entryKey: creditKey,
+    source: 'video-provider-lab',
+    label: `${model.name} · ${seconds}s`,
+    note: `${model.name} · ${seconds}s`,
+  });
+
+  try {
+    switch (model.runner) {
+      case 'group-a': return await runGroupA(meteredContext, model, input);
+      case 'veo-managed': return await runVeoManaged(meteredContext, model, input);
+      case 'runway': return await runRunway(meteredContext, model, input);
+      case 'higgsfield': return await runHiggsfield(meteredContext, model, input);
+      case 'kling':
+        if (model.params.extend) return await runKlingExtend(meteredContext, model, input);
+        if (model.params.lipSync) return await runKlingLipSync(meteredContext, model, input);
+        if (model.params.multiImage) return await runKlingMultiImage(meteredContext, model, input);
+        return await runKling(meteredContext, model, input);
+      default:
+        throw new Error(model.unavailableReason || `${model.name} has no endpoint on this platform, so the lab will not call one.`);
+    }
+  } catch (error) {
+    const text = errorText(error);
+    const uncertain = /uncertain|still rendering|still working|polling stopped|may still finish|do not resubmit/i.test(text);
+    if (!uncertain) await refundCreditsStrict(creditKey, `Provider Lab did not deliver ${model.name}`);
+    throw error;
   }
 }
 

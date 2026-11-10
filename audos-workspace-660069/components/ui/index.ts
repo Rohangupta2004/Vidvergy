@@ -33,8 +33,10 @@ export { default as VergeMark } from './VergeMark';
 export type { VergeMarkProps } from './VergeMark';
 
 export { default as GlobalStyles, GLOBAL_CSS, GLOBAL_STYLE_ID } from './GlobalStyles';
+export { default as Rim, ThemeToggle, applyVidvergeTheme, readVidvergeTheme } from './Molten';
+export type { VidvergeTheme } from './Molten';
 
-export { Field, Select, Tabs, Menu, Dialog, Drawer, Toast, Skeleton } from './V3Primitives';
+export { Field, Select, Tabs, Menu, Dialog, Drawer, Toast, Tooltip, Skeleton } from './V3Primitives';
 export type { TabItem, MenuItem } from './V3Primitives';
 
 export {

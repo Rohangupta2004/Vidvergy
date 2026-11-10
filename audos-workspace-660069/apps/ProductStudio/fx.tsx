@@ -23,9 +23,9 @@ export const FX_CSS = `
 .ps-btn { transition: background .16s ease, border-color .16s ease, color .16s ease, filter .16s ease, transform .16s ease, box-shadow .16s ease; }
 .ps-btn:hover:not(:disabled) { filter: brightness(1.12); }
 .ps-btn:active:not(:disabled) { transform: scale(0.98); }
-.ps-btn:focus-visible { outline: 2px solid var(--space-brand-primary-500); outline-offset: 2px; }
+.ps-btn:focus-visible { outline: 2px solid var(--vg-focus); outline-offset: 2px; }
 .ps-input { transition: border-color .16s ease, box-shadow .16s ease; outline: none; }
-.ps-input:focus { border-color: var(--space-brand-primary-500) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--space-brand-primary-500) 22%, transparent); }
+.ps-input:focus { border-color: var(--vg-focus) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--vg-focus) 22%, transparent); }
 @media (prefers-reduced-motion: reduce) { .ps-enter-editor, .ps-enter-gallery, .ps-fade-up { animation: none !important; } }
 `;
 
@@ -95,7 +95,7 @@ export function Tilt({
   const shadowX = Math.round(-tilt.ry * 1.4);
   const shadowY = Math.round(tilt.rx * 1.4) + (lift ? 16 : 7);
   const shadowBlur = lift ? 30 : 16;
-  const shadowAlpha = lift ? 0.16 : 0.1;
+  const shadowAlpha = lift ? 0.5 : 0.35;
 
   return (
     <div style={{ perspective: 900 }} className={className}>
@@ -120,7 +120,7 @@ export function Tilt({
             : `rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg) translateZ(${lift ? 8 : 0}px) scale(${lift ? 1.03 : 1})`,
           transformStyle: 'preserve-3d',
           transition: 'transform 0.15s ease, box-shadow 0.22s ease',
-          boxShadow: disabled ? undefined : `${shadowX}px ${shadowY}px ${shadowBlur}px rgba(120, 80, 0, ${shadowAlpha})`,
+          boxShadow: disabled ? undefined : `${shadowX}px ${shadowY}px ${shadowBlur}px rgba(0, 0, 0, ${shadowAlpha})`,
           willChange: 'transform',
           borderRadius: (style && style.borderRadius) || 14,
           outline: 'none',

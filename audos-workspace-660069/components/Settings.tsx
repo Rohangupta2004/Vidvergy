@@ -3,8 +3,12 @@ import { CreditCard, Coins, Crown, LogOut, Clock, CheckCircle2, AlertCircle, Loa
 import { useSpaceRuntime } from '../SpaceRuntimeContext';
 import { settingsStyles } from '../lib/colors';
 import { isPaidTier, isProTier, openPricing, useUserTier } from '../lib/plans';
-import { formatCredits, useCredits } from '../lib/credits';
-import { scopedSpaceSessionStorageKey } from '../lib/tenant-delegation-scope';
+import { formatCreditBalance, formatCredits, useCredits } from '../lib/credits';
+import CreditHistory from './CreditHistory';
+import { hasTenantDelegationAuth, scopedSpaceSessionStorageKey } from '../lib/tenant-delegation-scope';
+import { ThemeToggle } from './ui/Molten';
+import { clearSessionIdentity } from '../lib/workspace';
+import { useAmbientMusic } from '../hooks/useAmbientMusic';
 
 interface SettingsProps {
   spaceId: string;
@@ -57,6 +61,8 @@ function getSessionStorageKey(spaceId: string) {
 
 export default function Settings({ spaceId }: SettingsProps) {
   const { sessionId: contextSessionId } = useSpaceRuntime();
+  const delegated = hasTenantDelegationAuth();
+  const ambientMusic = useAmbientMusic();
   // VidVerge access tier from the `subscriptions` table (email -> tier +
   // video_limit). This is separate from the platform's Stripe subscription
   // state below: a row here grants access directly, so it is shown first, and
@@ -65,17 +71,11 @@ export default function Settings({ spaceId }: SettingsProps) {
     tier: userTier,
     loading: tierLoading,
   } = useUserTier(spaceId, contextSessionId);
-  // Credits are the product's only meter (1 credit = 1 second of finished
-  // video), so the account panel shows a balance rather than a video count.
+  // Credits are the product's only meter (pay per use: real engine cost + 30%,
+  // $0.15 per credit), so the account panel shows a balance and its history.
   const { credits } = useCredits();
   const subscriber = isPaidTier(userTier);
-  const tierLabel = isProTier(userTier)
-    ? 'Pro'
-    : userTier === 'creator'
-      ? 'Creator'
-      : userTier === 'payg'
-        ? 'Pay-as-you-go'
-        : 'Free Trial';
+  const tierLabel = isProTier(userTier) ? 'Pro' : 'Pay per use';
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   
@@ -84,6 +84,8 @@ export default function Settings({ spaceId }: SettingsProps) {
   const [statusLoading, setStatusLoading] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [managingPortal, setManagingPortal] = useState(false);
+  const [billingAction, setBillingAction] = useState('');
+  const [invoices, setInvoices] = useState<Array<{ id?: string; status?: string; amount?: number; currency?: string; createdAt?: string; receiptUrl?: string }>>([]);
   const [portalMessage, setPortalMessage] = useState('');
 
   useEffect(() => {
@@ -194,6 +196,7 @@ export default function Settings({ spaceId }: SettingsProps) {
       console.warn('[Settings] Platform sign-out call failed; clearing this browser anyway.', e);
     }
 
+    clearSessionIdentity();
     try { localStorage.removeItem(sessionKey); } catch {}
     try { sessionStorage.removeItem('space_session_id'); } catch {}
     setEmail('');
@@ -201,67 +204,14 @@ export default function Settings({ spaceId }: SettingsProps) {
     window.location.reload();
   };
 
-  const handleSubscribe = async () => {
-    setSubscribing(true);
-    try {
-      const synced = requireSignedInIdentity();
-      const appId = getPaymentAppId(spaceId);
-      const response = await fetch('/api/payments/subscribe', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-App-Id': appId
-        },
-        body: JSON.stringify({
-          // The entry-level locked plan. Pro and pay-as-you-go are chosen on
-          // the Plans screen; this button is the one-tap Creator path.
-          billingPlanId: 'creator-monthly',
-          customerEmail: synced.email,
-          successUrl: window.location.origin + window.location.pathname + '?subscription_success=true&vv_checkout=subscription&session_id={CHECKOUT_SESSION_ID}',
-          cancelUrl: window.location.href,
-          // Stamped onto the subscription so `subscription-events` can find
-          // this credit wallet again on a renewal or a cancellation.
-          metadata: {
-            spaceId,
-            vvEmail: synced.email,
-            vvPlan: 'creator',
-          },
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.checkoutUrl) {
-        // Task #1480: Reddit Pixel InitiateCheckout — fired immediately before
-        // we redirect to Stripe Checkout. No server-side CAPI for this event
-        // (Reddit treats it as top-of-funnel and we don't have a "checkout
-        // started" webhook). Calls window.rdt directly — the queue stub
-        // installed by the live PageVisit snippet (Task #1456) handles late
-        // pixel.js loads.
-        try {
-          const rdt = (window as any).rdt;
-          const pixelId = (window as any).__REDDIT_PIXEL_ID__;
-          if (typeof rdt === 'function') {
-            if (pixelId && synced?.email) {
-              rdt('init', pixelId, { email: String(synced.email).toLowerCase().trim() });
-            }
-            const conversionId = `checkout_${spaceId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            rdt('track', 'InitiateCheckout', { conversionId });
-          }
-        } catch (e) {
-          console.warn('[Settings] Reddit Pixel InitiateCheckout failed:', e);
-        }
-
-        window.location.href = data.checkoutUrl;
-      } else {
-        setError(data.error || 'Failed to start subscription');
-      }
-    } catch (e) {
-      console.error('Failed to create subscription:', e);
-      setError('Failed to start subscription');
-    } finally {
-      setSubscribing(false);
+  // Subscriptions were retired with pay-per-use pricing: buying credits goes
+  // through the credit-pack checkout on the pricing screen.
+  const handleBuyCredits = () => {
+    if (delegated) {
+      setError('Tenant-agent buyers manage purchases through their agent, not card checkout.');
+      return;
     }
+    openPricing('nav');
   };
 
   const handleManageSubscription = async () => {
@@ -310,6 +260,39 @@ export default function Settings({ spaceId }: SettingsProps) {
     } finally {
       setManagingPortal(false);
     }
+  };
+
+  const changeSubscription = async (action: 'cancel' | 'resume') => {
+    setBillingAction(action); setError(''); setPortalMessage('');
+    try {
+      const synced = requireSignedInIdentity();
+      const response = await fetch(`/api/payments/subscription/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-App-Id': getPaymentAppId(spaceId) }, body: JSON.stringify({ customerEmail: synced.email, subscriptionId: subscriptionStatus?.subscriptionId }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Could not ${action} this subscription.`);
+      setPortalMessage(action === 'cancel' ? 'Cancellation scheduled for the end of the current period.' : 'Subscription resumed.');
+      await loadSubscriptionStatus(synced.email);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : `Could not ${action} this subscription.`); }
+    finally { setBillingAction(''); }
+  };
+
+  const loadInvoices = async () => {
+    setBillingAction('invoices'); setError('');
+    try {
+      const synced = requireSignedInIdentity();
+      const query = new URLSearchParams({ customerEmail: synced.email });
+      const response = await fetch(`/api/payments/list?${query}`, { headers: { 'X-App-Id': getPaymentAppId(spaceId) } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Invoices could not be loaded.');
+      setInvoices(Array.isArray(data.payments) ? data.payments : Array.isArray(data.data) ? data.data : []);
+      if (!(Array.isArray(data.payments) ? data.payments : data.data)?.length) setPortalMessage('No invoices yet.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Invoices could not be loaded.'); }
+    finally { setBillingAction(''); }
+  };
+
+  const savePreference = (key: string, value: string | boolean | number) => {
+    try { window.localStorage.setItem(`vv-setting:${key}`, JSON.stringify(value)); } catch {}
+    setPortalMessage('Saved');
+    window.setTimeout(() => setPortalMessage((current) => current === 'Saved' ? '' : current), 1400);
   };
 
   const getStatusBadge = () => {
@@ -377,7 +360,7 @@ export default function Settings({ spaceId }: SettingsProps) {
 
   // Granted accounts are excluded: their access does not come from Stripe, so
   // prompting them to pay would be asking for money they don't owe.
-  const showPaymentCTA = subscriptionStatus && !subscriber &&
+  const showPaymentCTA = !delegated && subscriptionStatus && !subscriber &&
     ['trial', 'trialing', 'trial_expired', 'canceled', 'past_due', 'registered'].includes(subscriptionStatus.status);
 
   return (
@@ -394,7 +377,7 @@ export default function Settings({ spaceId }: SettingsProps) {
             <h3 className="text-sm font-semibold text-[var(--space-text-primary)]">
               Your Account
             </h3>
-            {email && (
+            {email && !delegated && (
               <button
                 onClick={handleSignOut}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--space-text-secondary)] hover:text-[var(--vg-danger)] hover:bg-[var(--vg-danger-bg)] rounded-lg transition-colors"
@@ -421,7 +404,9 @@ export default function Settings({ spaceId }: SettingsProps) {
               )}
             </div>
             <p className="mt-2 text-xs text-[var(--space-text-muted)]">
-              This account is tied to the address you used at sign-in. To use a different one, sign out and sign in with that email.
+              {delegated
+                ? 'This buyer session is supplied by your tenant agent. Ask the agent to manage purchases or access.'
+                : 'This account is tied to the address you used at sign-in. To use a different one, sign out and sign in with that email.'}
             </p>
             {error && (
               <p className={settingsStyles.errorText} data-testid="text-settings-error">
@@ -437,13 +422,13 @@ export default function Settings({ spaceId }: SettingsProps) {
         </div>
 
         {/* Subscription Section */}
-        {email && (
+        {email && !delegated && (
           <div className="mt-6 rounded-2xl border border-[var(--space-border-default)] bg-[color-mix(in_srgb,var(--space-surface-card)_94%,transparent)] p-6 shadow-[0_18px_48px_rgba(0,0,0,0.26)]" style={{ minHeight: 185 }}>
             <div className="flex items-center justify-between gap-2 mb-4">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-[var(--space-text-muted)]" />
                 <h3 className="text-sm font-semibold text-[var(--space-text-primary)]">
-                  Subscription
+                  Credits & billing
                 </h3>
               </div>
               <button
@@ -452,7 +437,7 @@ export default function Settings({ spaceId }: SettingsProps) {
                 data-testid="button-settings-plans"
               >
                 <Crown className="w-3.5 h-3.5" />
-                {subscriber ? 'Your VidVerge plan' : 'See VidVerge plans'}
+                Prices & credit packs
               </button>
             </div>
 
@@ -464,21 +449,31 @@ export default function Settings({ spaceId }: SettingsProps) {
                 <span className="flex flex-col gap-0.5">
                   <span className="flex items-center gap-1.5 text-sm font-semibold text-[var(--space-text-primary)]">
                     <Coins className="w-4 h-4 text-[var(--space-text-brand)]" />
-                    {formatCredits(credits.balance)} credits
+                    {formatCreditBalance(credits)}{credits.unlimited ? '' : ' credits'}
                   </span>
                   <span className="text-xs text-[var(--space-text-muted)]">
-                    {formatCredits(credits.balance)} seconds of video · 1 credit = 1 second, every engine
+                    {credits.unlimited
+                      ? 'Owner access · video generation does not deduct credits'
+                      : '$0.15 per credit · each generation is priced at real engine cost + 30% and shown before you start'}
                   </span>
                 </span>
-                <button
-                  onClick={() => openPricing('nav')}
-                  className="vg-primary-action px-3 text-xs"
-                  data-testid="button-settings-topup"
-                >
-                  Top up
-                </button>
+                {!credits.unlimited ? (
+                  <button
+                    onClick={handleBuyCredits}
+                    className="vg-primary-action px-3 text-xs"
+                    data-testid="button-settings-topup"
+                  >
+                    Buy credits
+                  </button>
+                ) : null}
               </div>
             )}
+
+            {credits && !credits.unlimited ? (
+              <div className="mb-4">
+                <CreditHistory limit={15} compact />
+              </div>
+            ) : null}
 
             {!tierLoading && (
               <div
@@ -494,8 +489,8 @@ export default function Settings({ spaceId }: SettingsProps) {
                 <span className="flex flex-col gap-0.5">
                   <span className="text-sm text-[var(--space-text-secondary)]">VidVerge access</span>
                   <span className="text-xs text-[var(--space-text-muted)]">
-                    {credits && credits.rollover && credits.monthlyCredits > 0
-                      ? `${formatCredits(credits.monthlyCredits)} credits a month, rolling over`
+                    {credits?.unlimited
+                      ? 'Unlimited owner access — no credit deductions'
                       : 'Credits never expire — add a credit pack any time'}
                   </span>
                 </span>
@@ -534,17 +529,13 @@ export default function Settings({ spaceId }: SettingsProps) {
                 data-testid="settings-granted-access"
               >
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-5 h-5 text-green-400" />
+                  <CheckCircle2 className="w-5 h-5 text-[var(--vg-success)]" />
                   <span className="text-sm font-medium text-[var(--space-text-primary)]">
                     VidVerge {tierLabel} access is active
                   </span>
                 </div>
                 <p className="mt-2 text-xs text-[var(--space-text-secondary)]">
-                  {`This account is on VidVerge ${tierLabel}${
-                    credits && credits.monthlyCredits > 0
-                      ? ` — ${formatCredits(credits.monthlyCredits)} credits a month, rolling over`
-                      : ''
-                  }. The access was granted directly, so there is no subscription to buy.`}
+                  {`This account has VidVerge ${tierLabel} access, granted directly. Generations still spend credits at real engine cost + 30%.`}
                 </p>
               </div>
             ) : (
@@ -563,9 +554,9 @@ export default function Settings({ spaceId }: SettingsProps) {
                         {subscriptionStatus.trialDaysRemaining} of {subscriptionStatus.trialDays} days remaining
                       </span>
                     </div>
-                    <div className="w-full h-2 bg-black/40 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-[var(--vg-raised)] rounded-full overflow-hidden">
                       <div 
-                        className="h-full rounded-full bg-[var(--vg-info)] transition-all"
+                        className="h-full rounded-full bg-[var(--vg-accent)] transition-all"
                         style={{ 
                           width: `${((subscriptionStatus.trialDays - subscriptionStatus.trialDaysRemaining) / subscriptionStatus.trialDays) * 100}%` 
                         }}
@@ -593,11 +584,11 @@ export default function Settings({ spaceId }: SettingsProps) {
 
                 {/* Active subscription Info */}
                 {subscriptionStatus?.status === 'active' && (
-                  <div className={`p-4 bg-gradient-to-r ${subscriptionStatus.cancelAtPeriodEnd ? 'from-amber-500/10 to-orange-500/5 border-amber-500/30' : 'from-green-500/10 to-emerald-500/5 border-green-500/30'} rounded-xl border`}>
+                  <div className={`p-4 bg-gradient-to-r ${subscriptionStatus.cancelAtPeriodEnd ? 'from-[var(--vg-warning-bg)] to-transparent border-[color-mix(in_srgb,var(--vg-warning)_30%,transparent)]' : 'from-[var(--vg-success-bg)] to-transparent border-[color-mix(in_srgb,var(--vg-success)_30%,transparent)]'} rounded-xl border`}>
                     {subscriptionStatus.cancelAtPeriodEnd ? (
                       <>
                         <div className="flex items-center gap-2">
-                          <CalendarX className="w-5 h-5 text-amber-400" />
+                          <CalendarX className="w-5 h-5 text-[var(--vg-warning)]" />
                           <span className="text-sm font-medium text-[var(--space-text-primary)]">
                             Subscription ending
                           </span>
@@ -614,7 +605,7 @@ export default function Settings({ spaceId }: SettingsProps) {
                     ) : (
                       <>
                         <div className="flex items-center gap-2">
-                          <CheckCircle2 className="w-5 h-5 text-green-400" />
+                          <CheckCircle2 className="w-5 h-5 text-[var(--vg-success)]" />
                           <span className="text-sm font-medium text-[var(--space-text-primary)]">
                             You have full access
                           </span>
@@ -624,10 +615,10 @@ export default function Settings({ spaceId }: SettingsProps) {
                         </p>
                       </>
                     )}
-                    <button
+                    <div className="mt-3 flex flex-wrap gap-2"><button
                       onClick={handleManageSubscription}
                       disabled={managingPortal}
-                      className="mt-3 flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--space-text-primary)] bg-[var(--space-surface-panel-strong)] hover:bg-white/10 border border-[var(--space-border-strong)] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--space-border-strong)] bg-[var(--space-surface-panel-strong)] px-4 text-sm font-medium text-[var(--space-text-primary)] hover:bg-[var(--vg-hover)] disabled:opacity-50"
                     >
                       {managingPortal ? (
                         <>
@@ -641,20 +632,23 @@ export default function Settings({ spaceId }: SettingsProps) {
                         </>
                       )}
                     </button>
+                    <button type="button" onClick={() => void changeSubscription(subscriptionStatus.cancelAtPeriodEnd ? 'resume' : 'cancel')} disabled={!!billingAction} className="min-h-11 rounded-lg border border-[var(--space-border-strong)] px-4 text-sm font-semibold text-[var(--space-text-secondary)] hover:bg-[var(--vg-hover)] disabled:opacity-50">{billingAction === 'cancel' || billingAction === 'resume' ? 'Saving…' : subscriptionStatus.cancelAtPeriodEnd ? 'Resume' : 'Cancel at period end'}</button>
+                    <button type="button" onClick={() => void loadInvoices()} disabled={!!billingAction} className="min-h-11 rounded-lg border border-[var(--space-border-strong)] px-4 text-sm font-semibold text-[var(--space-text-secondary)] hover:bg-[var(--vg-hover)] disabled:opacity-50">{billingAction === 'invoices' ? 'Loading…' : 'Invoices'}</button></div>
+                    {invoices.length ? <div className="mt-3 space-y-2">{invoices.slice(0, 12).map((invoice, index) => <div key={invoice.id || index} className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-[var(--space-border-default)] bg-[var(--space-surface-panel)] px-3 text-xs"><span className="font-mono text-[var(--space-text-secondary)]">{invoice.createdAt ? new Date(invoice.createdAt).toLocaleDateString() : 'Invoice'}</span><span className="text-[var(--space-text-muted)]">{invoice.status || 'paid'}</span>{invoice.receiptUrl ? <a href={invoice.receiptUrl} target="_blank" rel="noreferrer" className="text-[var(--vg-accent)] hover:text-[var(--vg-accent-hover)]">View</a> : null}</div>)}</div> : null}
                   </div>
                 )}
 
                 {/* Trial Expired Warning */}
                 {subscriptionStatus?.status === 'trial_expired' && (
-                  <div className="p-4 bg-gradient-to-r from-amber-500/10 to-orange-500/5 rounded-xl border border-amber-500/30">
+                  <div className="p-4 bg-gradient-to-r from-[var(--vg-warning-bg)] to-transparent rounded-xl border border-[color-mix(in_srgb,var(--vg-warning)_30%,transparent)]">
                     <div className="flex items-center gap-2">
-                      <AlertCircle className="w-5 h-5 text-amber-400" />
+                      <AlertCircle className="w-5 h-5 text-[var(--vg-warning)]" />
                       <span className="text-sm font-medium text-[var(--space-text-primary)]">
                         Your trial has ended
                       </span>
                     </div>
                     <p className="mt-2 text-xs text-[var(--space-text-secondary)]">
-                      Subscribe now to continue accessing all features.
+                      Vidverge is pay per use now — buy a credit pack to keep generating.
                     </p>
                   </div>
                 )}
@@ -662,52 +656,38 @@ export default function Settings({ spaceId }: SettingsProps) {
                 {/* Payment CTA - show if in trial or expired, regardless of payment config */}
                 {showPaymentCTA && (
                   <div className="space-y-3">
-                    {paymentConfig && (
-                      <div className="p-4 bg-[var(--space-surface-muted)] rounded-xl">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-[var(--space-text-primary)]">
-                            Creator plan
-                          </span>
-                          <span className="text-sm font-bold text-[var(--space-text-brand)]">
-                            250 credits monthly
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-[var(--space-text-secondary)]">
-                          <span className="flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
-                            Full access
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
-                            Cancel anytime
-                          </span>
-                        </div>
+                    <div className="p-4 bg-[var(--space-surface-muted)] rounded-xl">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-[var(--space-text-primary)]">
+                          Pay per use
+                        </span>
+                        <span className="text-sm font-bold text-[var(--space-text-brand)]">
+                          $0.15 per credit
+                        </span>
                       </div>
-                    )}
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--space-text-secondary)]">
+                        <span className="flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[var(--vg-accent)]" />
+                          Real engine cost + 30%
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[var(--vg-accent)]" />
+                          No subscription
+                        </span>
+                      </div>
+                    </div>
 
                     <button
-                      onClick={handleSubscribe}
-                      disabled={subscribing}
-                      className="vg-primary-action w-full justify-center gap-2 px-4 disabled:opacity-50 disabled:cursor-not-allowed"
-                      data-testid="button-subscribe"
+                      onClick={handleBuyCredits}
+                      className="vg-primary-action w-full justify-center gap-2 px-4"
+                      data-testid="button-buy-credits"
                     >
-                      {subscribing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Redirecting to checkout...
-                        </>
-                      ) : (
-                        <>
-                          <CreditCard className="w-4 h-4" />
-                          {(subscriptionStatus?.status === 'trial' || subscriptionStatus?.status === 'trialing')
-                            ? 'Add Payment Method' 
-                            : 'Subscribe Now'}
-                        </>
-                      )}
+                      <CreditCard className="w-4 h-4" />
+                      Buy credits
                     </button>
 
                     <p className="text-center text-xs text-[var(--space-text-muted)]">
-                      Secure hosted payment
+                      Secure hosted payment · one-time credit packs
                     </p>
                   </div>
                 )}
@@ -716,7 +696,7 @@ export default function Settings({ spaceId }: SettingsProps) {
                 {(!subscriptionStatus || subscriptionStatus.status === 'not_registered') && (
                   <div className="p-4 bg-[var(--space-surface-muted)] rounded-xl text-center">
                     <p className="text-sm text-[var(--space-text-secondary)]">
-                      No plan on this account yet — see VidVerge plans to start
+                      Pay per use — buy a credit pack whenever you need more credits
                     </p>
                   </div>
                 )}
@@ -724,6 +704,31 @@ export default function Settings({ spaceId }: SettingsProps) {
             )}
           </div>
         )}
+        <section className="mt-6 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--ash)] p-6" aria-labelledby="defaults-heading">
+          <div className="mb-5"><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[var(--space-text-brand)]">Every new production</p><h3 id="defaults-heading" className="mt-2 font-[var(--display)] text-xl font-bold text-[var(--ivory)]">Studio defaults</h3><p className="mt-1 text-sm text-[var(--muted)]">Studios start here, then keep any project-specific choice you make.</p></div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="text-xs font-semibold text-[var(--muted)]">Shape<select defaultValue={JSON.parse(localStorage.getItem('vv-setting:shape') || '"9:16"')} onChange={(event) => savePreference('shape', event.target.value)} className="mt-2 min-h-11 w-full rounded-[var(--r-control)] border border-[var(--line-2)] bg-[var(--ash-2)] px-3 text-sm text-[var(--ivory)]"><option value="9:16">Vertical · 9:16</option><option value="16:9">Widescreen · 16:9</option><option value="1:1">Square · 1:1</option></select></label>
+            <label className="text-xs font-semibold text-[var(--muted)]">Language<select defaultValue={JSON.parse(localStorage.getItem('vv-setting:language') || '"English"')} onChange={(event) => savePreference('language', event.target.value)} className="mt-2 min-h-11 w-full rounded-[var(--r-control)] border border-[var(--line-2)] bg-[var(--ash-2)] px-3 text-sm text-[var(--ivory)]"><option>English</option><option>Hinglish</option><option>Hindi</option></select></label>
+            <label className="text-xs font-semibold text-[var(--muted)]">Verger mode<select defaultValue={JSON.parse(localStorage.getItem('vv-setting:verger-mode') || '"autopilot"')} onChange={(event) => savePreference('verger-mode', event.target.value)} className="mt-2 min-h-11 w-full rounded-[var(--r-control)] border border-[var(--line-2)] bg-[var(--ash-2)] px-3 text-sm text-[var(--ivory)]"><option value="autopilot">Autopilot</option><option value="copilot">Copilot</option></select></label>
+            <label className="text-xs font-semibold text-[var(--muted)] sm:col-span-2 lg:col-span-3">Verger budget per request<input type="number" min="1" defaultValue={JSON.parse(localStorage.getItem('vv-setting:verger-budget') || '60')} onBlur={(event) => savePreference('verger-budget', Math.max(1, Number(event.target.value) || 60))} className="mt-2 min-h-11 w-full rounded-[var(--r-control)] border border-[var(--line-2)] bg-[var(--ash-2)] px-3 text-sm text-[var(--ivory)]" /></label>
+          </div>
+        </section>
+        <section className="mt-6 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--ash)] p-6" aria-labelledby="notifications-heading"><div className="mb-4"><h3 id="notifications-heading" className="font-[var(--display)] text-xl font-bold text-[var(--ivory)]">Notifications</h3><p className="mt-1 text-sm text-[var(--muted)]">Choose which production updates reach you.</p></div><div className="space-y-2">{[['video-ready','Video ready'],['job-needs-you','A job needs you'],['weekly-summary','Weekly summary']].map(([key,label])=><label key={key} className="flex min-h-11 items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--ash-2)] px-3 text-sm font-semibold"><span>{label}</span><input type="checkbox" defaultChecked={JSON.parse(localStorage.getItem(`vv-setting:${key}`) || (key === 'weekly-summary' ? 'false' : 'true'))} onChange={(event) => savePreference(key,event.target.checked)} className="h-4 w-4 accent-[var(--vg-accent)]" /></label>)}</div></section>
+        <section className="mt-6 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--ash)] p-6 shadow-[0_18px_48px_color-mix(in_srgb,var(--void)_24%,transparent)]" aria-labelledby="appearance-heading">
+          <div className="mb-5"><p className="text-[10px] font-bold uppercase tracking-[.2em] text-[var(--space-text-brand)]">Personal preference</p><h3 id="appearance-heading" className="mt-2 font-[var(--display)] text-xl font-bold text-[var(--ivory)]">Appearance</h3><p className="mt-1 text-sm text-[var(--muted)]">Theme and focus audio apply across Home, Verger and every studio.</p></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ThemeToggle />
+            <button type="button" role="switch" aria-checked={ambientMusic.enabled} onClick={ambientMusic.toggle} className="flex min-h-11 items-center justify-between rounded-[var(--r-control)] border border-[var(--line-2)] bg-[var(--ash-2)] px-3 text-sm font-semibold text-[var(--ivory)] hover:border-[var(--line-gold)]">
+              <span>Background music</span><span className="relative h-5 w-9 rounded-full transition" style={{ background: ambientMusic.enabled ? 'var(--vg-accent)' : 'var(--ash-3)' }}><span className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform" style={{ left: 2, transform: ambientMusic.enabled ? 'translateX(16px)' : 'none' }} /></span>
+            </button>
+          </div>
+        </section>
+        <footer className="mt-6 flex items-center justify-center gap-5 border-t border-[var(--space-border-default)] py-5 text-xs text-[var(--space-text-muted)]">
+          <a href="/pricing" className="rounded px-1 py-2 transition-colors hover:text-[var(--space-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vg-focus)]">Pricing</a>
+          <a href="/terms-of-service" className="rounded px-1 py-2 transition-colors hover:text-[var(--space-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vg-focus)]">Terms</a>
+          <a href="/privacy-policy" className="rounded px-1 py-2 transition-colors hover:text-[var(--space-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vg-focus)]">Privacy</a>
+          <a href="/refund" className="rounded px-1 py-2 transition-colors hover:text-[var(--space-text-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--vg-focus)]">Refund Policy</a>
+        </footer>
       </div>
     </div>
   );

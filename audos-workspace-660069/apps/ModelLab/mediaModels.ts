@@ -88,7 +88,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'The default. Photoreal product stills and UI mockups with no model babysitting.',
     sizes: IMAGE_RATIOS_OPENAI,
     costLabel: '≈ $0.04 / image',
-    accent: '#166534',
+    accent: '#D4AF37',
     availability: 'groupA',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(IMAGE_RATIOS_OPENAI), defaultValue: '1:1' },
@@ -104,7 +104,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'When you want the newest OpenAI image model rather than whatever the platform defaults to.',
     sizes: IMAGE_RATIOS_OPENAI,
     costLabel: '≈ $0.04 / image',
-    accent: '#B4720A',
+    accent: '#A8861F',
     availability: 'groupA',
     caveat: 'Only 1:1, 16:9 and 9:16 — a portrait or print ratio is rejected with 400 unsupported_aspect_ratio.',
     options: [
@@ -121,7 +121,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'Edits, subject references and any portrait or print shape OpenAI refuses.',
     sizes: IMAGE_RATIOS_FULL,
     costLabel: '≈ $0.067 / image',
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'groupA',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(IMAGE_RATIOS_FULL), defaultValue: '1:1' },
@@ -136,7 +136,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'Illustrative and stylised work where DALL·E 3 composition is what you are after.',
     sizes: IMAGE_RATIOS_OPENAI,
     costLabel: '≈ $0.04 / image',
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'groupA',
     caveat: 'This provider route has been observed returning a failed job with no image. The lab retries on the managed OpenAI route and tells you when it did.',
     options: [
@@ -152,7 +152,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'Punchy graphic imagery with a different visual bias to the OpenAI and Google models.',
     sizes: ['1:1', '16:9', '9:16'],
     costLabel: '$0.10 / image',
-    accent: '#B45309',
+    accent: '#E6C45A',
     availability: 'higgsfield',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['1:1', '16:9', '9:16']), defaultValue: '16:9' },
@@ -168,7 +168,7 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
     bestFor: 'Film-look stills and consistent characters.',
     sizes: ['1536x1536', '2048x1152', '1152x2048'],
     costLabel: '$0.15 / image ($0.40 for a batch of 4)',
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'higgsfield',
     options: [
       { key: 'style', label: 'Preset', type: 'select', options: [{ value: 'soul-cinema', label: 'Cinema' }, { value: 'soul-standard', label: 'Standard' }, { value: 'soul-character', label: 'Character' }], defaultValue: 'soul-cinema' },
@@ -184,18 +184,18 @@ export const IMAGE_MODEL_CARDS: ImageModelCard[] = [
 // ---------------------------------------------------------------------------
 
 const GROUP_A_ACCENTS: Record<string, string> = {
-  'gemini-omni-flash-preview': '#C8920A',
-  'veo-3.1-generate-preview': '#C8920A',
-  'veo-3.1-fast-generate-preview': '#B4720A',
-  'veo-3.0-generate-001': '#C8920A',
-  'veo-3.0-fast-generate-001': '#B4720A',
-  'veo-2.0-generate-001': '#7A6030',
-  'sora-2': '#166534',
-  'sora-2-pro': '#B4720A',
-  'openrouter/bytedance/seedance-2.0-fast': '#B45309',
-  'openrouter/google/veo-3.1': '#C8920A',
-  'openrouter/google/veo-3.1-fast': '#B4720A',
-  'openrouter/google/veo-3.1-lite': '#7A6030',
+  'gemini-omni-flash-preview': '#D4AF37',
+  'veo-3.1-generate-preview': '#D4AF37',
+  'veo-3.1-fast-generate-preview': '#A8861F',
+  'veo-3.0-generate-001': '#D4AF37',
+  'veo-3.0-fast-generate-001': '#A8861F',
+  'veo-2.0-generate-001': '#9AA0AE',
+  'sora-2': '#D4AF37',
+  'sora-2-pro': '#A8861F',
+  'openrouter/bytedance/seedance-2.0-fast': '#E6C45A',
+  'openrouter/google/veo-3.1': '#D4AF37',
+  'openrouter/google/veo-3.1-fast': '#A8861F',
+  'openrouter/google/veo-3.1-lite': '#9AA0AE',
 };
 
 const GROUP_A_BEST_FOR: Record<string, string> = {
@@ -269,7 +269,7 @@ const GROUP_A_CARDS: VideoModelCard[] = GROUP_A_MODELS.map((m) => ({
   aspectRatios: ['16:9', '9:16', '1:1'],
   costLabel: m.costHint,
   features: groupAFeatures(m),
-  accent: GROUP_A_ACCENTS[m.id] || '#7A6030',
+  accent: GROUP_A_ACCENTS[m.id] || '#9AA0AE',
   availability: 'groupA' as const,
   options: groupAOptions(m),
 }));
@@ -293,7 +293,7 @@ const KLING_CARDS: VideoModelCard[] = [
     aspectRatios: ['16:9', '9:16', '1:1'],
     costLabel: '$0.084 / s (std) / $0.112 / s (pro)',
     features: ['Text-to-video', 'Image-to-video', '2-4 reference images', 'Native audio', 'Camera control', 'Seed'],
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'kling',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['16:9', '9:16', '1:1']), defaultValue: '16:9' },
@@ -313,7 +313,7 @@ const KLING_CARDS: VideoModelCard[] = [
     aspectRatios: ['16:9', '9:16', '1:1'],
     costLabel: '$0.084 / s (std) / $0.112 / s (pro)',
     features: ['Text-to-video', 'Image-to-video', 'Multi-shot prompts', 'Native audio', 'Camera control', 'Seed'],
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'kling',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['16:9', '9:16', '1:1']), defaultValue: '16:9' },
@@ -333,7 +333,7 @@ const KLING_CARDS: VideoModelCard[] = [
     aspectRatios: ['16:9', '9:16', '1:1'],
     costLabel: '$0.042 / s (std) / $0.070 / s (pro)',
     features: ['Text-to-video', 'Image-to-video', 'Native audio', 'Camera control', 'Seed'],
-    accent: '#B4720A',
+    accent: '#A8861F',
     availability: 'kling',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['16:9', '9:16', '1:1']), defaultValue: '16:9' },
@@ -353,7 +353,7 @@ const KLING_CARDS: VideoModelCard[] = [
     aspectRatios: ['16:9', '9:16', '1:1'],
     costLabel: '$0.042 / s (std) / $0.070 / s (pro)',
     features: ['Text-to-video', 'Image-to-video', 'Camera control', 'Seed'],
-    accent: '#7A6030',
+    accent: '#9AA0AE',
     availability: 'kling',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['16:9', '9:16', '1:1']), defaultValue: '16:9' },
@@ -376,7 +376,7 @@ const RUNWAY_CARDS: VideoModelCard[] = [
     aspectRatios: ['1280:720', '720:1280', '1104:832', '832:1104', '960:960', '1584:672'],
     costLabel: '≈ $0.12 / second',
     features: ['Text-to-video', 'Image-to-video', 'Six pixel-pair ratios', 'Idempotent submits'],
-    accent: '#B4720A',
+    accent: '#A8861F',
     availability: 'runway',
     caveat: 'Runway wants pixel-pair ratios such as 1280:720, not the 16:9 shorthand. Text-to-video accepts landscape and portrait only.',
     options: [
@@ -395,7 +395,7 @@ const RUNWAY_CARDS: VideoModelCard[] = [
     aspectRatios: ['1280:720', '720:1280', '1104:832', '832:1104', '960:960', '1584:672'],
     costLabel: '≈ $0.05 / second',
     features: ['Image-to-video only', 'Six pixel-pair ratios', 'Idempotent submits'],
-    accent: '#B4720A',
+    accent: '#A8861F',
     availability: 'runway',
     caveat: 'Needs a public HTTPS image URL — this model has no text-to-video path.',
     options: [
@@ -417,7 +417,7 @@ const HIGGSFIELD_CARDS: VideoModelCard[] = [
     aspectRatios: ['16:9', '9:16'],
     costLabel: '$1.00 / video',
     features: ['Text-to-video', 'Seed'],
-    accent: '#B45309',
+    accent: '#E6C45A',
     availability: 'higgsfield',
     options: [
       { key: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ratioOptions(['16:9', '9:16']), defaultValue: '16:9' },
@@ -436,7 +436,7 @@ const HIGGSFIELD_CARDS: VideoModelCard[] = [
     aspectRatios: ['Inherits the input image'],
     costLabel: '$1.00 / video',
     features: ['Image-to-video only', 'Camera motion presets', 'Seed'],
-    accent: '#C8920A',
+    accent: '#D4AF37',
     availability: 'higgsfield',
     caveat: 'Image-to-video only — supply a public image URL or a base64 frame.',
     options: [

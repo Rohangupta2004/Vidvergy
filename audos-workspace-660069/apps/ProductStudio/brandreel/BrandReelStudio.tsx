@@ -37,7 +37,7 @@ const RENDER_KEY = 'ps-brandreel-render-v1';
 const STEPS = ['Your site', 'Pick a script', 'Preview & render'];
 
 /** The studio's own look before a client brand exists — VidVerge amber. */
-const HOUSE_BRAND = { primaryColor: '#f59e0b', secondaryColor: '#0d1220', fontFamily: 'Inter' };
+const HOUSE_BRAND = { primaryColor: '#D4AF37', secondaryColor: '#0B0D12', fontFamily: 'Inter' };
 
 type Step = 'intake' | 'scripts' | 'mockups';
 

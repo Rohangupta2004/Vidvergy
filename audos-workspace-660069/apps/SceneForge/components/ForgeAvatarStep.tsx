@@ -9,6 +9,8 @@ import { ChevronDown, ChevronUp, Loader2, Play, RotateCcw, Search, X } from 'luc
 import { COLORS, FONT, RADIUS } from '../../../components/theme';
 import { bundleAvatars, loadAvatars, loadMyAvatars } from '../lib/forgeClient';
 import type { ForgeAvatar, ForgeAvatarBundle } from '../lib/forgeTypes';
+import { safeErrorText } from '../lib/safeError';
+import { HELPER_TEXT } from './optionPreviews';
 
 export default function ForgeAvatarStep({
   avatarId,
@@ -87,6 +89,7 @@ export default function ForgeAvatarStep({
 
   return (
     <div style={{ display: 'grid', gap: 16, maxWidth: 1100 }}>
+      <div style={{ color: COLORS.muted, fontSize: 12.5, lineHeight: '18px' }}>{HELPER_TEXT.avatar}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <div style={{ flex: 1, minWidth: 220, position: 'relative' }}>
           <Search size={15} color={COLORS.muted} style={{ left: 12, position: 'absolute', top: 14 }} />
@@ -128,11 +131,11 @@ export default function ForgeAvatarStep({
       ) : null}
       {error ? (
         <div style={{ background: COLORS.surface, border: `1px solid ${COLORS.danger}`, borderRadius: RADIUS.card, display: 'grid', gap: 10, padding: 14 }}>
-          <div style={{ color: COLORS.danger, fontSize: 13.5 }}>The avatar gallery could not load: {error}</div>
+          <div style={{ color: COLORS.danger, fontSize: 13.5 }}>The avatar gallery could not load{(() => { const reason = safeErrorText(error, '', { maxLength: 200, context: 'avatar gallery error' }); return reason ? `: ${reason}` : ' right now.'; })()}</div>
           <button
             type="button"
             onClick={() => setReloadKey((k) => k + 1)}
-            style={{ alignItems: 'center', background: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', border: 'none', borderRadius: RADIUS.sm, color: COLORS.onAccent, cursor: 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 13.5, fontWeight: 700, gap: 7, justifyContent: 'center', justifySelf: 'start', minHeight: 44, padding: '0 18px' }}
+            style={{ alignItems: 'center', background: 'var(--vg-gradient-action)', border: 'none', borderRadius: RADIUS.sm, color: COLORS.onAccent, cursor: 'pointer', display: 'flex', fontFamily: FONT.heading, fontSize: 13.5, fontWeight: 700, gap: 7, justifyContent: 'center', justifySelf: 'start', minHeight: 44, padding: '0 18px' }}
             data-testid="button-avatar-retry"
           >
             <RotateCcw size={15} /> Retry loading avatars
@@ -225,7 +228,7 @@ export default function ForgeAvatarStep({
             <button
               type="button"
               onClick={() => { onPick(preview); setPreview(null); }}
-              style={{ background: 'linear-gradient(115deg, #C79232 0%, #D9A441 58%, #E5B75A 100%)', border: 'none', borderRadius: RADIUS.sm, color: COLORS.onAccent, cursor: 'pointer', fontFamily: FONT.heading, fontSize: 14, fontWeight: 700, marginTop: 12, minHeight: 44, width: '100%' }}
+              style={{ background: 'var(--vg-gradient-action)', border: 'none', borderRadius: RADIUS.sm, color: COLORS.onAccent, cursor: 'pointer', fontFamily: FONT.heading, fontSize: 14, fontWeight: 700, marginTop: 12, minHeight: 44, width: '100%' }}
               data-testid="button-avatar-pick-from-preview"
             >
               Use this avatar

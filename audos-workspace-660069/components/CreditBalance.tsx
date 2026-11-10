@@ -1,20 +1,20 @@
 /**
  * CreditBalance — the customer's credit balance, always in view.
  *
- * Credits are the only meter in VidVerge (1 credit = 1 second of finished
- * video), so the number belongs in the shell chrome next to Plans rather than
- * buried in Settings. Tapping it opens the plans screen, which is also where
- * topping up happens.
+ * Credits are the only meter in VidVerge (pay per use: real engine cost + 30%,
+ * $0.15 per credit), so the number belongs in the shell chrome rather than
+ * buried in Settings. Tapping it opens the pricing screen, which is also where
+ * credit packs are bought and the usage history lives.
  *
  * It renders nothing at all until a balance is actually known: a visitor who
  * has not signed in yet has no wallet, and "0 credits" would be a lie.
  */
 import { Coins } from 'lucide-react';
 import { openPricing } from '../lib/plans';
-import { formatCredits, useCredits } from '../lib/credits';
+import { creditsForSeconds, formatCreditBalance, formatCredits, useCredits } from '../lib/credits';
 
-/** Below this the pill turns amber — not enough left for a short clip. */
-const LOW_BALANCE = 30;
+/** Below this the pill turns amber — not enough left for one 8-second clip on the default engine. */
+const LOW_BALANCE = creditsForSeconds(8);
 
 interface CreditBalanceProps {
   /**
@@ -31,12 +31,12 @@ export default function CreditBalance({ variant = 'chrome', className = '' }: Cr
   if (!credits) return null;
 
   const low = !credits.unlimited && credits.balance < LOW_BALANCE;
-  const balanceLabel = credits.unlimited ? 'Unlimited' : formatCredits(credits.balance);
+  const balanceLabel = formatCreditBalance(credits);
   const title = credits.unlimited
-    ? 'Founder testing access — no customer-level credit limit.'
+    ? 'Unlimited owner access — video generation does not deduct credits.'
     : low
-      ? `${formatCredits(credits.balance)} credits left — about ${formatCredits(credits.balance)} seconds of video. Tap to top up.`
-      : `${formatCredits(credits.balance)} credits — ${formatCredits(credits.balance)} seconds of video on ${credits.planLabel}`;
+      ? `${formatCredits(credits.balance)} credits left — not enough for an 8-second clip. Tap to buy a credit pack.`
+      : `${formatCredits(credits.balance)} credits ($0.15 each) — tap for prices and your usage history`;
 
   if (variant === 'text') {
     return (
@@ -49,18 +49,20 @@ export default function CreditBalance({ variant = 'chrome', className = '' }: Cr
       >
         <Coins
           className="h-4 w-4 shrink-0"
-          style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--space-text-muted)' }}
+          style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--vg-credit)' }}
           aria-hidden="true"
         />
         <span
           className="font-semibold"
-          style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--space-text-primary)' }}
+          style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--vg-credit-ink)' }}
         >
           {balanceLabel}
         </span>
-        <span className="hidden font-medium text-[var(--space-text-muted)] sm:inline">
-          {credits.unlimited ? 'testing' : low ? 'credits left' : 'credits'}
-        </span>
+        {!credits.unlimited ? (
+          <span className="hidden font-medium text-[var(--space-text-muted)] sm:inline">
+            {low ? 'credits left' : 'credits'}
+          </span>
+        ) : null}
       </button>
     );
   }
@@ -73,9 +75,9 @@ export default function CreditBalance({ variant = 'chrome', className = '' }: Cr
         title={title}
         className={`flex min-h-11 min-w-11 items-center justify-center gap-1 rounded-xl px-2 text-[11px] font-bold transition-all ${className}`}
         style={{
-          color: low ? 'var(--space-semantic-danger-500)' : 'var(--space-text-brand)',
-          background: 'var(--space-surface-panel)',
-          border: low ? '1px solid color-mix(in srgb, var(--space-semantic-danger-500) 45%, transparent)' : '1px solid color-mix(in srgb, var(--space-brand-primary-500) 38%, transparent)',
+          color: low ? 'var(--space-semantic-danger-500)' : 'var(--vg-credit-ink)',
+          background: 'var(--vg-credit-soft)',
+          border: low ? '1px solid color-mix(in srgb, var(--space-semantic-danger-500) 45%, transparent)' : '1px solid color-mix(in srgb, var(--vg-credit) 38%, transparent)',
         }}
         data-testid="button-credit-balance-mobile"
         data-credit-balance={credits.balance}
@@ -92,17 +94,21 @@ export default function CreditBalance({ variant = 'chrome', className = '' }: Cr
       title={title}
       className={`flex min-h-11 items-center gap-2 rounded-full px-3.5 text-xs font-semibold transition-all hover:scale-105 ${className}`}
       style={{
-        color: low ? 'var(--space-semantic-danger-500)' : 'var(--space-text-brand)',
-        background: 'linear-gradient(90deg, var(--space-surface-panel) 0%, var(--space-surface-panel-strong) 100%)',
-        border: low ? '1px solid color-mix(in srgb, var(--space-semantic-danger-500) 45%, transparent)' : '1px solid color-mix(in srgb, var(--space-brand-primary-500) 38%, transparent)',
-        boxShadow: '0 12px 36px rgba(0,0,0,0.38)',
+        color: low ? 'var(--space-semantic-danger-500)' : 'var(--vg-credit-ink)',
+        background: 'var(--vg-credit-soft)',
+        border: low ? '1px solid color-mix(in srgb, var(--space-semantic-danger-500) 45%, transparent)' : '1px solid color-mix(in srgb, var(--vg-credit) 38%, transparent)',
+        boxShadow: '0 12px 36px rgba(0,0,0,0.16)',
       }}
       data-testid="button-credit-balance"
       data-credit-balance={credits.balance}
     >
       <Coins className="w-4 h-4" />
       {balanceLabel}
-      <span style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--space-text-brand)', fontWeight: 500 }}>{credits.unlimited ? 'testing' : low ? 'left — top up' : 'credits'}</span>
+      {!credits.unlimited ? (
+        <span style={{ color: low ? 'var(--space-semantic-danger-500)' : 'var(--vg-credit-ink)', fontWeight: 500 }}>
+          {low ? 'left — top up' : 'credits'}
+        </span>
+      ) : null}
     </button>
   );
 }

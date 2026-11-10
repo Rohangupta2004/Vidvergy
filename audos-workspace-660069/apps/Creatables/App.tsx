@@ -265,23 +265,23 @@ async function watchJobRow(jobId: number, opts: { onTick?: (row: JobRow) => void
 // ---------------------------------------------------------------------------
 
 const T = {
-  ink: 'var(--space-text-primary, #1A1000)',
-  soft: 'var(--space-text-secondary, #3D2800)',
-  muted: 'var(--space-text-muted, #7A6030)',
-  card: 'var(--space-surface-card, #FFFFFF)',
-  panel: 'var(--space-surface-panel, #FFFAEB)',
-  raised: 'var(--space-surface-panel-strong, #FFF3D6)',
-  line: 'var(--space-border-default, rgba(180,120,0,0.14))',
-  accent: 'var(--space-brand-primary-500, #C8920A)',
-  accentDeep: 'var(--space-brand-primary-600, #B4720A)',
-  good: 'var(--space-semantic-success-600, #166534)',
-  bad: 'var(--space-semantic-danger, #991B1B)',
-  warn: '#B45309',
+  ink: 'var(--vg-text)',
+  soft: 'var(--vg-secondary)',
+  muted: 'var(--vg-muted)',
+  card: 'var(--vg-surface)',
+  panel: 'var(--vg-raised)',
+  raised: 'var(--vg-raised)',
+  line: 'var(--vg-border)',
+  accent: 'var(--vg-accent)',
+  accentDeep: 'var(--vg-btn)',
+  good: 'var(--vg-success)',
+  bad: 'var(--vg-danger)',
+  warn: 'var(--vg-warning)',
 } as const;
 
 const label: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: T.muted, display: 'block', marginBottom: 6 };
 const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', background: T.panel, border: `1px solid ${T.line}`, borderRadius: 9, color: T.ink, fontSize: 13, padding: '9px 11px', outline: 'none' };
-const chip = (active: boolean): React.CSSProperties => ({ background: active ? T.accentDeep : T.raised, color: active ? '#fff' : T.soft, border: `1px solid ${active ? 'transparent' : T.line}`, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' });
+const chip = (active: boolean): React.CSSProperties => ({ background: active ? 'var(--vg-gold-tint)' : 'var(--vg-surface)', color: active ? 'var(--vg-text)' : T.soft, border: `1px solid ${active ? T.accent : T.line}`, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 700, cursor: 'pointer' });
 
 /** The AI Write action for one reference image — fills the brief from the
  * picture. Renders nothing until an image exists to read. */
@@ -309,7 +309,7 @@ function AiWriteButton({ imageUrl, onWrite, target = 'prompt' }: {
             .finally(() => setBusy(false));
         }}
       >
-        {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} color={T.warn} />}
+        {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} color={T.accent} />}
         {busy ? 'Reading the image…' : 'AI Write'}
       </LightBeamButton>
       <div style={{ fontSize: 10.5, color: T.muted, marginTop: 5, lineHeight: 1.4 }}>
@@ -337,7 +337,7 @@ function UploadZone({ title, hint, urls, max, onChange, extra, aiWrite }: {
         {urls.map((u, i) => (
           <div key={u} style={{ position: 'relative' }}>
             <img src={u} alt="" style={{ width: 86, height: 58, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.line}` }} />
-            <button type="button" onClick={() => onChange(urls.filter((x) => x !== u))} style={{ position: 'absolute', top: -6, right: -6, width: 17, height: 17, borderRadius: 999, border: 'none', background: '#991B1B', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}><X size={10} /></button>
+            <button type="button" onClick={() => onChange(urls.filter((x) => x !== u))} style={{ position: 'absolute', top: -6, right: -6, width: 17, height: 17, borderRadius: 999, border: 'none', background: 'var(--vg-danger)', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}><X size={10} /></button>
             {extra ? extra(u, i) : null}
           </div>
         ))}
@@ -716,12 +716,12 @@ export default function App() {
 
   // ------------------------------------------------------------------ UI ----
   return (
-    <div style={{ height: '100%', overflowY: 'auto', background: 'var(--space-surface-bg, #FFFDF4)', color: T.ink, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ height: '100%', overflowY: 'auto', background: 'var(--vg-bg)', color: T.ink, fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div style={{ maxWidth: 1060, margin: '0 auto', padding: '26px 22px 80px' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-          <span style={{ display: 'flex', width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 11, background: T.accentDeep }}><Clapperboard size={19} color="#fff" /></span>
+          <span style={{ display: 'flex', width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 11, background: T.accentDeep }}><Clapperboard size={19} color="var(--vg-on-btn)" /></span>
           <div>
             <div style={{ fontSize: 23, fontWeight: 800, letterSpacing: -0.4 }}>Creatables</div>
             <div style={{ fontSize: 12.5, color: T.muted }}>All video engines. One place.</div>
@@ -755,12 +755,12 @@ export default function App() {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 7 }}>
                 <span style={{ fontSize: 11, color: promptOk ? T.muted : T.warn }}>{prompt.trim().length} / {PROMPT_BUDGET} characters{promptOk ? '' : ' — at least 10 needed'}</span>
                 <button type="button" onClick={runRecommend} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: `1px solid ${T.line}`, borderRadius: 9, color: T.ink, fontSize: 12, fontWeight: 700, padding: '6px 12px', cursor: 'pointer' }}>
-                  <Sparkles size={13} color={T.warn} /> Recommend for me
+                  <Sparkles size={13} color={T.accent} /> Recommend for me
                 </button>
               </div>
               {recommended ? (
-                <div style={{ marginTop: 8, fontSize: 12, color: T.soft, background: 'rgba(200,146,10,0.08)', border: '1px solid rgba(180,120,0,0.25)', borderRadius: 9, padding: '8px 12px' }}>
-                  <b style={{ color: T.warn }}>Recommended:</b> {recommended.reason}{recommended.caveat ? <span style={{ color: T.muted }}> · {recommended.caveat}</span> : null}
+                <div style={{ marginTop: 8, fontSize: 12, color: T.soft, background: 'var(--vg-gold-tint)', border: '1px solid var(--line-gold)', borderRadius: 9, padding: '8px 12px' }}>
+                  <b style={{ color: T.accent }}>Recommended:</b> {recommended.reason}{recommended.caveat ? <span style={{ color: T.muted }}> · {recommended.caveat}</span> : null}
                 </div>
               ) : null}
             </div>
@@ -843,7 +843,7 @@ export default function App() {
                           if (!r) return null;
                           return (
                             <button type="button" onClick={() => setRefs(refs.map((x) => x.url === u ? { ...x, type: x.type === 'asset' ? 'style' : 'asset' } : x))}
-                              style={{ position: 'absolute', left: 3, bottom: 3, border: 'none', borderRadius: 5, padding: '1px 6px', fontSize: 9, fontWeight: 800, cursor: 'pointer', background: r.type === 'asset' ? T.accentDeep : '#B45309', color: '#fff' }}>
+                              style={{ position: 'absolute', left: 3, bottom: 3, border: 'none', borderRadius: 5, padding: '1px 6px', fontSize: 9, fontWeight: 800, cursor: 'pointer', background: r.type === 'asset' ? T.accentDeep : 'var(--vg-raised)', color: r.type === 'asset' ? 'var(--vg-on-btn)' : T.accent }}>
                               {r.type}
                             </button>
                           );
@@ -861,7 +861,7 @@ export default function App() {
                   </div>
 
                   {combineViolation && (videoExtensionOn || seedUrl.length || refs.length || lastFrameUrl.length) ? (
-                    <div style={{ fontSize: 12, color: T.warn, background: 'rgba(200,146,10,0.08)', border: '1px solid rgba(180,120,0,0.25)', borderRadius: 9, padding: '8px 12px' }}>{combineViolation}</div>
+                    <div style={{ fontSize: 12, color: T.warn, background: 'var(--vg-warning-bg)', border: '1px solid color-mix(in srgb, var(--vg-warning) 30%, transparent)', borderRadius: 9, padding: '8px 12px' }}>{combineViolation}</div>
                   ) : null}
 
                   <div style={{ fontSize: 12, color: T.muted }}>Estimated cost: <b style={{ color: T.soft }}>{gA.costHint}{videoExtensionOn ? ' × 2 clips' : ''}</b> — the exact charge is reported when the render starts.</div>
@@ -869,7 +869,7 @@ export default function App() {
               ) : rw ? (
                 <div style={{ display: 'grid', gap: 16 }}>
                   {runwayGate === 'checking' ? <div style={{ fontSize: 12.5, color: T.soft, background: T.panel, border: `1px solid ${T.line}`, borderRadius: 9, padding: '8px 12px' }}>Checking whether Runway is enabled…</div> : null}
-                  {runwayGate === 'unavailable' ? <div style={{ fontSize: 12.5, color: T.warn, background: 'rgba(200,146,10,0.08)', border: '1px solid rgba(180,120,0,0.25)', borderRadius: 9, padding: '8px 12px' }}>{RUNWAY_DISABLED_MESSAGE} Pick Omni Flash or a Veo engine to generate now.</div> : null}
+                  {runwayGate === 'unavailable' ? <div style={{ fontSize: 12.5, color: T.warn, background: 'var(--vg-warning-bg)', border: '1px solid color-mix(in srgb, var(--vg-warning) 30%, transparent)', borderRadius: 9, padding: '8px 12px' }}>{RUNWAY_DISABLED_MESSAGE} Pick Omni Flash or a Veo engine to generate now.</div> : null}
                   <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div>
                       <span style={label}>Ratio (Runway pixel-pair)</span>
@@ -930,7 +930,7 @@ export default function App() {
             ) : null}
 
             {fallbackNote ? (
-              <div style={{ marginTop: 14, fontSize: 12.5, lineHeight: 1.55, color: T.warn, background: 'rgba(200,146,10,0.08)', border: '1px solid rgba(180,120,0,0.25)', borderRadius: 10, padding: '10px 14px' }}>
+              <div style={{ marginTop: 14, fontSize: 12.5, lineHeight: 1.55, color: T.warn, background: 'var(--vg-warning-bg)', border: '1px solid color-mix(in srgb, var(--vg-warning) 30%, transparent)', borderRadius: 10, padding: '10px 14px' }}>
                 {fallbackNote}
               </div>
             ) : null}
@@ -955,7 +955,7 @@ export default function App() {
               <div style={{ marginTop: 18, background: T.card, border: `1px solid ${T.line}`, borderRadius: 13, padding: 15 }}>
                 <video src={outputUrl} controls autoPlay style={{ width: '100%', maxHeight: 460, borderRadius: 10, background: '#000' }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 10, flexWrap: 'wrap' }}>
-                  <a href={outputUrl} target="_blank" rel="noreferrer" download style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: T.accentDeep, color: '#fff', borderRadius: 9, padding: '9px 16px', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }}>
+                  <a href={outputUrl} target="_blank" rel="noreferrer" download style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: T.accentDeep, color: 'var(--vg-on-btn)', borderRadius: 9, padding: '9px 16px', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }}>
                     <Download size={14} /> Download
                   </a>
                   <span style={{ fontSize: 12, color: T.muted }}>
@@ -978,7 +978,7 @@ export default function App() {
                       <div style={{ padding: '7px 9px' }}>
                         <div style={{ fontSize: 10.5, fontWeight: 700, color: T.soft }}>{h.engineName}</div>
                         <div style={{ fontSize: 10, color: T.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={h.prompt}>{h.prompt}</div>
-                        <a href={h.url} target="_blank" rel="noreferrer" download style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--space-text-brand, #B4720A)', textDecoration: 'none' }}>Download</a>
+                        <a href={h.url} target="_blank" rel="noreferrer" download style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--vg-accent)', textDecoration: 'none' }}>Download</a>
                       </div>
                     </div>
                   ))}
@@ -1036,7 +1036,7 @@ function EngineGrid({ selected, recommendedId, onPick, runwayGate }: {
           <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>{name}</span>
           {opts.comingSoon ? <EngineBadge tier='Coming Soon' /> : <EngineBadge tier={tier} />}
           {opts.gated ? <EngineBadge tier='Gated' /> : null}
-          {isRec ? <span style={{ marginLeft: 'auto', fontSize: 9.5, fontWeight: 800, color: T.warn }}>✨ PICK</span> : null}
+          {isRec ? <span style={{ marginLeft: 'auto', fontSize: 9.5, fontWeight: 800, color: T.accent }}>✨ PICK</span> : null}
         </div>
         <div style={{ fontSize: 10.5, color: T.muted, lineHeight: 1.45, marginTop: 4 }}>{blurb}</div>
       </LightBeamCard>
@@ -1164,15 +1164,15 @@ function ImageLab() {
         <UploadZone title="Edit image (optional — image-to-image)" hint='"Keep this thing, change that thing" edits: the model transforms this image per your prompt.' urls={editUrl} max={1} onChange={setEditUrl} aiWrite={{ onWrite: setPrompt, target: 'description' }} />
       ) : null}
       <div>
-        <button type="button" disabled={busy || prompt.trim().length < 3} onClick={() => void run()} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: busy || prompt.trim().length < 3 ? T.raised : T.accentDeep, color: busy || prompt.trim().length < 3 ? T.muted : '#fff', border: 'none', borderRadius: 10, padding: '11px 22px', fontSize: 13, fontWeight: 800, cursor: busy ? 'default' : 'pointer' }}>
+        <button type="button" disabled={busy || prompt.trim().length < 3} onClick={() => void run()} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: busy || prompt.trim().length < 3 ? T.raised : T.accentDeep, color: busy || prompt.trim().length < 3 ? T.muted : 'var(--vg-on-btn)', border: 'none', borderRadius: 10, padding: '11px 22px', fontSize: 13, fontWeight: 800, cursor: busy ? 'default' : 'pointer' }}>
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />} Generate image
         </button>
       </div>
-      {err ? <div style={{ fontSize: 12.5, color: T.bad, background: 'rgba(153,27,27,0.07)', border: '1px solid rgba(153,27,27,0.22)', borderRadius: 10, padding: '9px 13px' }}>{err}</div> : null}
+      {err ? <div style={{ fontSize: 12.5, color: T.bad, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 35%, transparent)', borderRadius: 10, padding: '9px 13px' }}>{err}</div> : null}
       {out ? (
         <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 13, padding: 14, maxWidth: 620 }}>
           <img src={out} alt="generated" style={{ width: '100%', borderRadius: 9, display: 'block' }} />
-          <a href={out} target="_blank" rel="noreferrer" download style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginTop: 10, background: T.accentDeep, color: '#fff', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }}>
+          <a href={out} target="_blank" rel="noreferrer" download style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginTop: 10, background: T.accentDeep, color: 'var(--vg-on-btn)', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 800, textDecoration: 'none' }}>
             <Download size={13} /> Download
           </a>
         </div>

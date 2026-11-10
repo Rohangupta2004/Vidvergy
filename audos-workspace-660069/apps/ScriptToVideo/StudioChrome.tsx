@@ -47,7 +47,7 @@ function sceneStatus(scene: FilmScene): 'done' | 'failed' | 'active' | 'waiting'
   return 'waiting';
 }
 
-export function ProductionOverview({ film, scenes }: { film: FilmRecord; scenes: FilmScene[] }) {
+export function ProductionOverview({ film, scenes, headline: liveHeadline }: { film: FilmRecord; scenes: FilmScene[]; headline?: string }) {
   const ordered = [...scenes].sort((a, b) => a.idx - b.idx);
   const done = ordered.filter((scene) => sceneStatus(scene) === 'done').length;
   const failed = ordered.filter((scene) => sceneStatus(scene) === 'failed').length;
@@ -56,15 +56,24 @@ export function ProductionOverview({ film, scenes }: { film: FilmRecord; scenes:
   const remaining = Math.max(0, ordered.length - done);
   const durable = film.plan?.background?.enabled === true;
   const paused = film.plan?.orchestration?.paused === true;
-  const headline = failed
+  const headline = liveHeadline || (failed
     ? `${failed} scene${failed === 1 ? '' : 's'} need attention`
     : paused ? 'Production is paused safely'
       : active ? `Rendering scene ${active.idx + 1} of ${ordered.length}`
-        : done === ordered.length && ordered.length ? 'Every scene is ready' : 'Production plan is ready';
+        : done === ordered.length && ordered.length ? 'Every scene is ready' : 'Production plan is ready');
   const estimate = remaining === 0
     ? 'Final assembly is next'
     : active ? `${remaining} scene${remaining === 1 ? '' : 's'} remaining · usually several minutes each`
       : 'Timing appears once the first provider job starts';
+  // Saved work never depends on this tab: the plan, prompts, cast sheets and
+  // every finished clip are written to the project as they land. The tab only
+  // matters while a signed-in model is mid-render, so that is the only state
+  // allowed to ask for it.
+  const durability = durable
+    ? 'You can close this tab — production continues and resumes where it left off'
+    : active
+      ? 'This model renders from this tab — keep it open until the clip lands; everything already finished is saved'
+      : 'Your plan, prompts and finished clips are saved — reopen this film any time to carry on';
 
   return (
     <section className="s2v-production-overview" aria-labelledby="s2v-production-title">
@@ -75,7 +84,7 @@ export function ProductionOverview({ film, scenes }: { film: FilmRecord; scenes:
         <div className="s2v-production-meta" role="list" aria-label="Production details">
           <span role="listitem"><Clock3 size={13} /> {estimate}</span>
           <span role="listitem"><Save size={13} /> Progress saved after every checkpoint</span>
-          <span role="listitem"><ShieldCheck size={13} /> {durable ? 'You can leave and come back — production continues' : 'Keep this tab open for the active signed-in render; saved work is safe'}</span>
+          <span role="listitem"><ShieldCheck size={13} /> {durability}</span>
         </div>
       </div>
       <div className="s2v-production-score" aria-label={`${percent}% of scenes complete`}>
@@ -111,7 +120,7 @@ export function StudioToast({ message, tone = 'success', onDismiss }: { message:
 
 export const STUDIO_CHROME_CSS = `
 .s2v-app{--s2v-panel:color-mix(in srgb,var(--vg-surface) 92%,transparent);--s2v-hairline:color-mix(in srgb,var(--vg-control-border) 42%,transparent);color:var(--vg-text)}
-.s2v-app::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(900px 420px at 76% -12%,color-mix(in srgb,var(--vg-accent) 11%,transparent),transparent 68%),radial-gradient(650px 360px at -8% 70%,color-mix(in srgb,var(--vg-bronze) 8%,transparent),transparent 72%);z-index:0}
+.s2v-app::before{content:"";position:absolute;inset:0;pointer-events:none;background:var(--vg-bg);z-index:0}
 .s2v-app>*{position:relative;z-index:1}
 .s2v-topbar{background:color-mix(in srgb,var(--vg-bg) 86%,transparent);backdrop-filter:blur(18px);border-bottom:1px solid var(--s2v-hairline)!important}
 .s2v-stepper-wrap{flex:0 0 auto;padding:10px 20px 11px;background:color-mix(in srgb,var(--vg-bg) 78%,transparent);border-bottom:1px solid var(--vg-border)}

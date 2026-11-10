@@ -7,6 +7,7 @@
  * stays. On click the same beam runs at 0.2s and the action fires. The button
  * itself never flashes — only the light moves.
  */
+import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { colors, beamVariants, tint } from '../tokens/colors';
 import type { BeamVariant } from '../tokens/colors';
@@ -43,16 +44,18 @@ export default function LightBeamButton({
   const rive = useRiveSlot(riveSrc);
   const hover = useBeamAnimation({ durationMs: 500 });
   const click = useBeamAnimation({ durationMs: 200 });
+  const [hovered, setHovered] = useState(false);
+  const [pressed, setPressed] = useState(false);
 
   const v = kind === 'danger' ? beamVariants.error : beamVariants[variant];
   const inert = disabled || busy;
   const showBeam = !inert && !rive.active && (click.running || hover.running);
 
   const surface: CSSProperties = kind === 'primary'
-    ? { background: tint(colors.beamPrimary, 12), border: '1px solid ' + colors.borderActive, color: colors.beamPrimary }
+    ? { background: !inert && pressed ? 'var(--vg-btn-pressed)' : !inert && hovered ? 'var(--vg-btn-hover)' : 'var(--vg-btn)', border: '1px solid transparent', color: 'var(--vg-on-btn)' }
     : kind === 'danger'
       ? { background: tint(colors.error, 10), border: '1px solid ' + tint(colors.error, 40), color: colors.error }
-      : { background: colors.bgGlass, border: '1px solid ' + colors.borderSubtle, color: colors.textPrimary };
+      : { background: colors.bgGlass, border: '1px solid ' + colors.borderSubtle, color: !inert && hovered ? colors.beamPrimary : colors.textPrimary };
 
   return (
     <button
@@ -61,7 +64,10 @@ export default function LightBeamButton({
       aria-label={ariaLabel}
       data-testid={testId}
       disabled={inert}
-      onMouseEnter={() => { if (!inert) hover.trigger(); }}
+      onMouseEnter={() => { setHovered(true); if (!inert) hover.trigger(); }}
+      onMouseLeave={() => { setHovered(false); setPressed(false); }}
+      onMouseDown={() => setPressed(true)}
+      onMouseUp={() => setPressed(false)}
       onFocus={() => { if (!inert) hover.trigger(); }}
       onClick={() => { if (inert) return; click.restart(); onClick?.(); }}
       className={className}
@@ -77,7 +83,7 @@ export default function LightBeamButton({
         letterSpacing: typography.tight,
         cursor: inert ? 'not-allowed' : 'pointer',
         opacity: inert ? 0.45 : 1,
-        transition: 'border-color 0.18s ease, background 0.18s ease, opacity 0.18s ease',
+        transition: 'border-color 0.18s ease, background 0.18s ease, color 0.18s ease, opacity 0.18s ease',
         ...surface,
         ...style,
       }}

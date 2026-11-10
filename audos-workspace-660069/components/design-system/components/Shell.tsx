@@ -105,7 +105,7 @@ export default function Shell({
                       style={{
                         display: 'inline-flex', alignItems: 'center', gap: 7,
                         padding: '7px 14px', borderRadius: radii.md,
-                        border: '1px solid ' + (on ? colors.borderActive : 'transparent'),
+                        border: '1px solid ' + (on ? colors.borderBeam : 'transparent'),
                         background: on ? tint(colors.beamPrimary, 12) : 'transparent',
                         color: on ? colors.beamPrimary : colors.textSecondary,
                         fontFamily: typography.fontSans, fontSize: typography.sm, fontWeight: typography.medium,

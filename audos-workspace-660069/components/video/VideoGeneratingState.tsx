@@ -154,7 +154,7 @@ const VideoGeneratingState: React.FC<VideoGeneratingStateProps> = function Video
           marginTop: compact ? 12 : 16,
           height: 4,
           borderRadius: 2,
-          background: alpha(COLORS.primary, 0.14),
+          background: COLORS.raised,
           overflow: 'hidden',
         }}
       >
@@ -164,7 +164,7 @@ const VideoGeneratingState: React.FC<VideoGeneratingStateProps> = function Video
               height: '100%',
               width: pct + '%',
               borderRadius: 2,
-              background: 'linear-gradient(90deg, ' + COLORS.primary + ' 0%, ' + COLORS.accentGlow + ' 100%)',
+              background: COLORS.accent,
               transition: 'width 400ms ease-out',
             }}
           />
@@ -175,7 +175,7 @@ const VideoGeneratingState: React.FC<VideoGeneratingStateProps> = function Video
               inset: 0,
               width: '33%',
               borderRadius: 2,
-              background: 'linear-gradient(90deg, ' + COLORS.primary + ' 0%, ' + COLORS.accentGlow + ' 100%)',
+              background: COLORS.accent,
               animation: 'vvIndeterminate 1.4s ease-in-out infinite',
             }}
           />

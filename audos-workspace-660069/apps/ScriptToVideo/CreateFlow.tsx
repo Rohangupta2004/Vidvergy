@@ -33,7 +33,9 @@ import {
 import type { AudioPolicy, CodeMotionEngine, ControlMode, ExecutionMode, VideoStyleId } from './v2Contracts';
 import ModelGrid, { ModelGridOption } from './ModelGrid';
 import { checkPickerAvailability, pickerDisplayModels, pickerModelById, pickerModels, type PickerAvailabilityMap } from './modelPicker';
-import { recommendationExplanation, scoreVideoModels } from './modelRecommendation';
+import { recommendDefaultModel, recommendationExplanation, scoreVideoModels, scriptHasDialogue } from './modelRecommendation';
+import QuickStartPanel, { type StartTab } from './QuickStartPanel';
+import { markQuickStartPending, readQuickStartPending } from './AutoRunChecklist';
 import { planBigScenes } from './pipeline/bigScenePlanner';
 import {
   rosterInputLabel, rosterModel,
@@ -48,7 +50,10 @@ import {
 import type { ScriptToVideoHandoff } from '../../lib/vidvergeHandoff';
 import { friendlyErrorMessage } from './friendlyErrors';
 import { formatCredits, useCredits } from '../../lib/credits';
-import { brandToContextText, fetchBrandFromWebsite, matchSavedBrand, type BrandRecord, useBrandKit } from '../../components/brandKitStore';
+import { brandToContextText, fetchBrandFromWebsite, matchSavedBrand, normalizeBrandUrl, type BrandRecord, useBrandKit } from '../../components/brandKitStore';
+import SavedBrandKitConfirm from '../../components/brand/SavedBrandKitConfirm';
+import ReferenceImport from '../../components/ReferenceImport';
+import { FILM_TYPE_NOTES, LANGUAGE_NOTES, LOOK_NOTES, OptionThumb, PICKER_HELP, SHAPE_NOTES, TONE_NOTES, previewFor } from './optionPreviews';
 
 /**
  * SCENE LENGTH IS A CONSTRAINT, NOT A PREFERENCE.
@@ -67,6 +72,43 @@ import { brandToContextText, fetchBrandFromWebsite, matchSavedBrand, type BrandR
  * means it, and capping them would be the tool arguing with its own input.
  */
 const MAX_SCRIPT_SCENES = 60;
+/** Film length presets on the brief step; Custom accepts any whole second in range. */
+const DURATION_PRESETS = [15, 30, 45, 60, 90, 120, 180] as const;
+const MIN_TARGET_SECONDS = 4;
+const MAX_TARGET_SECONDS = 600;
+const DEFAULT_TARGET_SECONDS = 30;
+const DURATION_PREF_KEY = 's2v:lastDuration';
+const PACING_PREF_KEY = 's2v:lastPacing';
+type Pacing = 'auto' | 'balanced' | 'fast';
+const PACING_OPTIONS: ReadonlyArray<readonly [Pacing, string, string]> = [
+  ['auto', 'Long takes', 'The longest clips the model allows'],
+  ['balanced', 'Balanced', 'Clips of up to about 10 seconds'],
+  ['fast', 'Fast cuts', 'Clips of about 5 seconds'],
+];
+function readRememberedDuration(): number {
+  try {
+    const seconds = Math.round(Number(localStorage.getItem(DURATION_PREF_KEY)));
+    return seconds >= MIN_TARGET_SECONDS && seconds <= MAX_TARGET_SECONDS ? seconds : 0;
+  } catch { return 0; }
+}
+function rememberDuration(seconds: number) {
+  try { localStorage.setItem(DURATION_PREF_KEY, String(seconds)); } catch { /* preference only */ }
+}
+function readRememberedPacing(): Pacing {
+  try {
+    const stored = String(localStorage.getItem(PACING_PREF_KEY) || '');
+    return stored === 'balanced' || stored === 'fast' ? stored : 'auto';
+  } catch { return 'auto'; }
+}
+function durationPresetLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return seconds % 60 === 0 ? `${seconds / 60} min` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+/** Preferred clip length for a pacing choice, never below the model floor. */
+function pacingClipSeconds(pacing: Pacing, model: VideoModelConfig): number | undefined {
+  if (pacing === 'auto') return undefined;
+  return Math.max(Math.max(1, Number(model.minDuration) || 1), pacing === 'fast' ? 5 : 10);
+}
 const scriptDraftKey = () => `s2v:draft:v4:${typeof window === 'undefined' ? 'server' : String((window as any).__spaceSessionId || (window as any).__SESSION_ID__ || 'browser')}`;
 function readScriptDraft(): any { if (typeof window === 'undefined') return null; try { return JSON.parse(localStorage.getItem(scriptDraftKey()) || 'null'); } catch { return null; } }
 
@@ -74,11 +116,11 @@ function readScriptDraft(): any { if (typeof window === 'undefined') return null
  * accepts every integer 4–30s; Kling Omni 3.0 accepts only 5s or 10s. Always
  * fill the provider maximum first, then rebalance only when a final remainder
  * would be below the provider floor. */
-function legalFilmBlocks(totalSeconds: number, model: VideoModelConfig): number[] {
+function legalFilmBlocks(totalSeconds: number, model: VideoModelConfig, preferredSceneLengthSec?: number): number[] {
   try {
-    return planBigScenes({ modelId: model.apiModel, totalDurationSec: totalSeconds, script: 'Production timing placeholder.' }).map((scene) => scene.duration);
+    return planBigScenes({ modelId: model.apiModel, totalDurationSec: totalSeconds, script: 'Production timing placeholder.', preferredSceneLengthSec }).map((scene) => scene.duration);
   } catch {
-    return [];
+    return preferredSceneLengthSec ? legalFilmBlocks(totalSeconds, model) : [];
   }
 }
 
@@ -125,7 +167,7 @@ function OrientationToggle({ value, onChange, disabled }: { value: Aspect; onCha
             style={{
               position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
               background: 'transparent', border: 'none', borderRadius: 999, padding: '10px 14px',
-              color: active ? 'var(--space-text-on-primary)' : T.muted, fontSize: 13.5, fontWeight: 700,
+              color: active ? 'var(--vg-on-btn)' : T.muted, fontSize: 13.5, fontWeight: 700,
               cursor: disabled ? 'default' : 'pointer', transition: 'color .22s ease', opacity: disabled ? 0.6 : 1,
             }}
           >
@@ -133,7 +175,7 @@ function OrientationToggle({ value, onChange, disabled }: { value: Aspect; onCha
               aria-hidden
               style={{
                 width: option.id === '16:9' ? 18 : option.id === '9:16' ? 11 : 15, height: option.id === '16:9' ? 11 : option.id === '9:16' ? 18 : 15,
-                borderRadius: 3, border: `2px solid ${active ? 'var(--space-text-primary)' : T.muted}`, transition: 'border-color .22s ease',
+                borderRadius: 3, border: `2px solid ${active ? 'var(--vg-on-btn)' : T.muted}`, transition: 'border-color .22s ease',
               }}
             />
             {option.label} <span style={{ fontWeight: 600, opacity: .75 }}>{option.hint}</span>
@@ -197,7 +239,7 @@ function ModeToggle({ value, onChange, disabled }: { value: CreateMode; onChange
             onClick={() => onChange(option.id)}
             style={{
               background: active ? T.live : T.raised,
-              color: active ? 'var(--space-text-on-primary)' : T.muted,
+              color: active ? 'var(--vg-on-btn)' : T.muted,
               border: `1px solid ${active ? T.live : T.dim}`,
               borderRadius: 999, padding: '9px 18px', fontSize: 13, fontWeight: 700,
               cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.6 : 1,
@@ -399,7 +441,7 @@ function StoredReferencesField({ disabled, onInsert }: { disabled: boolean; onIn
                 role="radio"
                 aria-checked={kind === option}
                 onClick={() => setKind(option)}
-                style={{ background: kind === option ? T.live : T.raised, color: kind === option ? 'var(--space-text-on-primary)' : T.muted, border: `1px solid ${kind === option ? T.live : T.dim}`, borderRadius: 999, padding: '6px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                style={{ background: kind === option ? T.live : T.raised, color: kind === option ? 'var(--vg-on-btn)' : T.muted, border: `1px solid ${kind === option ? T.live : T.dim}`, borderRadius: 999, padding: '6px 13px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
               >
                 {option[0].toUpperCase()}{option.slice(1)}
               </button>
@@ -416,7 +458,7 @@ function StoredReferencesField({ disabled, onInsert }: { disabled: boolean; onIn
               className="s2v-lift"
               disabled={busy || disabled || !slug}
               onClick={() => fileRef.current?.click()}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, background: busy || !slug ? T.raised : T.live, color: busy || !slug ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: busy || !slug ? 'default' : 'pointer' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, background: busy || !slug ? T.raised : T.live, color: busy || !slug ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 15px', fontSize: 12.5, fontWeight: 700, cursor: busy || !slug ? 'default' : 'pointer' }}
             >
               {busy ? <VergeLoader size={30} label="Saving your reference" /> : <ImageIcon size={13} />}
               {busy ? 'Saving…' : 'Choose image & save'}
@@ -491,7 +533,7 @@ function StyleLockToggle({ value, onChange, disabled }: { value: boolean; onChan
           aria-hidden
           style={{ position: 'relative', width: 38, height: 22, borderRadius: 999, background: value ? T.live : T.raised, border: `1px solid ${value ? T.live : T.dim}`, flexShrink: 0, transition: 'background-color .22s ease' }}
         >
-          <span style={{ position: 'absolute', top: 3, left: 3, width: 14, height: 14, borderRadius: '50%', background: value ? 'var(--space-text-primary)' : T.muted, transform: `translateX(${value ? 16 : 0}px)`, transition: 'transform .22s cubic-bezier(.22,.9,.3,1)' }} />
+          <span style={{ position: 'absolute', top: 3, left: 3, width: 14, height: 14, borderRadius: '50%', background: value ? 'var(--vg-on-btn)' : T.muted, transform: `translateX(${value ? 16 : 0}px)`, transition: 'transform .22s cubic-bezier(.22,.9,.3,1)' }} />
         </span>
         <Lock size={14} color={value ? T.live : T.dim} />
         <span style={{ color: value ? T.bone : T.muted, fontSize: 13.5, fontWeight: 700 }}>Style Lock</span>
@@ -613,20 +655,44 @@ export function CreateScreen(props: {
   const lastBrandUrl = useRef('');
   const briefUrlCandidate = text.match(/https?:\/\/[^\s)]+/i)?.[0] || '';
   const briefUrl = /^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/i.test(briefUrlCandidate) ? briefUrlCandidate : '';
-  const savedBrandMatch = text.trim() ? matchSavedBrand(brandKit, briefUrl || text) : null;
-  const savedBrand = savedBrandMatch && savedBrandMatch.id !== ignoredBrandKey && (!savedBrandMatch.websiteUrl || normalizeBrandKey(savedBrandMatch.websiteUrl) !== ignoredBrandKey) ? savedBrandMatch : null;
+  const [confirmedBrand, setConfirmedBrand] = useState<BrandRecord | null>(null);
+  const savedBrandMatch = confirmedBrand && (!briefUrl || !confirmedBrand.websiteUrl || normalizeBrandUrl(briefUrl) === normalizeBrandUrl(confirmedBrand.websiteUrl)) ? confirmedBrand : null;
+  const savedBrand = savedBrandMatch;
   const brandInUse = fetchedBrand || savedBrand;
   const [mode, setMode] = useState<CreateMode>(initialIntake?.entryType === 'script' ? 'manual' : 'ai');
   const [aspect, setAspect] = useState<Aspect>(initialIntake?.aspectRatio || '16:9');
-  const [targetDuration, setTargetDuration] = useState(Math.min(600, initialIntake?.durationSeconds || 30));
-  const initialDurationSec = Math.min(600, initialIntake?.durationSeconds || 30);
+  const [targetDuration, setTargetDuration] = useState(() => Math.min(MAX_TARGET_SECONDS, initialIntake?.durationSeconds || readRememberedDuration() || DEFAULT_TARGET_SECONDS));
+  const initialDurationSec = Math.min(MAX_TARGET_SECONDS, initialIntake?.durationSeconds || readRememberedDuration() || DEFAULT_TARGET_SECONDS);
   const [customMinutes, setCustomMinutes] = useState(Math.floor(initialDurationSec / 60));
   const [customSeconds, setCustomSeconds] = useState(initialDurationSec >= 600 ? 0 : initialDurationSec % 60);
   const [durationCustom, setDurationCustom] = useState(false);
   const [controlMode, setControlMode] = useState<ControlMode>('agentic');
   const [executionMode, setExecutionMode] = useState<ExecutionMode>('review');
   const [motionEngine, setMotionEngine] = useState<CodeMotionEngine>('browser');
-  const [maxAuthorizedCredits, setMaxAuthorizedCredits] = useState(initialIntake?.durationSeconds || 30);
+  const [maxAuthorizedCredits, setMaxAuthorizedCredits] = useState(initialIntake?.durationSeconds || readRememberedDuration() || DEFAULT_TARGET_SECONDS);
+  // A length the creator picked (now or last time) is never overwritten by the
+  // word-count estimate when the script is accepted.
+  const [durationChosen, setDurationChosen] = useState(() => Boolean(initialIntake?.durationSeconds || readRememberedDuration()));
+  const [customDurationDraft, setCustomDurationDraft] = useState('');
+  const [customDurationError, setCustomDurationError] = useState('');
+  const [pacing, setPacing] = useState<Pacing>(() => readRememberedPacing());
+  const chooseDuration = (seconds: number, custom = false) => {
+    const value = Math.max(MIN_TARGET_SECONDS, Math.min(MAX_TARGET_SECONDS, Math.round(seconds)));
+    setDurationCustom(custom);
+    setDurationChosen(true);
+    setTargetDuration(value);
+    setMaxAuthorizedCredits((current) => Math.max(current, value));
+    rememberDuration(value);
+  };
+  const commitCustomDuration = () => {
+    const raw = customDurationDraft.trim();
+    const value = Number(raw);
+    if (!raw || !Number.isFinite(value)) { setCustomDurationError(`Enter a length from ${MIN_TARGET_SECONDS} to ${MAX_TARGET_SECONDS} seconds.`); return; }
+    if (!Number.isInteger(value)) { setCustomDurationError('Use whole seconds, for example 75.'); return; }
+    if (value < MIN_TARGET_SECONDS || value > MAX_TARGET_SECONDS) { setCustomDurationError(`Choose between ${MIN_TARGET_SECONDS} seconds and ${MAX_TARGET_SECONDS / 60} minutes.`); return; }
+    setCustomDurationError('');
+    chooseDuration(value, true);
+  };
   // Audio policy is explicit: No narration still keeps native dialogue/effects;
   // Fully silent is the only choice that removes every audio layer.
   const [audioPolicy, setAudioPolicy] = useState<AudioPolicy>(initialIntake?.audioPolicy || (intakePresenterLed ? 'native-dialogue-effects' : 'no-narration'));
@@ -702,9 +768,23 @@ export function CreateScreen(props: {
     () => scoreVideoModels(recommendationModels.length ? recommendationModels : [VIDEO_MODEL], { script: text, duration: targetDuration, charactersSpeak: requiresNativeAudio }),
     [recommendationModels, text, targetDuration, requiresNativeAudio],
   );
-  const autoRecommendation = rankedModels[0];
-  const autoPick = autoRecommendation.model;
-  const autoPickReason = recommendationExplanation(autoRecommendation);
+  // Auto is deterministic: Kling 3.0 (best value) whenever the film fits it —
+  // no spoken lines that need native sound, and a length Kling's 5s/10s clips
+  // can make — otherwise canonical Gemini Omni 1.1 Flash. Manual choices remain
+  // exact and are never remapped; saved films keep their own model.
+  const quickParsed = useMemo(() => parseManualScript(text), [text]);
+  const scriptDialogue = charactersSpeak && scriptHasDialogue(text);
+  const defaultPick = recommendDefaultModel({
+    kling: KLING_3_0, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
+    duration: mode === 'manual' && quickParsed.scenes.length ? quickParsed.scenes.reduce((sum, scene) => sum + scene.durationSec, 0) : targetDuration,
+    sceneDurations: mode === 'manual' ? quickParsed.scenes.map((scene) => scene.durationSec) : [],
+    available: modelAvailability[KLING_3_0.id]?.ready !== false,
+  });
+  const autoRecommendation = rankedModels.find((entry) => entry.model.id === defaultPick.model.id) || rankedModels[0];
+  const autoPick = defaultPick.model;
+  const autoPickReason = defaultPick.reason || (autoRecommendation
+    ? recommendationExplanation({ ...autoRecommendation, model: autoPick })
+    : `${autoPick.label} is the default engine.`);
 
   const chosenModel = displayModels.find((m) => m.id === videoModel) || autoPick;
   const chosenLive = liveOf(chosenModel);
@@ -744,9 +824,10 @@ export function CreateScreen(props: {
       meta: live
         ? `${rosterInputLabel(live)} · ${live.minDurationS}–${live.maxDurationS}s`
         : `Clips up to ${m.safeMaxDuration}s · ${m.maxReferenceImages} reference image${m.maxReferenceImages === 1 ? '' : 's'}`,
-      badge: m.id === autoPick.id ? 'Preferred' : '',
+      badge: m.id === KLING_3_0.id ? 'Recommended - best value' : m.id === autoPick.id ? 'Preferred' : '',
       available: modelAvailability[m.id]?.ready ?? (live ? live.available : m.id === VIDEO_MODEL.id && !m.availabilityNote),
       unavailableReason: modelAvailability[m.id]?.reason || (live ? live.unavailableReason : m.availabilityNote),
+      caution: modelAvailability[m.id]?.caution || '',
     };
   }), [displayModels, modelAvailability, autoPick.id, rwRev]);
 
@@ -893,7 +974,7 @@ export function CreateScreen(props: {
     setAiFormatBusy(true); setAiFormatErr('');
     try {
       if (mode === 'ai' && !selectedConcept) {
-        setIdeaConcepts(await suggestScriptConcepts(`${text}\nType: ${filmType}. Tone: ${tone}. Language: ${language}.`));
+        setIdeaConcepts(await suggestScriptConcepts(`${text}\nType: ${filmType}. Tone: ${tone}. Language: ${language}. Length: ${targetDuration} seconds.`));
         setSuccessToast('Three story approaches are ready.');
         return;
       }
@@ -977,7 +1058,7 @@ export function CreateScreen(props: {
   const effectiveModel = modelMode === 'auto' ? autoPick : chosenModel;
   const effectiveApiModel = effectiveModel.apiModel;
   const effectiveLive = liveOf(effectiveModel);
-  const filmBlocks = useMemo(() => legalFilmBlocks(targetDuration, effectiveModel), [targetDuration, effectiveModel.id]);
+  const filmBlocks = useMemo(() => legalFilmBlocks(targetDuration, effectiveModel, pacingClipSeconds(pacing, effectiveModel)), [targetDuration, effectiveModel.id, pacing]);
   const sceneLimits = sceneDurationLimitsFrom({
     modelId: effectiveApiModel,
     modelName: effectiveModel.label,
@@ -1078,7 +1159,7 @@ export function CreateScreen(props: {
     onSubmit({
       mode: mode === 'manual' && parsed.scenes.length > 0 ? 'manual' : 'ai',
       script: text.trim(), aspect, targetDuration: mode === 'manual' && parsed.scenes.length ? parsed.scenes.reduce((sum, scene) => sum + scene.durationSec, 0) : targetDuration, screenshotUrl: shotUrl || null, characterRefUrl: charUrl || null,
-      note: [`Type: ${filmType}.`, `Style: ${visualStyle}.`, `Storyboard: ${storyboard === 'yes' ? 'requested before production' : 'not requested'}.`, brandInUse ? `WEBSITE BRAND CONTEXT:\n${brandToContextText(brandInUse)}` : '', note.trim()].filter(Boolean).join(' '),
+      note: [`Type: ${filmType}.`, `Tone: ${tone}.`, `Language: ${language}.`, pacing !== 'auto' ? `Pacing: ${pacing === 'fast' ? 'fast cuts, keep clips around 5 seconds' : 'balanced, keep clips around 8 to 10 seconds'}.` : '', `Style: ${visualStyle}.`, `Storyboard: ${storyboard === 'yes' ? 'requested before production' : 'not requested'}.`, brandInUse ? `WEBSITE BRAND CONTEXT:\n${brandToContextText(brandInUse)}` : '', note.trim()].filter(Boolean).join(' '),
       styleLock, videoModel: effectiveApiModel,
       audioEnabled, narrationEnabled, charactersSpeak,
       entryType: mode === 'manual' ? 'script' : 'idea', controlMode, executionMode, motionEngine,
@@ -1090,7 +1171,7 @@ export function CreateScreen(props: {
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('verger:s2v-create-ready'));
-    const onBridge = (event: Event) => {
+    const onBridge = async (event: Event) => {
       const detail = (event as CustomEvent).detail || {};
       if (detail.appId !== 'script-to-video') return;
       const done = typeof detail.done === 'function' ? detail.done : () => undefined;
@@ -1105,7 +1186,7 @@ export function CreateScreen(props: {
           else if (key === 'idea') { setText(String(value)); setMode('ai'); setScriptAccepted(false); applied.push(key); }
           else if (key === 'script') { setText(String(value)); setMode('manual'); setOwnScriptChoice('skip'); setIdeaScriptReady(true); setScriptAccepted(true); applied.push(key); }
           else if (key === 'keepWords') { setOwnScriptChoice(value === false ? 'improve' : 'skip'); applied.push(key); }
-          else if (key === 'length') { const seconds = Math.max(4, Math.min(600, Number(value) || 30)); setTargetDuration(seconds); setMaxAuthorizedCredits((current) => Math.max(current, seconds)); applied.push(key); }
+          else if (key === 'length') { const seconds = Math.max(4, Math.min(600, Number(value) || 30)); setDurationChosen(true); setTargetDuration(seconds); setMaxAuthorizedCredits((current) => Math.max(current, seconds)); applied.push(key); }
           else if (key === 'shape') { const next = String(value); if (next === '9:16' || next === '16:9' || next === '1:1') { setAspect(next); applied.push(key); } else rejected.push({ key, reason: 'Choose 9:16, 16:9 or 1:1.' }); }
           else if (key === 'sound') { const next = String(value).toLowerCase(); setAudioPolicy(next.includes('character') || next.includes('speak') ? 'native-dialogue-effects' : next.includes('narrat') || next.includes('voice') ? 'narration-voiceover' : next.includes('silent') ? 'fully-silent' : next.includes('music') ? 'music-ambience' : 'no-narration'); applied.push(key); }
           else if (key === 'look') { setVisualStyle(String(value)); applied.push(key); }
@@ -1120,6 +1201,46 @@ export function CreateScreen(props: {
         }
         window.setTimeout(() => { bridgeUpdating.current = false; }, 0);
         done(undefined, { applied, rejected });
+      } else if (detail.operation === 'writeScript') {
+        if (!text.trim()) { done(new Error('Add an idea before writing the production script.')); return; }
+        setAiFormatBusy(true); setAiFormatErr('');
+        try {
+          const concepts = await suggestScriptConcepts(`${text}\nType: ${filmType}. Tone: ${tone}. Language: ${language}.`);
+          const concept = concepts[0] || null;
+          const brief = concept
+            ? `${text}\n\nSELECTED STORY APPROACH:\n${concept.title}\n${concept.premise}\n${concept.visual_arc}\nType: ${filmType}. Tone: ${tone}. Language: ${language}.`
+            : `${text}\nType: ${filmType}. Tone: ${tone}. Language: ${language}.`;
+          const formatted = await aiFormatScript(brief, {
+            audioEnabled, narrationEnabled, charactersSpeak,
+            modelLabel: effectiveModel.label,
+            modelDurationRule: durationContract(effectiveModel),
+            modelMinDuration: effectiveModel.minDuration,
+            modelMaxDuration: effectiveModel.safeMaxDuration,
+            modelSupportedDurations: effectiveModel.discreteDurations ? effectiveModel.supportedDurations : undefined,
+            targetDuration,
+            targetSceneDurations: filmBlocks,
+          });
+          const script = serializeManualScript(formatted);
+          setIdeaConcepts(concepts); setSelectedConcept(concept); setText(script); setAiFormatProposal('');
+          setMode('manual'); setOwnScriptChoice('skip'); setIdeaScriptReady(true); setScriptAccepted(true);
+          setSuccessToast('Production script written and accepted.');
+          done(undefined, { ok: true, script, accepted: true });
+        } catch (caught: any) {
+          const message = friendlyErrorMessage(caught);
+          setAiFormatErr(message); done(new Error(message));
+        } finally { setAiFormatBusy(false); }
+      } else if (detail.operation === 'pickApproach') {
+        if (!text.trim()) { done(new Error('Add an idea before choosing an approach.')); return; }
+        try {
+          const concepts = await suggestScriptConcepts(`${text}\nType: ${filmType}. Tone: ${tone}. Language: ${language}.`);
+          setIdeaConcepts(concepts); setSelectedConcept(concepts[0] || null);
+          done(undefined, { ok: true, approach: concepts[0] || null });
+        } catch (caught: any) { done(new Error(friendlyErrorMessage(caught))); }
+      } else if (detail.operation === 'useScript') {
+        if (!text.trim()) { done(new Error('Add a script before accepting it.')); return; }
+        setMode('manual'); setOwnScriptChoice('skip'); setIdeaScriptReady(true); setScriptAccepted(true);
+        setSuccessToast('Production script accepted.');
+        done(undefined, { ok: true, accepted: true });
       } else if (detail.operation === 'makePlan') {
         if (!canGo) { done(new Error(unmetReadiness[0]?.detail || 'The plan is not ready.')); return; }
         submitProduction(); done(undefined, { ok: true });
@@ -1146,6 +1267,84 @@ export function CreateScreen(props: {
   const disabledReason = canGo ? '' : (unmetReadiness[0]?.detail || 'Complete the required choices.');
   const setupCard = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 16 } as const;
   const optionButton = (selected: boolean) => ({ minHeight: 44, borderRadius: 10, border: `1px solid ${selected ? T.live : T.dim}`, background: selected ? 'color-mix(in srgb, var(--space-brand-primary-500) 12%, var(--space-surface-card))' : T.canvas, color: T.bone, padding: '9px 13px', fontSize: 14, fontWeight: 750, cursor: 'pointer' }) as const;
+  const renderLengthControl = (ariaLabel: string) => (
+    <div>
+      <div role="radiogroup" aria-label={ariaLabel} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+        {DURATION_PRESETS.map((seconds) => <button key={seconds} type="button" role="radio" aria-checked={!durationCustom && targetDuration === seconds} disabled={busy} onClick={() => { setCustomDurationError(''); chooseDuration(seconds); }} style={optionButton(!durationCustom && targetDuration === seconds)}>{durationPresetLabel(seconds)}</button>)}
+        <button type="button" role="radio" aria-checked={durationCustom} disabled={busy} onClick={() => { setDurationCustom(true); setCustomDurationDraft(String(targetDuration)); setCustomDurationError(''); }} style={optionButton(durationCustom)}>Custom</button>
+      </div>
+      {durationCustom ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <label style={{ color: T.muted, fontSize: 14 }}>Seconds <input type="number" inputMode="numeric" min={MIN_TARGET_SECONDS} max={MAX_TARGET_SECONDS} step={1} value={customDurationDraft} aria-invalid={Boolean(customDurationError)} onChange={(event) => { setCustomDurationDraft(event.target.value); setCustomDurationError(''); }} onBlur={commitCustomDuration} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitCustomDuration(); } }} style={{ marginLeft: 8, width: 100, background: T.canvas, color: T.bone, border: `1px solid ${customDurationError ? T.fault : T.dim}`, borderRadius: 9, padding: 10, fontSize: 16 }} /></label>
+        <span style={{ color: T.dim, fontSize: 12 }}>{MIN_TARGET_SECONDS}–{MAX_TARGET_SECONDS} seconds (10:00 max)</span>
+      </div> : null}
+      {customDurationError ? <div role="alert" style={{ color: T.fault, fontSize: 12, marginTop: 6 }}>{customDurationError}</div> : null}
+      <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{filmBlocks.length ? `${formatDuration(targetDuration)} · starts as ${filmBlocks.length} clip${filmBlocks.length === 1 ? '' : 's'} (${filmBlocks.map((seconds) => `${seconds}s`).join(' + ')}) on ${effectiveModel.label}. The script, scene plan and every clip are sized to this length.` : `${effectiveModel.label} cannot make exactly ${targetDuration}s with its clip lengths — pick another length or model.`}</div>
+    </div>
+  );
+  const renderPacingControl = () => (
+    <>
+    <div role="radiogroup" aria-label="Pacing" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+      {PACING_OPTIONS.map(([id, label, hint]) => <button key={id} type="button" role="radio" aria-checked={pacing === id} title={hint} disabled={busy} onClick={() => { setPacing(id); try { localStorage.setItem(PACING_PREF_KEY, id); } catch { /* preference only */ } }} style={optionButton(pacing === id)}>{label}</button>)}
+    </div>
+    {PACING_OPTIONS.filter(([id]) => id === pacing).map(([id, , hint]) => <div key={id} style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{hint}.</div>)}
+    </>
+  );
+  const storyboardSupportNote = effectiveModel.id === VIDEO_MODEL.id
+    ? 'Storyboard frames are sent to Gemini Omni Flash as reference images, so each clip follows its frame.'
+    : effectiveModel.id === SEEDANCE_2_5.id
+      ? 'Seedance 2.5 opens each new shot from its storyboard frame. Continuing clips start from the previous clip’s last frame instead, because Seedance takes one image input or the other.'
+      : `${effectiveModel.label} cannot take storyboard images as references, so storyboards stay a visual guide only.`;
+
+  // ---- One-press Start: paste a script, press Start video. The text is sent
+  // exactly as typed and the film runs in automatic mode end to end. ----
+  const [startTab, setStartTab] = useState<StartTab>(() => (initialIntake || readScriptDraft()?.scriptAccepted === true ? 'idea' : 'script'));
+  const [quickCostOk, setQuickCostOk] = useState(false);
+  const [quickResume] = useState(() => Boolean(readQuickStartPending()) && text.trim().length > 0);
+  useEffect(() => { if (bridgeFillLabel) setStartTab('idea'); }, [bridgeFillLabel]);
+  const quickWords = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const quickSceneSeconds = quickParsed.scenes.map((scene) => scene.durationSec);
+  const quickEstimate = quickSceneSeconds.length ? quickSceneSeconds.reduce((sum, value) => sum + value, 0) : Math.max(4, Math.min(600, Math.round(quickWords / 2.35)));
+  const quickPick = recommendDefaultModel({
+    kling: KLING_3_0, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
+    duration: quickSceneSeconds.length ? quickEstimate : Math.max(5, Math.ceil(quickEstimate / 5) * 5),
+    sceneDurations: quickSceneSeconds,
+    available: modelAvailability[KLING_3_0.id]?.ready !== false,
+  });
+  const quickModel = modelMode === 'manual' ? chosenModel : quickPick.model;
+  const quickSeconds = quickSceneSeconds.length
+    ? quickEstimate
+    : Math.min(600, quickModel.discreteDurations ? Math.max(5, Math.ceil(quickEstimate / 5) * 5) : Math.max(Number(quickModel.minDuration || 4), quickEstimate));
+  const quickClips = Math.max(1, quickSceneSeconds.length || Math.ceil(quickSeconds / Math.max(1, quickModel.safeMaxDuration)));
+  const quickCostMessage = costConfirmMessage(quickModel, quickSeconds / quickClips, quickClips);
+  useEffect(() => { setQuickCostOk(false); }, [quickModel.id, quickCostMessage]);
+  const quickModelReady = modelAvailability[quickModel.id]?.ready ?? (quickModel.id === VIDEO_MODEL.id || quickModel.id === KLING_3_0.id);
+  const quickProblem = quickWords < 3 ? 'Paste at least a few words of your script.'
+    : quickSeconds > 600 ? 'This script runs longer than the 10-minute maximum. Split it into two films.'
+      : requiresNativeAudio && !quickModel.audioSupported ? `${quickModel.label} is silent. Choose a model with native sound in Advanced, or change Sound.`
+        : quickModel.imageToVideoOnly && !(charUrl || shotUrl) ? `${quickModel.label} needs a start image. Choose another model in Advanced.`
+          : !quickModelReady ? `${quickModel.label} is not available right now. Choose another model in Advanced.`
+            : quickCostMessage && !quickCostOk ? 'Confirm the cost estimate to start.'
+              : '';
+  const quickCanStart = !quickProblem && !busy && !shotBusy && !charBusy;
+  const quickStyleLabel = videoStyle === 'custom' ? 'Custom look' : (VIDEO_STYLE_PRESETS.find((item) => item[0] === videoStyle)?.[1] || 'Cinematic Live Action');
+  const startQuickVideo = () => {
+    if (!quickCanStart) { setErr(quickProblem || 'Complete the highlighted choices first.'); return; }
+    setErr('');
+    markQuickStartPending(text.length);
+    const lookText = videoStyle === 'custom' ? visualStyle : styleDirection(videoStyle);
+    onSubmit({
+      mode: quickSceneSeconds.length ? 'manual' : 'ai',
+      script: text,
+      aspect, targetDuration: quickSeconds, screenshotUrl: shotUrl || null, characterRefUrl: charUrl || null,
+      note: [`Type: ${filmType}.`, `Tone: ${tone}.`, `Language: ${language}.`, `Style: ${lookText}.`, 'Storyboard: requested before production.', brandInUse ? `WEBSITE BRAND CONTEXT:\n${brandToContextText(brandInUse)}` : '', note.trim()].filter(Boolean).join(' '),
+      styleLock, videoModel: quickModel.apiModel,
+      audioEnabled, narrationEnabled, charactersSpeak,
+      entryType: 'script', controlMode: 'agentic', executionMode: 'automatic', motionEngine,
+      videoStyle, customVisualDirection: videoStyle === 'custom' ? visualStyle : '', audioPolicy,
+      maxAuthorizedCredits: Math.max(maxAuthorizedCredits, quickSeconds),
+      storyboardRequested: true,
+    });
+  };
 
   return (
     <div className="s2v-create-scroll" style={{ flex: 1, overflowY: 'auto', padding: '26px 24px 164px' }}>
@@ -1167,7 +1366,46 @@ export function CreateScreen(props: {
         {bridgeFillLabel ? <div role="status" style={{ marginBottom: 12, border: `1px solid ${T.live}`, borderRadius: 12, padding: '10px 13px', color: T.live, background: 'color-mix(in srgb, var(--space-brand-primary-500) 10%, transparent)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--space-brand-primary-500) 12%, transparent)', fontSize: 12.5, fontWeight: 800 }}>{bridgeFillLabel}</div> : null}
         {successToast ? <div role="status" aria-live="polite" style={{ position: 'fixed', right: 20, bottom: 96, zIndex: 40, maxWidth: 360, display: 'flex', alignItems: 'center', gap: 8, background: T.raised, color: T.bone, border: `1px solid ${T.done}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 16px 44px color-mix(in srgb, var(--space-text-primary) 18%, transparent)', fontSize: 14 }}><Check size={15} color={T.done} />{successToast}</div> : null}
 
-        <div className="s2v-v4-script" style={{ display: 'grid', gap: 16 }}>
+        <QuickStartPanel
+          tab={startTab}
+          onTab={setStartTab}
+          text={text}
+          onText={(value) => { setText(value); setMode('manual'); setScriptAccepted(false); setAiFormatProposal(''); }}
+          wordCount={quickWords}
+          detectedScenes={quickSceneSeconds.length}
+          seconds={quickSeconds}
+          modelLabel={quickModel.label}
+          modelRecommended={quickModel.id === KLING_3_0.id}
+          modelReason={modelMode === 'manual' ? `${quickModel.label} selected.` : quickPick.reason}
+          styleLabel={quickStyleLabel}
+          aspect={aspect as '16:9' | '9:16' | '1:1'}
+          onAspect={(value) => setAspect(value as Aspect)}
+          styleOptions={[...VIDEO_STYLE_PRESETS.map(([id, label]) => ({ id: String(id), label: String(label) })), { id: 'custom', label: 'Describe your own' }]}
+          styleId={videoStyle}
+          onStyle={(id) => { if (id === 'custom') { setVideoStyle('custom'); return; } setVideoStyle(id as VideoStyleId); setVisualStyle(styleDirection(id as VideoStyleId)); }}
+          customStyle={visualStyle}
+          onCustomStyle={setVisualStyle}
+          audioOptions={AUDIO_POLICIES}
+          audioPolicy={audioPolicy}
+          onAudioPolicy={(id) => setAudioPolicy(id as AudioPolicy)}
+          modelPicker={<>
+            <ModelGrid options={modelOptions} value={quickModel.id} onChange={(id) => { setModelMode('manual'); setVideoModel(id); setSwitchNote(''); }} disabled={busy} />
+            {modelMode === 'manual' ? <button type="button" className="s2v-qs-tab" style={{ marginTop: 8, border: '1px solid var(--vg-border)' }} onClick={() => setModelMode('auto')}>Use the recommended model</button> : null}
+            <p style={{ color: T.dim, fontSize: 12, margin: '8px 0 0' }}>{modelMode === 'manual' ? `${quickModel.label} selected.` : quickPick.reason}</p>
+          </>}
+          estimateCredits={quickSeconds}
+          balanceText={creditsLoading ? 'Checking balance…' : credits ? `Balance: ${credits.unlimited ? 'Unlimited' : formatCredits(credits.balance)} credits` : 'Balance is checked before rendering.'}
+          costConfirm={quickCostMessage ? { message: quickCostMessage, checked: quickCostOk, onChange: setQuickCostOk } : null}
+          canStart={quickCanStart}
+          disabledReason={quickProblem}
+          busy={busy}
+          error={startTab === 'script' && err ? friendlyErrorMessage(err) : ''}
+          resumeNotice={quickResume && !busy}
+          onStart={startQuickVideo}
+          onOpenFullSetup={() => { setStartTab('idea'); setMode('manual'); setOwnScriptChoice('skip'); }}
+        />
+
+        <div className="s2v-v4-script" style={{ display: startTab === 'script' ? 'none' : 'grid', gap: 16 }}>
           {!scriptAccepted ? <>
             <section aria-labelledby="source-choice-title" style={setupCard}>
               <h2 id="source-choice-title" style={{ color: T.bone, fontSize: 20, lineHeight: 1.3, margin: 0 }}>How do you want to start?</h2>
@@ -1186,22 +1424,39 @@ export function CreateScreen(props: {
               {mode === 'ai' ? <>
                 <h2 style={{ color: T.bone, fontSize: 20, margin: 0 }}>What’s the video about?</h2>
                 <p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: '5px 0 12px' }}>A sentence is enough. Add a website if the film should use its brand.</p>
-                <textarea value={text} onChange={(event) => { setText(event.target.value); setIdeaConcepts([]); setSelectedConcept(null); setAiFormatProposal(''); setIdeaScriptReady(false); setScriptAccepted(false); }} onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && text.trim()) { event.preventDefault(); void handleAiFormat(); } }} rows={5} placeholder="A 30-second launch film for a budgeting app that makes money feel simple…" aria-label="What's the video about?" style={{ width: '100%', minHeight: 132, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 12, padding: 16, fontSize: 16, lineHeight: 1.55, resize: 'vertical' }} />
-                <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
-                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Type</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{([['ad','Ad'],['story','Story'],['explainer','Explainer'],['ugc','UGC'],['launch','Launch']] as const).map(([id,label]) => <button key={id} type="button" onClick={() => setFilmType(id)} style={optionButton(filmType === id)}>{label}</button>)}</div></div>
-                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Tone</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{['Warm','Bold','Playful','Cinematic','Direct'].map((item) => <button key={item} type="button" onClick={() => setTone(item)} style={optionButton(tone === item)}>{item}</button>)}</div></div>
-                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Language</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{['English','Hinglish','Hindi','Spanish','French'].map((item) => <button key={item} type="button" onClick={() => setLanguage(item)} style={optionButton(language === item)}>{item}</button>)}</div></div>
+                <div style={{ marginBottom: 12 }}>
+                  <ReferenceImport
+                    label="Import from URL"
+                    onImport={(result) => {
+                      const evidence = [`Source: ${result.sourceUrl}`, result.contextText, result.hook ? `Reference hook: ${result.hook}` : '', result.structure.length ? `Reference structure: ${result.structure.join(' → ')}` : ''].filter(Boolean).join('\n');
+                      setText((current) => [current.trim(), evidence].filter(Boolean).join('\n\n'));
+                      if (!shotUrl && result.imageUrls[0]) setShotUrl(result.imageUrls[0]);
+                      setIdeaConcepts([]); setSelectedConcept(null); setAiFormatProposal(''); setIdeaScriptReady(false); setScriptAccepted(false);
+                    }}
+                  />
+                  <div style={{ marginTop: 8 }}><ReferenceImport kind="ad" label="Import reference ad" onImport={(result) => { const evidence = [`Reference ad: ${result.sourceUrl}`, result.caption, result.hook ? `Observed hook: ${result.hook}` : '', result.structure.length ? `Observed structure: ${result.structure.join(' → ')}` : ''].filter(Boolean).join('\n'); setText((current) => [current.trim(), evidence].filter(Boolean).join('\n\n')); setIdeaConcepts([]); setSelectedConcept(null); setAiFormatProposal(''); setIdeaScriptReady(false); setScriptAccepted(false); }} /></div>
+                  <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.5, marginTop: 6 }}>Imports public product facts, brand cues, images, or an observed reference hook into this editable brief. It never starts generation.</div>
                 </div>
-                {!ideaConcepts.length ? <div style={{ marginTop: 16 }}><button className="s2v-lift" type="button" disabled={!text.trim() || aiFormatBusy || busy} onClick={() => void handleAiFormat()} style={{ minHeight: 48, display: 'inline-flex', alignItems: 'center', gap: 8, background: text.trim() && !aiFormatBusy ? T.live : T.raised, color: text.trim() && !aiFormatBusy ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${text.trim() && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}>{aiFormatBusy ? <VergeLoader size={32} label="Writing three approaches" /> : <Wand2 size={16} />}{aiFormatBusy ? 'Writing approaches…' : 'Write script'}</button>{!text.trim() ? <span style={{ color: T.muted, fontSize: 12, marginLeft: 10 }}>Describe the video first.</span> : null}</div> : null}
-                {ideaConcepts.length ? <div style={{ marginTop: 18 }}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Choose a story approach</h3><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, marginTop: 10 }}>{ideaConcepts.slice(0,3).map((concept) => { const selected = selectedConcept?.title === concept.title; return <button key={concept.title} type="button" onClick={() => { setSelectedConcept(concept); setAiFormatProposal(''); }} style={{ minHeight: 150, textAlign: 'left', background: selected ? 'color-mix(in srgb, var(--space-brand-primary-500) 12%, var(--space-surface-card))' : T.canvas, color: T.bone, border: `1px solid ${selected ? T.live : T.dim}`, borderRadius: 12, padding: 14 }}><strong style={{ display: 'block', fontSize: 16 }}>{concept.title}</strong><span style={{ display: 'block', color: T.muted, fontSize: 14, lineHeight: 1.45, marginTop: 7 }}>{concept.premise}</span><span style={{ display: 'block', color: T.dim, fontSize: 12, marginTop: 9 }}>≈ {targetDuration}s</span></button>; })}</div><div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><button type="button" className="s2v-lift" disabled={!selectedConcept || aiFormatBusy} onClick={() => void handleAiFormat()} style={{ minHeight: 46, background: selectedConcept && !aiFormatBusy ? T.live : T.raised, color: selectedConcept && !aiFormatBusy ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${selectedConcept && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 850 }}>{aiFormatBusy ? 'Writing script…' : 'Write this script'}</button>{!selectedConcept ? <span style={{ color: T.muted, fontSize: 12 }}>Choose one approach.</span> : null}</div></div> : null}
-                {aiFormatProposal ? <div style={{ marginTop: 18 }}><label style={{ display: 'block', color: T.bone, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Your script</label><textarea value={aiFormatProposal} onChange={(event) => setAiFormatProposal(event.target.value)} rows={15} aria-label="Generated script" style={{ width: '100%', background: T.canvas, color: T.bone, border: `1px solid ${T.live}`, borderRadius: 12, padding: 16, fontSize: 14, lineHeight: 1.6, fontFamily: T.mono, resize: 'vertical' }} /><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}><button type="button" onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); setScriptAccepted(true); setSuccessToast('Script saved. Setup is ready.'); }} style={{ ...optionButton(true), background: T.live, color: 'var(--space-text-on-primary)' }}><Check size={14} style={{ display: 'inline', marginRight: 6 }} />Use this script</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('rewrite'); }} style={optionButton(false)}>Rewrite</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('shorter'); }} style={optionButton(false)}>Shorter</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('longer'); }} style={optionButton(false)}>Longer</button>{undoScript ? <button type="button" onClick={() => { setText(undoScript); setUndoScript(''); setScriptAccepted(false); }} style={optionButton(false)}><Undo2 size={14} style={{ display: 'inline', marginRight: 6 }} />Undo AI change</button> : null}</div></div> : null}
+                <textarea value={text} onChange={(event) => { setText(event.target.value); setIdeaConcepts([]); setSelectedConcept(null); setAiFormatProposal(''); setIdeaScriptReady(false); setScriptAccepted(false); }} onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && text.trim()) { event.preventDefault(); void handleAiFormat(); } }} rows={5} placeholder="A 30-second launch film for a budgeting app that makes money feel simple…" aria-label="What's the video about?" style={{ width: '100%', minHeight: 132, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 12, padding: 16, fontSize: 16, lineHeight: 1.55, resize: 'vertical' }} />
+                <div style={{ marginTop: 10 }}><SavedBrandKitConfirm onChange={setConfirmedBrand} /></div>
+                <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Type</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{([['ad','Ad'],['story','Story'],['explainer','Explainer'],['ugc','UGC'],['launch','Launch']] as const).map(([id,label]) => <button key={id} type="button" onClick={() => setFilmType(id)} style={optionButton(filmType === id)}>{label}</button>)}</div>{FILM_TYPE_NOTES[filmType] ? <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{FILM_TYPE_NOTES[filmType]}</div> : null}</div>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Tone</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{['Warm','Bold','Playful','Cinematic','Direct'].map((item) => <button key={item} type="button" onClick={() => setTone(item)} style={optionButton(tone === item)}>{item}</button>)}</div>{TONE_NOTES[tone] ? <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{TONE_NOTES[tone]}</div> : null}</div>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Language</span><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{['English','Hinglish','Hindi','Spanish','French'].map((item) => <button key={item} type="button" onClick={() => setLanguage(item)} style={optionButton(language === item)}>{item}</button>)}</div>{LANGUAGE_NOTES[language] ? <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{LANGUAGE_NOTES[language]}</div> : null}</div>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Length</span> <span style={{ color: T.dim, fontSize: 12 }}>{PICKER_HELP.length}</span>{renderLengthControl('Video length')}</div>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Shape</span><div role="radiogroup" aria-label="Video shape for the brief" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>{([['16:9', '16:9 Landscape'], ['9:16', '9:16 Vertical'], ['1:1', '1:1 Square']] as const).map(([shape, label]) => <button key={shape} type="button" role="radio" aria-checked={aspect === shape} disabled={busy} onClick={() => setAspect(shape as Aspect)} style={optionButton(aspect === shape)}>{label}</button>)}</div>{SHAPE_NOTES[aspect] ? <div style={{ color: T.dim, fontSize: 12, marginTop: 6 }}>{SHAPE_NOTES[aspect]}</div> : null}</div>
+                  <div><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Pacing</span> <span style={{ color: T.dim, fontSize: 12 }}>optional</span>{renderPacingControl()}</div>
+                </div>
+                {!ideaConcepts.length ? <div style={{ marginTop: 16 }}><button className="s2v-lift" type="button" disabled={!text.trim() || aiFormatBusy || busy} onClick={() => void handleAiFormat()} style={{ minHeight: 48, display: 'inline-flex', alignItems: 'center', gap: 8, background: text.trim() && !aiFormatBusy ? T.live : T.raised, color: text.trim() && !aiFormatBusy ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${text.trim() && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}>{aiFormatBusy ? <VergeLoader size={32} label="Writing three approaches" /> : <Wand2 size={16} />}{aiFormatBusy ? 'Writing approaches…' : 'Write script'}</button>{!text.trim() ? <span style={{ color: T.muted, fontSize: 12, marginLeft: 10 }}>Describe the video first.</span> : null}</div> : null}
+                {ideaConcepts.length ? <div style={{ marginTop: 18 }}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Choose a story approach</h3><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, marginTop: 10 }}>{ideaConcepts.slice(0,3).map((concept) => { const selected = selectedConcept?.title === concept.title; return <button key={concept.title} type="button" onClick={() => { setSelectedConcept(concept); setAiFormatProposal(''); }} style={{ minHeight: 150, textAlign: 'left', background: selected ? 'color-mix(in srgb, var(--space-brand-primary-500) 12%, var(--space-surface-card))' : T.canvas, color: T.bone, border: `1px solid ${selected ? T.live : T.dim}`, borderRadius: 12, padding: 14 }}><strong style={{ display: 'block', fontSize: 16 }}>{concept.title}</strong><span style={{ display: 'block', color: T.muted, fontSize: 14, lineHeight: 1.45, marginTop: 7 }}>{concept.premise}</span><span style={{ display: 'block', color: T.dim, fontSize: 12, marginTop: 9 }}>≈ {targetDuration}s</span></button>; })}</div><div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}><button type="button" className="s2v-lift" disabled={!selectedConcept || aiFormatBusy} onClick={() => void handleAiFormat()} style={{ minHeight: 46, background: selectedConcept && !aiFormatBusy ? T.live : T.raised, color: selectedConcept && !aiFormatBusy ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${selectedConcept && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 850 }}>{aiFormatBusy ? 'Writing script…' : 'Write this script'}</button>{!selectedConcept ? <span style={{ color: T.muted, fontSize: 12 }}>Choose one approach.</span> : null}</div></div> : null}
+                {aiFormatProposal ? <div style={{ marginTop: 18 }}><label style={{ display: 'block', color: T.bone, fontSize: 18, fontWeight: 800, marginBottom: 8 }}>Your script</label><textarea value={aiFormatProposal} onChange={(event) => setAiFormatProposal(event.target.value)} rows={15} aria-label="Generated script" style={{ width: '100%', background: T.canvas, color: T.bone, border: `1px solid ${T.live}`, borderRadius: 12, padding: 16, fontSize: 14, lineHeight: 1.6, fontFamily: T.mono, resize: 'vertical' }} /><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}><button type="button" onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); setScriptAccepted(true); setSuccessToast('Script saved. Setup is ready.'); }} style={{ ...optionButton(true), background: T.live, color: 'var(--vg-on-btn)' }}><Check size={14} style={{ display: 'inline', marginRight: 6 }} />Use this script</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('rewrite'); }} style={optionButton(false)}>Rewrite</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('shorter'); }} style={optionButton(false)}>Shorter</button><button type="button" disabled={aiFormatBusy} onClick={() => { setUndoScript(text); setText(aiFormatProposal); setAiFormatProposal(''); setIdeaScriptReady(true); void changeScript('longer'); }} style={optionButton(false)}>Longer</button>{undoScript ? <button type="button" onClick={() => { setText(undoScript); setUndoScript(''); setScriptAccepted(false); }} style={optionButton(false)}><Undo2 size={14} style={{ display: 'inline', marginRight: 6 }} />Undo AI change</button> : null}</div></div> : null}
               </> : <>
                 <h2 style={{ color: T.bone, fontSize: 20, margin: 0 }}>Paste your script</h2>
                 <p style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, margin: '5px 0 12px' }}>Keep my words is the default. Nothing changes unless you accept an AI proposal.</p>
                 <textarea value={text} onChange={(event) => { setText(event.target.value); setScriptAccepted(false); setAiFormatProposal(''); }} rows={15} aria-label="Paste your script" placeholder="Paste your script here…" style={{ width: '100%', background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 12, padding: 16, fontSize: 16, lineHeight: 1.6, resize: 'vertical' }} />
                 <div role="radiogroup" aria-label="Script wording" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}><button type="button" role="radio" aria-checked={ownScriptChoice === 'skip'} onClick={() => { setOwnScriptChoice('skip'); setAiFormatProposal(''); }} style={optionButton(ownScriptChoice === 'skip')}>Keep my words</button><button type="button" role="radio" aria-checked={ownScriptChoice === 'improve'} disabled={!text.trim() || aiFormatBusy} onClick={() => { setOwnScriptChoice('improve'); void handleAiFormat(); }} style={optionButton(ownScriptChoice === 'improve')}>{aiFormatBusy ? 'Preparing changes…' : 'Improve with AI'}</button></div>
-                {aiFormatProposal ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10, marginTop: 14 }}><div style={{ ...setupCard, background: T.canvas }}><strong style={{ color: T.bone, fontSize: 14 }}>Your original</strong><pre style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', color: T.muted, fontSize: 12, lineHeight: 1.55 }}>{text}</pre></div><div style={{ ...setupCard, border: `1px solid ${T.live}` }}><strong style={{ color: T.bone, fontSize: 14 }}>Suggested version</strong><textarea value={aiFormatProposal} onChange={(event) => setAiFormatProposal(event.target.value)} rows={12} style={{ width: '100%', marginTop: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: 12, fontSize: 14, lineHeight: 1.55 }} /><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}><button type="button" onClick={acceptProposal} style={{ ...optionButton(true), background: T.live, color: 'var(--space-text-on-primary)' }}>Accept changes</button><button type="button" onClick={() => { setAiFormatProposal(''); setOwnScriptChoice('skip'); }} style={optionButton(false)}>Reject</button></div></div></div> : null}
-                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}><button type="button" className="s2v-lift" disabled={wordCount < 3 || aiFormatBusy} onClick={() => { setScriptAccepted(true); setIdeaScriptReady(true); setSuccessToast('Script saved. Setup is ready.'); if (!durationCustom) { setTargetDuration(estimatedSeconds); setMaxAuthorizedCredits((value) => Math.max(value, estimatedSeconds)); } }} style={{ minHeight: 48, background: wordCount >= 3 && !aiFormatBusy ? T.live : T.raised, color: wordCount >= 3 && !aiFormatBusy ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${wordCount >= 3 && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}><Check size={15} style={{ display: 'inline', marginRight: 6 }} />Use this script</button>{wordCount < 3 ? <span style={{ color: T.muted, fontSize: 12 }}>Add a script first.</span> : null}{undoScript ? <button type="button" onClick={() => { setText(undoScript); setUndoScript(''); setOwnScriptChoice('skip'); }} style={optionButton(false)}><Undo2 size={14} style={{ display: 'inline', marginRight: 6 }} />Undo AI change</button> : null}</div>
+                {aiFormatProposal ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: 10, marginTop: 14 }}><div style={{ ...setupCard, background: T.canvas }}><strong style={{ color: T.bone, fontSize: 14 }}>Your original</strong><pre style={{ maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', color: T.muted, fontSize: 12, lineHeight: 1.55 }}>{text}</pre></div><div style={{ ...setupCard, border: `1px solid ${T.live}` }}><strong style={{ color: T.bone, fontSize: 14 }}>Suggested version</strong><textarea value={aiFormatProposal} onChange={(event) => setAiFormatProposal(event.target.value)} rows={12} style={{ width: '100%', marginTop: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 10, padding: 12, fontSize: 14, lineHeight: 1.55 }} /><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}><button type="button" onClick={acceptProposal} style={{ ...optionButton(true), background: T.live, color: 'var(--vg-on-btn)' }}>Accept changes</button><button type="button" onClick={() => { setAiFormatProposal(''); setOwnScriptChoice('skip'); }} style={optionButton(false)}>Reject</button></div></div></div> : null}
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 14 }}><button type="button" className="s2v-lift" disabled={wordCount < 3 || aiFormatBusy} onClick={() => { setScriptAccepted(true); setIdeaScriptReady(true); setSuccessToast('Script saved. Setup is ready.'); if (!durationCustom && !durationChosen) { setTargetDuration(estimatedSeconds); setMaxAuthorizedCredits((value) => Math.max(value, estimatedSeconds)); } }} style={{ minHeight: 48, background: wordCount >= 3 && !aiFormatBusy ? T.live : T.raised, color: wordCount >= 3 && !aiFormatBusy ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${wordCount >= 3 && !aiFormatBusy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}><Check size={15} style={{ display: 'inline', marginRight: 6 }} />Use this script</button>{wordCount < 3 ? <span style={{ color: T.muted, fontSize: 12 }}>Add a script first.</span> : null}{undoScript ? <button type="button" onClick={() => { setText(undoScript); setUndoScript(''); setOwnScriptChoice('skip'); }} style={optionButton(false)}><Undo2 size={14} style={{ display: 'inline', marginRight: 6 }} />Undo AI change</button> : null}</div>
               </>}
               {aiFormatErr ? <div role="alert" style={{ marginTop: 12, display: 'flex', gap: 8, color: T.fault, background: 'var(--vg-danger-bg)', border: `1px solid ${T.fault}`, borderRadius: 10, padding: 12, fontSize: 14 }}><AlertTriangle size={16} />{friendlyErrorMessage(aiFormatErr)} <button type="button" onClick={() => void handleAiFormat()} style={{ marginLeft: 'auto', background: 'transparent', color: T.bone, border: `1px solid ${T.fault}`, borderRadius: 8, padding: '6px 10px' }}>Retry</button></div> : null}
             </section>
@@ -1209,17 +1464,17 @@ export function CreateScreen(props: {
 
           {scriptAccepted ? <section aria-labelledby="setup-title" style={{ display: 'grid', gap: 12 }}>
             <div><h2 id="setup-title" style={{ color: T.bone, fontSize: 24, margin: 0 }}>Setup</h2><p style={{ color: T.muted, fontSize: 14, margin: '5px 0 0' }}>Smart defaults are selected. Change only what matters.</p></div>
-            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Length</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 10px' }}>From this script: ≈ {estimatedSeconds}s</p><div role="radiogroup" aria-label="Video length" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" onClick={() => { setDurationCustom(false); setTargetDuration(estimatedSeconds); setMaxAuthorizedCredits((value) => Math.max(value, estimatedSeconds)); }} style={optionButton(!durationCustom && targetDuration === estimatedSeconds)}>Auto · ≈ {estimatedSeconds}s</button>{[15,30,45,60].map((seconds) => <button key={seconds} type="button" onClick={() => { setDurationCustom(false); setTargetDuration(seconds); setMaxAuthorizedCredits((value) => Math.max(value, seconds)); }} style={optionButton(!durationCustom && targetDuration === seconds)}>{seconds}s</button>)}<button type="button" onClick={() => setDurationCustom(true)} style={optionButton(durationCustom)}>Custom</button></div>{durationCustom ? <label style={{ display: 'block', color: T.muted, fontSize: 14, marginTop: 10 }}>Seconds <input type="number" min={4} max={600} value={targetDuration} onChange={(event) => { const value = Math.max(4, Math.min(600, Number(event.target.value) || 4)); setTargetDuration(value); setMaxAuthorizedCredits((current) => Math.max(current, value)); }} style={{ marginLeft: 8, width: 100, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: 10, fontSize: 16 }} /></label> : null}</div>
-            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Shape</h3><div role="radiogroup" aria-label="Video shape" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>{(['9:16','16:9','1:1'] as Aspect[]).map((shape) => <button key={shape} type="button" role="radio" aria-checked={aspect === shape} onClick={() => setAspect(shape)} style={{ ...optionButton(aspect === shape), minHeight: 92, display: 'grid', placeItems: 'center', gap: 5 }}><span aria-hidden style={{ display: 'block', width: shape === '9:16' ? 26 : shape === '16:9' ? 54 : 40, height: shape === '9:16' ? 48 : shape === '16:9' ? 30 : 40, border: `2px solid ${aspect === shape ? T.live : T.muted}`, borderRadius: 5 }} /><span>{shape}</span></button>)}</div></div>
-            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Sound</h3><div role="radiogroup" aria-label="Sound" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 10 }}>{([['native-dialogue-effects','Characters speak','Use natural speech and scene sound.'],['narration-voiceover','Narrator voice-over','One narrator guides the film.'],['music-ambience','Music only','Music and ambience, no spoken guide.']] as const).map(([id,label,hint]) => <button key={id} type="button" onClick={() => setAudioPolicy(id)} style={{ ...optionButton(audioPolicy === id), minHeight: 88, textAlign: 'left' }}><strong style={{ display: 'block', fontSize: 14 }}>{label}</strong><span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.4, marginTop: 5 }}>{hint}</span></button>)}</div>{audioPolicy === 'narration-voiceover' ? <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}><select aria-label="Narrator voice" style={{ minHeight: 44, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 14 }}><option>Warm storyteller</option><option>Clear guide</option><option>Bright creator</option><option>Deep cinematic</option></select><button type="button" onClick={() => { try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance('This is how your narrator will sound.')); } catch {} }} style={optionButton(false)}>Preview voice</button></div> : null}</div>
-            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Look</h3><div role="radiogroup" aria-label="Visual look" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 10, marginTop: 10 }}>{VIDEO_STYLE_PRESETS.slice(0,8).map(([id,label,direction], index) => <button key={id} type="button" onClick={() => { setVideoStyle(id); setVisualStyle(direction); }} style={{ ...optionButton(videoStyle === id), minHeight: 116, textAlign: 'left', padding: 10 }}><span aria-hidden style={{ display: 'block', height: 58, borderRadius: 8, marginBottom: 8, background: `linear-gradient(${125 + index * 12}deg, color-mix(in srgb, var(--space-brand-primary-500) ${8 + index * 2}%, var(--space-surface-panel)), var(--space-surface-muted))`, border: `1px solid ${videoStyle === id ? T.live : T.line}` }} /><strong style={{ fontSize: 12 }}>{label}</strong></button>)}<button type="button" onClick={() => setVideoStyle('custom')} style={{ ...optionButton(videoStyle === 'custom'), minHeight: 116, textAlign: 'left' }}><Plus size={18} /><strong style={{ display: 'block', marginTop: 9 }}>Describe your own</strong></button></div>{videoStyle === 'custom' ? <textarea value={visualStyle} onChange={(event) => setVisualStyle(event.target.value)} rows={3} placeholder="Describe materials, camera, colour and mood…" style={{ width: '100%', marginTop: 10, background: T.canvas, color: T.bone, border: `1px solid ${T.live}`, borderRadius: 10, padding: 12, fontSize: 16 }} /> : null}</div>
+            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Length</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{PICKER_HELP.length}</p><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 10px' }}>From this script: ≈ {estimatedSeconds}s</p><div role="radiogroup" aria-label="Video length" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><button type="button" onClick={() => { setDurationCustom(false); setTargetDuration(estimatedSeconds); setMaxAuthorizedCredits((value) => Math.max(value, estimatedSeconds)); }} style={optionButton(!durationCustom && targetDuration === estimatedSeconds)}>Auto · ≈ {estimatedSeconds}s</button></div>{renderLengthControl('Video length presets')}{mode === 'ai' ? (() => { const written = parseManualScript(text).scenes.reduce((sum, scene) => sum + scene.durationSec, 0); return written > 0 && written !== targetDuration ? <div role="status" style={{ color: T.muted, fontSize: 12, marginTop: 8 }}>This script was written for {written}s. The scene plan will re-time it to {targetDuration}s; tap Edit script and write it again for the best pacing.</div> : null; })() : null}<div style={{ marginTop: 12 }}><span style={{ color: T.muted, fontSize: 12, fontWeight: 800 }}>Pacing</span>{renderPacingControl()}</div></div>
+            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Shape</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{PICKER_HELP.shape}</p><div role="radiogroup" aria-label="Video shape" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>{(['9:16','16:9','1:1'] as Aspect[]).map((shape) => <button key={shape} type="button" role="radio" aria-checked={aspect === shape} onClick={() => setAspect(shape)} style={{ ...optionButton(aspect === shape), minHeight: 92, display: 'grid', placeItems: 'center', gap: 5 }}><OptionThumb src={previewFor('shape', shape)} ratio={shape.replace(':', ' / ')} fallback={<span aria-hidden style={{ display: 'block', width: shape === '9:16' ? 26 : shape === '16:9' ? 54 : 40, height: shape === '9:16' ? 48 : shape === '16:9' ? 30 : 40, border: `2px solid ${aspect === shape ? T.live : T.muted}`, borderRadius: 5 }} />} style={{ width: shape === '9:16' ? 32 : shape === '16:9' ? 100 : 56, maxWidth: '100%', height: 'auto', border: `2px solid ${aspect === shape ? T.live : T.muted}`, borderRadius: 5 }} /><span>{shape}</span><span style={{ display: 'block', color: T.muted, fontSize: 12, fontWeight: 500, lineHeight: 1.4, textAlign: 'center' }}>{SHAPE_NOTES[shape]}</span></button>)}</div></div>
+            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Sound</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{PICKER_HELP.sound}</p><div role="radiogroup" aria-label="Sound" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginTop: 10 }}>{([['native-dialogue-effects','Characters speak','Use natural speech and scene sound.'],['narration-voiceover','Narrator voice-over','One narrator guides the film.'],['music-ambience','Music only','Music and ambience, no spoken guide.']] as const).map(([id,label,hint]) => <button key={id} type="button" onClick={() => setAudioPolicy(id)} style={{ ...optionButton(audioPolicy === id), minHeight: 88, textAlign: 'left' }}><strong style={{ display: 'block', fontSize: 14 }}>{label}</strong><span style={{ display: 'block', color: T.muted, fontSize: 12, lineHeight: 1.4, marginTop: 5 }}>{hint}</span></button>)}</div>{audioPolicy === 'narration-voiceover' ? <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}><select aria-label="Narrator voice" style={{ minHeight: 44, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 14 }}><option>Warm storyteller</option><option>Clear guide</option><option>Bright creator</option><option>Deep cinematic</option></select><button type="button" onClick={() => { try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance('This is how your narrator will sound.')); } catch {} }} style={optionButton(false)}>Preview voice</button></div> : null}</div>
+            <div style={setupCard}><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Look</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{PICKER_HELP.look}</p><div role="radiogroup" aria-label="Visual look" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))', gap: 10, marginTop: 10 }}>{VIDEO_STYLE_PRESETS.slice(0,8).map(([id,label,direction], index) => <button key={id} type="button" onClick={() => { setVideoStyle(id); setVisualStyle(direction); }} style={{ ...optionButton(videoStyle === id), minHeight: 116, textAlign: 'left', padding: 10 }}><OptionThumb src={previewFor('look', id)} ratio="16 / 9" fallback={<span aria-hidden style={{ display: 'block', height: 58, borderRadius: 8, marginBottom: 8, background: `linear-gradient(${125 + index * 12}deg, color-mix(in srgb, var(--space-brand-primary-500) ${8 + index * 2}%, var(--space-surface-panel)), var(--space-surface-muted))`, border: `1px solid ${videoStyle === id ? T.live : T.line}` }} />} style={{ marginBottom: 8, border: `1px solid ${videoStyle === id ? T.live : T.line}` }} /><strong style={{ fontSize: 12 }}>{label}</strong>{LOOK_NOTES[id] ? <span style={{ display: 'block', color: T.muted, fontSize: 12, fontWeight: 500, lineHeight: 1.4, marginTop: 4 }}>{LOOK_NOTES[id]}</span> : null}</button>)}<button type="button" onClick={() => setVideoStyle('custom')} style={{ ...optionButton(videoStyle === 'custom'), minHeight: 116, textAlign: 'left' }}><Plus size={18} /><strong style={{ display: 'block', marginTop: 9 }}>Describe your own</strong></button></div>{videoStyle === 'custom' ? <textarea value={visualStyle} onChange={(event) => setVisualStyle(event.target.value)} rows={3} placeholder="Describe materials, camera, colour and mood…" style={{ width: '100%', marginTop: 10, background: T.canvas, color: T.bone, border: `1px solid ${T.live}`, borderRadius: 10, padding: 12, fontSize: 16 }} /> : null}</div>
             <details style={setupCard}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 18, fontWeight: 800 }}>References <span style={{ color: T.muted, fontSize: 12, fontWeight: 500, marginLeft: 8 }}>optional</span></summary><div style={{ marginTop: 12 }}><CharacterRefField previewUrl={charPreview} busy={charBusy} disabled={busy} error={charErr} onPick={pickCharacterRef} onClear={clearCharacterRef} /><div style={{ marginTop: 18 }}><button type="button" disabled={shotBusy} onClick={() => fileRef.current?.click()} style={optionButton(Boolean(shotUrl))}>{shotBusy ? 'Uploading product image…' : shotUrl ? 'Replace product image' : 'Add product image'}</button>{shotUrl ? <img src={shotUrl} alt="Product reference" style={{ width: 76, height: 56, marginLeft: 10, objectFit: 'cover', borderRadius: 8, border: `1px solid ${T.dim}`, verticalAlign: 'middle' }} /> : null}<input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: 'none' }} onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; setShotBusy(true); setErr(''); try { setShotUrl(await uploadBlob(file,file.name)); setSuccessToast('Reference image added.'); } catch (caught:any) { setErr(String(caught?.message || caught)); } finally { setShotBusy(false); event.target.value=''; } }} /></div><StoredReferencesField disabled={busy} onInsert={(name) => setText((value) => `${value}${value && !/\s$/.test(value) ? ' ' : ''}@${name} `)} /></div></details>
-            <div style={setupCard}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}><div><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Model</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{modelMode === 'auto' ? `Auto picked ${autoPick.label}. ${autoPickReason}` : `${chosenModel.label} selected.`}</p></div><div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={() => setModelMode('auto')} style={optionButton(modelMode === 'auto')}>Auto (recommended)</button><button type="button" onClick={() => setModelMode('manual')} style={optionButton(modelMode === 'manual')}>Choose</button></div></div>{modelMode === 'manual' ? <div style={{ marginTop: 12 }}><ModelGrid options={modelOptions} value={videoModel} onChange={(id) => { setVideoModel(id); setSwitchNote(''); }} disabled={busy} />{switchNote ? <div role="alert" style={{ color: T.fault, background: 'var(--vg-danger-bg)', border: `1px solid ${T.fault}`, borderRadius: 10, padding: 10, fontSize: 12, marginTop: 9 }}>{switchNote}</div> : null}</div> : null}</div>
+            <div style={setupCard}><div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}><div><h3 style={{ color: T.bone, fontSize: 18, margin: 0 }}>Model</h3><p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{modelMode === 'auto' ? `Auto picked ${autoPick.label}. ${autoPickReason}` : `${chosenModel.label} selected.`}</p></div><div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={() => setModelMode('auto')} style={optionButton(modelMode === 'auto')}>Auto (recommended)</button><button type="button" onClick={() => setModelMode('manual')} style={optionButton(modelMode === 'manual')}>Choose</button></div></div><p style={{ color: T.dim, fontSize: 12, margin: '8px 0 0' }}>{PICKER_HELP.model}</p><div style={{ marginTop: 12 }}><ModelGrid options={modelOptions} value={effectiveModel.id} onChange={(id) => { setModelMode('manual'); setVideoModel(id); setSwitchNote(''); }} disabled={busy} />{switchNote ? <div role="alert" style={{ color: T.fault, background: 'var(--vg-danger-bg)', border: `1px solid ${T.fault}`, borderRadius: 10, padding: 10, fontSize: 12, marginTop: 9 }}>{switchNote}</div> : null}</div><p style={{ color: T.dim, fontSize: 12, margin: '10px 0 0' }}>{storyboardSupportNote}</p></div>
             <details style={setupCard}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.bone, fontSize: 18, fontWeight: 800 }}>Advanced</summary><div style={{ display: 'grid', gap: 12, marginTop: 12 }}><label style={{ display: 'flex', alignItems: 'center', gap: 10, color: T.bone, fontSize: 14 }}><input type="checkbox" checked={executionMode === 'review'} onChange={(event) => setExecutionMode(event.target.checked ? 'review' : 'automatic')} /> Check the look after block 1</label><label style={{ display: 'flex', alignItems: 'center', gap: 10, color: T.bone, fontSize: 14 }}><input type="checkbox" checked={controlMode === 'manual'} onChange={(event) => setControlMode(event.target.checked ? 'manual' : 'agentic')} /> Lock per-block choices</label><label style={{ color: T.muted, fontSize: 14 }}>Code motion engine <select value={motionEngine} onChange={(event) => setMotionEngine(event.target.value as CodeMotionEngine)} style={{ minHeight: 44, marginLeft: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: '8px 10px' }}><option value="browser">Built-in</option><option value="hyperframes">HyperFrames</option></select></label><label style={{ color: T.muted, fontSize: 14 }}>Credit ceiling <input type="number" min={targetDuration} value={maxAuthorizedCredits} onChange={(event) => setMaxAuthorizedCredits(Math.max(0,Number(event.target.value)||0))} style={{ width: 110, minHeight: 44, marginLeft: 8, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 9, padding: 9 }} /></label><label style={{ display: 'flex', alignItems: 'center', gap: 10, color: T.bone, fontSize: 14 }}><input type="checkbox" checked={styleLock} onChange={(event) => setStyleLock(event.target.checked)} /> Keep the same look across blocks</label><CrossProjectAssetPicker disabled={busy} onSelect={(asset) => { setShotUrl(asset.url); setSuccessToast('Project asset added.'); }} /></div></details>
           </section> : null}
 
-          {costPrompt ? <div style={{ ...setupCard, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', border: `1px solid ${needsCostConfirm ? 'var(--vg-warning)' : T.done}` }}><AlertTriangle size={17} color={needsCostConfirm ? 'var(--vg-warning)' : T.done} /><div style={{ minWidth: 0, flex: 1 }}><strong style={{ color: T.bone, fontSize: 14 }}>Confirm this model’s estimate</strong><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 3 }}>{costPrompt}</div></div><button type="button" disabled={costConfirmed || busy} onClick={() => { setCostConfirmed(true); setSuccessToast('Cost estimate confirmed.'); }} style={{ ...optionButton(costConfirmed), background: costConfirmed ? T.raised : T.live, color: costConfirmed ? T.done : 'var(--space-text-on-primary)' }}>{costConfirmed ? 'Confirmed' : 'Confirm estimate'}</button></div> : null}
-          <div style={{ position: 'sticky', bottom: 0, zIndex: 12, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: 'color-mix(in srgb, var(--space-surface-card) 96%, transparent)', backdropFilter: 'blur(16px)', border: `1px solid ${canGo ? T.done : T.dim}`, borderRadius: 12, padding: 14, boxShadow: '0 -12px 36px color-mix(in srgb, var(--space-text-primary) 10%, transparent)' }}><div style={{ minWidth: 0, flex: 1 }}><div style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Estimate: {plannedTargetDuration} credits</div><div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>{creditsLoading ? 'Checking balance…' : credits ? `Balance: ${credits.unlimited ? 'Unlimited' : formatCredits(credits.balance)} credits` : 'Balance is checked before rendering.'}</div>{disabledReason ? <div style={{ color: T.fault, fontSize: 12, marginTop: 4 }}>{disabledReason}</div> : null}</div><button type="button" className="s2v-lift" disabled={!canGo || busy || shotBusy || charBusy} onClick={submitProduction} style={{ minWidth: 170, minHeight: 48, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}>{busy ? <VergeLoader size={32} label="Making the plan" /> : <Clapperboard size={16} />}{busy ? 'Making plan…' : 'Make plan'}</button></div>
+          {costPrompt ? <div style={{ ...setupCard, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', border: `1px solid ${needsCostConfirm ? 'var(--vg-warning)' : T.done}` }}><AlertTriangle size={17} color={needsCostConfirm ? 'var(--vg-warning)' : T.done} /><div style={{ minWidth: 0, flex: 1 }}><strong style={{ color: T.bone, fontSize: 14 }}>Confirm this model’s estimate</strong><div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 3 }}>{costPrompt}</div></div><button type="button" disabled={costConfirmed || busy} onClick={() => { setCostConfirmed(true); setSuccessToast('Cost estimate confirmed.'); }} style={{ ...optionButton(costConfirmed), background: costConfirmed ? T.raised : T.live, color: costConfirmed ? T.done : 'var(--vg-on-btn)' }}>{costConfirmed ? 'Confirmed' : 'Confirm estimate'}</button></div> : null}
+          <div style={{ position: 'sticky', bottom: 0, zIndex: 12, display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', background: 'color-mix(in srgb, var(--space-surface-card) 96%, transparent)', backdropFilter: 'blur(16px)', border: `1px solid ${canGo ? T.done : T.dim}`, borderRadius: 12, padding: 14, boxShadow: '0 -12px 36px color-mix(in srgb, var(--space-text-primary) 10%, transparent)' }}><div style={{ minWidth: 0, flex: 1 }}><div style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Estimate: {plannedTargetDuration} credits</div><div style={{ color: T.muted, fontSize: 12, marginTop: 3 }}>{creditsLoading ? 'Checking balance…' : credits ? `Balance: ${credits.unlimited ? 'Unlimited' : formatCredits(credits.balance)} credits` : 'Balance is checked before rendering.'}</div>{disabledReason ? <div style={{ color: T.fault, fontSize: 12, marginTop: 4 }}>{disabledReason}</div> : null}</div><button type="button" className="s2v-lift" disabled={!canGo || busy || shotBusy || charBusy} onClick={submitProduction} style={{ minWidth: 170, minHeight: 48, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 10, padding: '11px 18px', fontSize: 14, fontWeight: 850 }}>{busy ? <VergeLoader size={32} label="Making the plan" /> : <Clapperboard size={16} />}{busy ? 'Making plan…' : 'Make plan'}</button></div>
           {err ? <div role="alert" style={{ color: T.fault, background: 'var(--vg-danger-bg)', border: `1px solid ${T.fault}`, borderRadius: 10, padding: 12, fontSize: 14 }}>{friendlyErrorMessage(err)}</div> : null}
         </div>
 
@@ -1231,9 +1486,9 @@ export function CreateScreen(props: {
               <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 3 }}>{canGo ? `${effectiveModel.label} · ${formatDuration(plannedTargetDuration)} · up to ${maxAuthorizedCredits} credits` : unmetReadiness[0]?.detail}</div>
             </div>
             {needsCostConfirm ? <button type="button" onClick={() => setCostConfirmed(true)} disabled={busy} style={{ minHeight: 44, background: T.canvas, color: T.live, border: `1px solid ${T.live}`, borderRadius: 10, padding: '9px 13px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>Confirm cost</button> : null}
-            <button type="button" className="s2v-lift" disabled={busy || shotBusy || charBusy} onClick={submitProduction} aria-disabled={!canGo} title={canGo ? primaryLabel : unmetReadiness[0]?.detail} style={{ minWidth: 190, minHeight: 48, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--space-text-on-primary)' : T.muted, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 11, padding: '11px 18px', fontSize: 13.5, fontWeight: 850, cursor: busy ? 'default' : 'pointer', boxShadow: canGo ? '0 10px 30px color-mix(in srgb, var(--space-brand-primary-500) 24%, transparent)' : 'none' }}>{busy ? <VergeLoader size={34} label="Planning your film" /> : <Clapperboard size={16} />}{busy ? 'Building plan…' : primaryLabel}</button>
+            <button type="button" className="s2v-lift" disabled={busy || shotBusy || charBusy} onClick={submitProduction} aria-disabled={!canGo} title={canGo ? primaryLabel : unmetReadiness[0]?.detail} style={{ minWidth: 190, minHeight: 48, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--vg-on-btn)' : T.muted, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 11, padding: '11px 18px', fontSize: 13.5, fontWeight: 850, cursor: busy ? 'default' : 'pointer', boxShadow: canGo ? '0 10px 30px color-mix(in srgb, var(--space-brand-primary-500) 24%, transparent)' : 'none' }}>{busy ? <VergeLoader size={34} label="Planning your film" /> : <Clapperboard size={16} />}{busy ? 'Building plan…' : primaryLabel}</button>
           </div>
-          {!canGo ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>{readinessItems.map((item) => <span key={item.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 999, padding: '5px 8px', background: item.ready ? 'color-mix(in srgb, var(--space-semantic-success-500) 10%, transparent)' : T.canvas, color: item.ready ? T.done : T.dim, border: `1px solid ${item.ready ? 'color-mix(in srgb, var(--space-semantic-success-500) 34%, transparent)' : T.line}`, fontSize: 12, fontWeight: 700 }}>{item.ready ? <Check size={10} /> : <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: T.dim }} />}{item.label}</span>)}</div> : null}
+          {!canGo ? <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>{readinessItems.map((item) => <span key={item.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, borderRadius: 999, padding: '5px 8px', background: item.ready ? 'color-mix(in srgb, var(--vg-success) 10%, transparent)' : T.canvas, color: item.ready ? T.done : T.dim, border: `1px solid ${item.ready ? 'color-mix(in srgb, var(--vg-success) 34%, transparent)' : T.line}`, fontSize: 12, fontWeight: 700 }}>{item.ready ? <Check size={10} /> : <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: T.dim }} />}{item.label}</span>)}</div> : null}
           {err ? <div role="alert" style={{ display: 'flex', gap: 7, alignItems: 'flex-start', color: T.fault, fontSize: 12, lineHeight: 1.45, marginTop: 10 }}><AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} /><span>{friendlyErrorMessage(err)}</span></div> : null}
         </section>
 
@@ -1242,12 +1497,12 @@ export function CreateScreen(props: {
           <div style={{ color: T.bone, fontSize: 18, fontWeight: 850, marginTop: 4 }}>Choose length and model</div>
           <div style={{ color: T.muted, fontSize: 14, lineHeight: 1.5, marginTop: 4 }}>Auto picks the best available model after reading your script. You can choose another available model.</div>
           <div role="radiogroup" aria-label="Target duration before script" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            {[4, 5, 8, 10, 15, 30, 45, 60, 90, 120].map((seconds) => <button key={seconds} type="button" role="radio" aria-checked={!durationCustom && targetDuration === seconds} onClick={() => { setDurationCustom(false); setTargetDuration(seconds); setMaxAuthorizedCredits((current) => Math.max(current, seconds)); }} disabled={busy} style={{ minWidth: 52, minHeight: 44, background: !durationCustom && targetDuration === seconds ? T.live : T.canvas, color: !durationCustom && targetDuration === seconds ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${!durationCustom && targetDuration === seconds ? T.live : T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 800 }}>{seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}</button>)}
-            <button type="button" role="radio" aria-checked={durationCustom} onClick={() => setDurationCustom(true)} disabled={busy} style={{ minHeight: 44, background: durationCustom ? T.live : T.canvas, color: durationCustom ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${durationCustom ? T.live : T.dim}`, borderRadius: 9, padding: '8px 14px', fontSize: 12.5, fontWeight: 800 }}>Custom</button>
+            {[4, 5, 8, 10, 15, 30, 45, 60, 90, 120].map((seconds) => <button key={seconds} type="button" role="radio" aria-checked={!durationCustom && targetDuration === seconds} onClick={() => { setDurationCustom(false); setTargetDuration(seconds); setMaxAuthorizedCredits((current) => Math.max(current, seconds)); }} disabled={busy} style={{ minWidth: 52, minHeight: 44, background: !durationCustom && targetDuration === seconds ? T.live : T.canvas, color: !durationCustom && targetDuration === seconds ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${!durationCustom && targetDuration === seconds ? T.live : T.dim}`, borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 800 }}>{seconds < 60 ? `${seconds}s` : `${seconds / 60}m`}</button>)}
+            <button type="button" role="radio" aria-checked={durationCustom} onClick={() => setDurationCustom(true)} disabled={busy} style={{ minHeight: 44, background: durationCustom ? T.live : T.canvas, color: durationCustom ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${durationCustom ? T.live : T.dim}`, borderRadius: 9, padding: '8px 14px', fontSize: 12.5, fontWeight: 800 }}>Custom</button>
           </div>
           {durationCustom ? <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, flexWrap: 'wrap' }}><label style={{ color: T.muted, fontSize: 12 }}>Minutes <input type="number" min={0} max={10} value={customMinutes} onChange={(event) => { const minutes = Math.min(10, Math.max(0, Number(event.target.value) || 0)); const seconds = minutes === 10 ? 0 : customSeconds; setCustomMinutes(minutes); if (minutes === 10) setCustomSeconds(0); try { const total = parseDurationInput(minutes, seconds); setTargetDuration(total); setMaxAuthorizedCredits((current) => Math.max(current, total)); } catch { /* below minimum */ } }} style={{ width: 72, marginLeft: 5, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 8 }} /></label><span style={{ color: T.dim }}>:</span><label style={{ color: T.muted, fontSize: 12 }}>Seconds <input type="number" min={0} max={59} value={customSeconds} onChange={(event) => { const seconds = customMinutes === 10 ? 0 : Math.min(59, Math.max(0, Number(event.target.value) || 0)); setCustomSeconds(seconds); try { const total = parseDurationInput(customMinutes, seconds); setTargetDuration(total); setMaxAuthorizedCredits((current) => Math.max(current, total)); } catch { /* below minimum */ } }} style={{ width: 72, marginLeft: 5, background: T.canvas, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: 8 }} /></label><span style={{ color: T.live, fontFamily: T.mono, fontSize: 12 }}>{formatDuration(targetDuration)} / 10:00 max</span></div> : null}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 13, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => setModelMode('auto')} style={{ minHeight: 44, background: modelMode === 'auto' ? T.live : T.canvas, color: modelMode === 'auto' ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${modelMode === 'auto' ? T.live : T.dim}`, borderRadius: 999, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}>Auto / best for this script</button>
+            <button type="button" onClick={() => setModelMode('auto')} style={{ minHeight: 44, background: modelMode === 'auto' ? T.live : T.canvas, color: modelMode === 'auto' ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${modelMode === 'auto' ? T.live : T.dim}`, borderRadius: 999, padding: '9px 14px', fontSize: 12, fontWeight: 800 }}>Auto / best for this script</button>
             <span style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, flex: '1 1 260px' }}>{autoPickReason}</span>
           </div>
           <div style={{ marginTop: 10 }}><ModelGrid compact options={modelOptions} value={modelMode === 'manual' ? videoModel : autoPick.id} onChange={(id) => { setSwitchNote(''); setModelMode('manual'); setVideoModel(id); }} disabled={busy} /></div>
@@ -1265,14 +1520,14 @@ export function CreateScreen(props: {
           <div style={{ background: T.raised, border: `1px solid ${T.dim}`, borderRadius: 12, padding: 12 }}>
             <div style={{ color: T.bone, fontSize: 12.5, fontWeight: 800 }}>Control</div>
             <div role="radiogroup" aria-label="Planning control" style={{ display: 'flex', gap: 7, marginTop: 8 }}>
-              {([['agentic', 'Agentic'], ['manual', 'Manual locks']] as const).map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={controlMode === id} onClick={() => setControlMode(id)} style={{ minHeight: 44, flex: 1, background: controlMode === id ? T.live : T.canvas, color: controlMode === id ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${controlMode === id ? T.live : T.dim}`, borderRadius: 9, fontSize: 12, fontWeight: 750, cursor: 'pointer' }}>{label}</button>)}
+              {([['agentic', 'Agentic'], ['manual', 'Manual locks']] as const).map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={controlMode === id} onClick={() => setControlMode(id)} style={{ minHeight: 44, flex: 1, background: controlMode === id ? T.live : T.canvas, color: controlMode === id ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${controlMode === id ? T.live : T.dim}`, borderRadius: 9, fontSize: 12, fontWeight: 750, cursor: 'pointer' }}>{label}</button>)}
             </div>
             <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.45, marginTop: 7 }}>{controlMode === 'manual' ? 'Per-shot model, script, prompt and reference choices stay locked until you change them.' : 'The director recommends compatible models and timing; you can still edit every block before approval.'}</div>
           </div>
           <div style={{ background: T.raised, border: `1px solid ${T.dim}`, borderRadius: 12, padding: 12 }}>
             <div style={{ color: T.bone, fontSize: 12.5, fontWeight: 800 }}>Execution</div>
             <div role="radiogroup" aria-label="Execution mode" style={{ display: 'flex', gap: 7, marginTop: 8 }}>
-              {([['review', 'Review plan'], ['automatic', 'Run automatically']] as const).map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={executionMode === id} onClick={() => setExecutionMode(id)} style={{ minHeight: 44, flex: 1, background: executionMode === id ? T.live : T.canvas, color: executionMode === id ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${executionMode === id ? T.live : T.dim}`, borderRadius: 9, fontSize: 12, fontWeight: 750, cursor: 'pointer' }}>{label}</button>)}
+              {([['review', 'Review plan'], ['automatic', 'Run automatically']] as const).map(([id, label]) => <button key={id} type="button" role="radio" aria-checked={executionMode === id} onClick={() => setExecutionMode(id)} style={{ minHeight: 44, flex: 1, background: executionMode === id ? T.live : T.canvas, color: executionMode === id ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${executionMode === id ? T.live : T.dim}`, borderRadius: 9, fontSize: 12, fontWeight: 750, cursor: 'pointer' }}>{label}</button>)}
             </div>
             <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.45, marginTop: 7 }}>{executionMode === 'automatic' ? 'Approve one maximum now. The durable runner continues inside it and pauses only for a real blocker or ceiling change.' : 'Storyboard and blocks remain editable until one approval starts paid generation.'}</div>
           </div>
@@ -1336,7 +1591,7 @@ export function CreateScreen(props: {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 9, flexWrap: 'wrap' }}>
               <input value={customDirection} onChange={(e) => setCustomDirection(e.target.value)} placeholder="Custom direction…" style={{ flex: '1 1 240px', minHeight: 42, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 9, color: T.bone, padding: '9px 11px', fontSize: 12.5 }} />
-              <button type="button" disabled={!customDirection.trim()} onClick={() => { setNote(customDirection.trim()); setBriefQuestionDone(true); }} style={{ minHeight: 42, background: customDirection.trim() ? T.live : T.canvas, color: customDirection.trim() ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${customDirection.trim() ? T.live : T.dim}`, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 700 }}>Use custom</button>
+              <button type="button" disabled={!customDirection.trim()} onClick={() => { setNote(customDirection.trim()); setBriefQuestionDone(true); }} style={{ minHeight: 42, background: customDirection.trim() ? T.live : T.canvas, color: customDirection.trim() ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${customDirection.trim() ? T.live : T.dim}`, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 700 }}>Use custom</button>
               <button type="button" onClick={() => setBriefQuestionDone(true)} style={{ minHeight: 42, background: 'transparent', color: T.muted, border: 'none', padding: '8px 10px', fontSize: 12, cursor: 'pointer' }}>Skip</button>
             </div>
           </div>
@@ -1383,7 +1638,7 @@ export function CreateScreen(props: {
             <div style={{ color: T.bone, fontSize: 13.5, fontWeight: 750 }}>3. Storyboard before production? <span style={{ color: T.dim, fontWeight: 500 }}>(optional)</span></div>
             <div role="radiogroup" aria-label="Storyboard preference" style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
               {[['Yes — show a storyboard', 'yes'], ['No — plan only', 'no']].map(([label, value]) => (
-                <button key={value} type="button" onClick={() => setStoryboard(value as 'yes' | 'no')} style={{ minHeight: 44, background: storyboard === value ? T.live : T.canvas, color: storyboard === value ? 'var(--space-text-on-primary)' : T.bone, border: `1px solid ${storyboard === value ? T.live : T.dim}`, borderRadius: 10, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>{label}</button>
+                <button key={value} type="button" onClick={() => setStoryboard(value as 'yes' | 'no')} style={{ minHeight: 44, background: storyboard === value ? T.live : T.canvas, color: storyboard === value ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${storyboard === value ? T.live : T.dim}`, borderRadius: 10, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>{label}</button>
               ))}
             </div>
           </div>
@@ -1397,13 +1652,13 @@ export function CreateScreen(props: {
                 disabled={busy || aiFormatBusy || !text.trim()}
                 title={mode === 'ai' ? 'Turn this idea into an editable production script.' : 'Propose a complete scene-formatted script without replacing your original.'}
                 onClick={() => void handleAiFormat()}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, background: busy || aiFormatBusy || !text.trim() ? T.raised : T.live, color: busy || aiFormatBusy || !text.trim() ? T.dim : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '10px 18px', fontSize: 13, fontWeight: 700, cursor: busy || aiFormatBusy || !text.trim() ? 'default' : 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, background: busy || aiFormatBusy || !text.trim() ? T.raised : T.live, color: busy || aiFormatBusy || !text.trim() ? T.dim : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '10px 18px', fontSize: 13, fontWeight: 700, cursor: busy || aiFormatBusy || !text.trim() ? 'default' : 'pointer' }}
               >
                 {aiFormatBusy ? <VergeLoader size={30} label="Formatting your script" /> : <Wand2 size={14} />}
                 {aiFormatBusy ? (mode === 'ai' && !selectedConcept ? 'Creating three approaches…' : 'Writing your script…') : mode === 'ai' ? (selectedConcept ? 'Write this script' : 'Write script') : 'Improve with AI'}
               </button>
               {mode === 'manual' ? (
-                <button type="button" onClick={() => { setOwnScriptChoice('skip'); setAiFormatProposal(''); }} style={{ minHeight: 42, background: ownScriptChoice === 'skip' ? T.done : 'transparent', color: ownScriptChoice === 'skip' ? 'var(--space-surface-bg)' : T.bone, border: `1px solid ${ownScriptChoice === 'skip' ? T.done : T.dim}`, borderRadius: 9, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                <button type="button" onClick={() => { setOwnScriptChoice('skip'); setAiFormatProposal(''); }} style={{ minHeight: 42, background: ownScriptChoice === 'skip' ? T.live : 'transparent', color: ownScriptChoice === 'skip' ? 'var(--vg-on-btn)' : T.bone, border: `1px solid ${ownScriptChoice === 'skip' ? T.live : T.dim}`, borderRadius: 9, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
                   Keep my words
                 </button>
               ) : null}
@@ -1425,7 +1680,7 @@ export function CreateScreen(props: {
                 <div style={{ color: T.bone, fontSize: 12.5, fontWeight: 750 }}>{mode === 'ai' ? 'Prompt-maker script — review before accepting' : 'Proposed improvements — your original is unchanged'}</div>
                 <pre style={{ maxHeight: 230, overflow: 'auto', whiteSpace: 'pre-wrap', color: T.muted, fontFamily: T.mono, fontSize: 12, lineHeight: 1.55, margin: '8px 0 0' }}>{aiFormatProposal}</pre>
                 <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button type="button" onClick={() => { setText(aiFormatProposal); setAiFormatProposal(''); if (mode === 'ai') { setIdeaScriptReady(true); setMode('manual'); setOwnScriptChoice('skip'); } else setOwnScriptChoice('improve'); }} style={{ background: T.live, color: 'var(--space-text-on-primary)', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5 }} />Accept script</button>
+                  <button type="button" onClick={() => { setText(aiFormatProposal); setAiFormatProposal(''); if (mode === 'ai') { setIdeaScriptReady(true); setMode('manual'); setOwnScriptChoice('skip'); } else setOwnScriptChoice('improve'); }} style={{ background: T.live, color: 'var(--vg-on-btn)', border: 'none', borderRadius: 8, padding: '8px 13px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} style={{ display: 'inline', verticalAlign: '-2px', marginRight: 5 }} />Accept script</button>
                   <button type="button" onClick={() => { setAiFormatProposal(''); if (mode === 'manual') setOwnScriptChoice('skip'); }} style={{ background: 'transparent', color: T.muted, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '8px 13px', fontSize: 12, cursor: 'pointer' }}>{mode === 'ai' ? 'Revise my idea' : 'Keep original'}</button>
                 </div>
               </div>
@@ -1489,7 +1744,7 @@ export function CreateScreen(props: {
           <div style={{ color: T.dim, fontSize: 12 }}>{catalogLine}</div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          <button onClick={() => setModelMode('auto')} style={{ background: modelMode === 'auto' ? T.live : T.raised, color: modelMode === 'auto' ? 'var(--space-text-on-primary)' : T.muted, border: `1px solid ${modelMode === 'auto' ? T.live : T.dim}`, borderRadius: 999, padding: '8px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+          <button onClick={() => setModelMode('auto')} style={{ background: modelMode === 'auto' ? T.live : T.raised, color: modelMode === 'auto' ? 'var(--vg-on-btn)' : T.muted, border: `1px solid ${modelMode === 'auto' ? T.live : T.dim}`, borderRadius: 999, padding: '8px 15px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
             Recommended — {autoPick.label}
           </button>
 
@@ -1584,7 +1839,7 @@ export function CreateScreen(props: {
                   className="s2v-lift"
                   disabled={busy || costConfirmed}
                   onClick={() => setCostConfirmed(true)}
-                  style={{ background: costConfirmed ? T.raised : T.live, color: costConfirmed ? T.done : 'var(--space-text-on-primary)', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 12.5, fontWeight: 700, cursor: costConfirmed || busy ? 'default' : 'pointer' }}
+                  style={{ background: costConfirmed ? T.raised : T.live, color: costConfirmed ? T.done : 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 12.5, fontWeight: 700, cursor: costConfirmed || busy ? 'default' : 'pointer' }}
                 >
                   {costConfirmed ? 'Cost confirmed' : `Yes — render on ${effectiveModel.label}`}
                 </button>
@@ -1605,7 +1860,7 @@ export function CreateScreen(props: {
             onClick={submitProduction}
             aria-disabled={!canGo}
             title={canGo ? primaryLabel : unmetReadiness[0]?.detail}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--space-text-on-primary)' : T.dim, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 11, padding: '14px 28px', fontSize: 15, fontWeight: 800, cursor: busy ? 'default' : 'pointer', boxShadow: canGo && !busy ? '0 8px 28px color-mix(in srgb, var(--space-brand-primary-500) 28%, transparent)' : 'none' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 10, background: canGo && !busy ? T.live : T.raised, color: canGo && !busy ? 'var(--vg-on-btn)' : T.dim, border: `1px solid ${canGo && !busy ? T.live : T.dim}`, borderRadius: 11, padding: '14px 28px', fontSize: 15, fontWeight: 800, cursor: busy ? 'default' : 'pointer', boxShadow: canGo && !busy ? '0 8px 28px color-mix(in srgb, var(--space-brand-primary-500) 28%, transparent)' : 'none' }}
           >
             {busy ? <VergeLoader size={38} label="Planning your film" /> : <Clapperboard size={17} />}
             {busy ? 'Building the production plan…' : primaryLabel}

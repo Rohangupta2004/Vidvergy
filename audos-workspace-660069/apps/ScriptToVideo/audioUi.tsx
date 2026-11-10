@@ -4,7 +4,7 @@
  * Every value is a Vidverge Design System v3 token (components/theme.ts,
  * injected as --vg-* by components/ui/GlobalStyles.tsx): 44px controls with a
  * 10px radius, 12px cards, 24px padding (16px at <=480px, as `.vg-panel`),
- * `--vg-control-border` on form controls and `--vg-gradient-selected` for the
+ * `--vg-control-border` on form controls and `--vg-gold-tint` for the
  * selected state. Nothing here hard-codes a colour, so form controls can no
  * longer fall back to the browser's white defaults.
  */
@@ -16,7 +16,7 @@ const AUDIO_UI_CSS = `
 .s2v-au-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; background: var(--vg-bg); border: 1px solid var(--vg-border); border-radius: 12px; }
 .s2v-au-tab { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 2px; min-width: 0; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--vg-secondary); text-align: left; cursor: pointer; font: inherit; }
 .s2v-au-tab:hover { background: var(--vg-hover); }
-.s2v-au-tab[aria-selected="true"] { background: var(--vg-gradient-selected); box-shadow: inset 0 0 0 1px var(--vg-accent); color: var(--vg-text); }
+.s2v-au-tab[aria-selected="true"] { background: var(--vg-gold-tint); box-shadow: inset 0 0 0 1px var(--vg-accent); color: var(--vg-text); }
 .s2v-au-tab-top { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; font-weight: 700; }
 .s2v-au-tab-state { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 500; color: var(--vg-muted); }
 .s2v-au-panel { margin-top: 12px; display: flex; flex-direction: column; gap: 16px; padding: 24px; background: var(--vg-surface); border: 1px solid var(--vg-border); border-radius: 12px; }
@@ -55,7 +55,7 @@ select.s2v-au-field option { background: var(--vg-raised); color: var(--vg-text)
 .s2v-au-sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
 .s2v-au-source { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px; border: 1px solid var(--vg-control-border); border-radius: 10px; background: var(--vg-bg); color: var(--vg-text); text-align: left; font: inherit; cursor: pointer; }
 .s2v-au-source:hover:not(:disabled) { background: var(--vg-hover); }
-.s2v-au-source[aria-checked="true"] { border-color: var(--vg-accent); background: var(--vg-gradient-selected); }
+.s2v-au-source[aria-checked="true"] { border-color: var(--vg-accent); background: var(--vg-gold-tint); }
 .s2v-au-source:disabled { cursor: not-allowed; opacity: 0.5; }
 .s2v-au-source-dot { flex: 0 0 12px; width: 12px; height: 12px; margin-top: 3px; border: 2px solid var(--vg-control-border); border-radius: 999px; }
 .s2v-au-source[aria-checked="true"] .s2v-au-source-dot { border-color: var(--vg-accent); background: var(--vg-accent); }

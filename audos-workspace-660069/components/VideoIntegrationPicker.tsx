@@ -46,17 +46,17 @@ export function VideoIntegrationPicker(props: VideoIntegrationPickerProps) {
 
   const meta = integrationMeta(props.integration);
   const selectedAvailability = engineAvailabilityBadge(props.model);
-  const selectClass = props.className || 'mt-1 w-full rounded-lg border border-[color-mix(in_srgb,var(--space-border-default)_80%,transparent)] bg-[var(--space-surface-card,#15120A)] px-3 py-2 text-sm text-[var(--space-text-primary,#F5E9C8)] outline-none focus:border-[var(--space-brand-primary-500,#D4920A)]';
+  const selectClass = props.className || 'mt-1 w-full rounded-lg border border-[var(--vg-control-border)] bg-[var(--vg-surface)] px-3 py-2 text-sm text-[var(--vg-text)] outline-none focus:border-[var(--vg-focus)]';
 
   return (
     <div style={props.style} className={props.className ? undefined : 'space-y-2'}>
       {props.label ? (
-        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--space-text-muted,#94A3B8)]">
+        <div className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--vg-muted)]">
           {props.label}
         </div>
       ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="block text-xs text-[var(--space-text-muted,#94A3B8)]">
+        <label className="block text-xs text-[var(--vg-muted)]">
           Provider
           <select
             className={selectClass}
@@ -74,7 +74,7 @@ export function VideoIntegrationPicker(props: VideoIntegrationPickerProps) {
             ))}
           </select>
         </label>
-        <label className="block text-xs text-[var(--space-text-muted,#94A3B8)]">
+        <label className="block text-xs text-[var(--vg-muted)]">
           Model
           <select
             className={selectClass}
@@ -97,15 +97,15 @@ export function VideoIntegrationPicker(props: VideoIntegrationPickerProps) {
         </label>
       </div>
       {meta?.blurb ? (
-        <p className="text-[11px] leading-relaxed text-[var(--space-text-muted,#9E8B55)]">{meta.blurb}</p>
+        <p className="text-[11px] leading-relaxed text-[var(--vg-muted)]">{meta.blurb}</p>
       ) : null}
       {selectedAvailability ? (
-        <p className="text-[11px] leading-relaxed text-[var(--space-semantic-warning,#fbbf24)]">
+        <p className="text-[11px] leading-relaxed text-[var(--vg-warning)]">
           {selectedAvailability.label}: {selectedAvailability.title}
         </p>
       ) : null}
-      {modelError ? <p className="text-[11px] text-[var(--space-semantic-danger,#f87171)]">{modelError}</p> : null}
-      {props.note ? <p className="text-[11px] text-[var(--space-text-muted,#94A3B8)]">{props.note}</p> : null}
+      {modelError ? <p className="text-[11px] text-[var(--vg-danger)]">{modelError}</p> : null}
+      {props.note ? <p className="text-[11px] text-[var(--vg-muted)]">{props.note}</p> : null}
     </div>
   );
 }

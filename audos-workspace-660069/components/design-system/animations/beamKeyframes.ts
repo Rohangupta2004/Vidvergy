@@ -153,13 +153,13 @@ export const GLOBAL_RESET_CSS = `
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 .lb-shell *:focus-visible {
-  outline: 1px solid rgba(240,180,41,0.6);
+  outline: 1px solid var(--vg-focus);
   outline-offset: 2px;
 }
 .lb-shell ::-webkit-scrollbar { width: 4px; height: 4px; }
 .lb-shell ::-webkit-scrollbar-track { background: ${colors.bgSurface}; }
-.lb-shell ::-webkit-scrollbar-thumb { background: rgba(240,180,41,0.3); border-radius: 2px; }
-.lb-shell { scrollbar-width: thin; scrollbar-color: rgba(240,180,41,0.3) ${colors.bgSurface}; }
+.lb-shell ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--vg-accent) 30%, transparent); border-radius: 2px; }
+.lb-shell { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--vg-accent) 30%, transparent) ${colors.bgSurface}; }
 `;
 
 export default BEAM_KEYFRAMES;

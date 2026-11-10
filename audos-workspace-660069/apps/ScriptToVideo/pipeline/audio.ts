@@ -41,7 +41,7 @@ import {
   ElevenModelId, NARRATION_MODEL, elevenModelLabel, elevenVoiceSettings,
   isElevenModelRejection, narrationModelForChars, nextNarrationModel,
 } from '../../../lib/elevenLabsModels';
-import { WORKSPACE_ID, getWorkspaceToken } from '../../../lib/workspace';
+import { WORKSPACE_ID, workspaceFetch } from '../../../lib/workspace';
 
 /**
  * THE TTS MODEL IS EXPLICIT NOW. Narration records on ElevenLabs v4, falling
@@ -71,12 +71,6 @@ export class AudioLayerError extends Error {
   }
 }
 
-async function audioHeaders(): Promise<Record<string, string>> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
-  return { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token };
-}
-
 class AudioRequestError extends Error {
   status: number;
   code: string;
@@ -91,7 +85,9 @@ class AudioRequestError extends Error {
 }
 
 async function audioPost(path: string, body: unknown): Promise<any> {
-  const res = await fetch(path, { method: 'POST', headers: await audioHeaders(), body: JSON.stringify(body) });
+  const res = await workspaceFetch(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
   const data = await res.json().catch(() => null);
   if (!res.ok || data?.success === false) {
     throw new AudioRequestError(

@@ -30,14 +30,18 @@
 import { useId } from 'react';
 import type { CSSProperties } from 'react';
 
-/** The house tone: gold filaments with a hot gold core, per components/theme.ts. */
-const BRAND_TONE = { edge: '#D4920A', mid: '#B87808', spark: '#F5C451' } as const;
+/** The house tone: gold filaments with a bright gold core, per components/theme.ts. */
+const BRAND_TONE = { edge: 'var(--vg-accent-pressed, #A8861F)', mid: 'var(--vg-accent, #D4AF37)', spark: 'var(--vg-accent-hover, #E6C45A)' } as const;
 
 /**
- * Drawn on top of a brand-filled surface — a gold-gradient button — where a
- * gold beam would disappear into its own background.
+ * Drawn on top of a primary-button surface (near-white in dark, near-black in
+ * light), where a theme-coloured beam would disappear into its own background.
  */
-const ON_BRAND_TONE = { edge: 'rgba(255,255,255,0.45)', mid: '#FFFFFF', spark: '#FFFFFF' } as const;
+const ON_BRAND_TONE = {
+  edge: 'color-mix(in srgb, var(--vg-on-btn, #0B0D12) 45%, transparent)',
+  mid: 'var(--vg-on-btn, #0B0D12)',
+  spark: 'var(--vg-on-btn, #0B0D12)',
+} as const;
 
 // `amber` and `ink` are the names the existing call sites pass.
 const TONES = {
@@ -219,7 +223,7 @@ export default function VergeLoader({
             fontSize: 13,
             letterSpacing: '0.12em',
             textTransform: 'uppercase',
-            color: tone === 'ink' || tone === 'onBrand' ? '#FFFFFF' : '#9E8B55',
+            color: tone === 'ink' || tone === 'onBrand' ? 'var(--vg-on-btn, #0B0D12)' : 'var(--vg-secondary, #C3C7D1)',
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, 'SF Mono', monospace",
           }}
         >

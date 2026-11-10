@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { sharedUnlessDelegated } from '../lib/tenant-delegation-scope';
 
 type QaJob = {
   id: number;
@@ -15,7 +16,7 @@ async function latestQaJob(): Promise<QaJob | null> {
   const client = workspaceDb();
   if (!client?.from) return null;
   const result = await client
-    .from('video_jobs', { shared: true })
+    .from('video_jobs', sharedUnlessDelegated())
     .orderBy('created_at', 'desc')
     .limit(20)
     .get();
@@ -83,7 +84,7 @@ export default function QaReviewNotice({ disabled = false }: { disabled?: boolea
             type="button"
             disabled={busy}
             onClick={() => void decide('deliver')}
-            className="rounded-lg bg-[var(--space-brand-primary-600)] px-2.5 py-1.5 font-semibold text-[var(--space-text-on-primary)] disabled:opacity-50"
+            className="rounded-lg bg-[var(--vg-btn)] px-2.5 py-1.5 font-semibold text-[var(--vg-on-btn)] hover:bg-[var(--vg-btn-hover)] disabled:opacity-50"
           >
             ✅ Deliver
           </button>
@@ -91,13 +92,13 @@ export default function QaReviewNotice({ disabled = false }: { disabled?: boolea
             type="button"
             disabled={busy}
             onClick={() => void decide('discard')}
-            className="rounded-lg border border-[var(--space-border-default)] px-2.5 py-1.5 font-semibold text-[var(--space-text-secondary)] disabled:opacity-50"
+            className="rounded-lg border border-[var(--space-border-default)] px-2.5 py-1.5 font-semibold text-[var(--space-text-secondary)] hover:text-[var(--vg-accent)] disabled:opacity-50"
           >
             🗑️ Discard
           </button>
         </div>
       </div>
-      {error ? <p className="mt-2 text-[var(--space-semantic-danger-500)]" role="alert">{error}</p> : null}
+      {error ? <p className="mt-2 text-[var(--vg-danger)]" role="alert">{error}</p> : null}
     </div>
   );
 }

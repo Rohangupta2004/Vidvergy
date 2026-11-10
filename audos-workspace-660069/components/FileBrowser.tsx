@@ -161,14 +161,14 @@ export default function FileBrowser({ fileAccessLogs = [] }: FileBrowserProps) {
                       key={path}
                       onClick={() => loadFileContent(path)}
                       className={`w-full text-left flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100 transition-colors ${
-                        selectedFile === path ? 'bg-blue-100 text-blue-700' : 'text-gray-700'
+                        selectedFile === path ? 'bg-[var(--vg-gold-tint)] text-[var(--vg-accent-pressed)]' : 'text-gray-700'
                       }`}
                     >
                       <File className="w-3 h-3" />
                       <span className="text-xs flex-1">{fileName}</span>
                       {recentAccess && (
                         <span className={`text-xs px-1 rounded ${
-                          recentAccess.action === 'read' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
+                          recentAccess.action === 'read' ? 'bg-[var(--vg-gold-tint)] text-[var(--vg-accent-pressed)]' : 'bg-gray-100 text-gray-700'
                         }`}>
                           {recentAccess.action === 'read' ? <Eye className="w-3 h-3" /> : <Edit className="w-3 h-3" />}
                         </span>
@@ -212,9 +212,9 @@ export default function FileBrowser({ fileAccessLogs = [] }: FileBrowserProps) {
               {[...fileAccessLogs].reverse().slice(0, 10).map((log, idx) => (
                 <div key={idx} className="text-xs flex items-center gap-2 text-gray-600">
                   {log.action === 'read' ? (
-                    <Eye className="w-3 h-3 text-blue-600" />
+                    <Eye className="w-3 h-3 text-[var(--vg-accent-pressed)]" />
                   ) : (
-                    <Edit className="w-3 h-3 text-green-600" />
+                    <Edit className="w-3 h-3 text-gray-600" />
                   )}
                   <span className="flex-1">{log.path}</span>
                   <span className="text-gray-400">

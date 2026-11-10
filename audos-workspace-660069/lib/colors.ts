@@ -165,15 +165,15 @@ export const tw = {
   // ---------------------------------------------------------------------------
   button: {
     // Primary action button (main CTA)
-    primary: 'bg-[image:var(--vg-gradient-action)] hover:bg-[image:var(--vg-gradient-action-hover)] text-[var(--vg-on-accent)] font-semibold transition-colors',
-    brand: 'bg-[image:var(--vg-gradient-action)] hover:bg-[image:var(--vg-gradient-action-hover)] text-[var(--vg-on-accent)] font-semibold transition-colors',
-    accent: 'bg-[image:var(--vg-gradient-action)] hover:bg-[image:var(--vg-gradient-action-hover)] text-[var(--vg-on-accent)] font-semibold transition-colors',
+    primary: 'bg-[var(--vg-btn)] hover:bg-[var(--vg-btn-hover)] active:bg-[var(--vg-btn-pressed)] text-[var(--vg-on-btn)] font-semibold transition-colors',
+    brand: 'bg-[var(--vg-btn)] hover:bg-[var(--vg-btn-hover)] active:bg-[var(--vg-btn-pressed)] text-[var(--vg-on-btn)] font-semibold transition-colors',
+    accent: 'bg-[var(--vg-btn)] hover:bg-[var(--vg-btn-hover)] active:bg-[var(--vg-btn-pressed)] text-[var(--vg-on-btn)] font-semibold transition-colors',
     // Secondary button
-    secondary: 'bg-[var(--vg-surface)] hover:bg-[var(--vg-hover)] border border-[var(--vg-control-border)] text-[var(--vg-text)] font-semibold transition-colors',
+    secondary: 'bg-transparent hover:bg-[var(--vg-gold-tint)] border border-[var(--vg-accent)] text-[var(--vg-accent)] font-semibold transition-colors',
     // Danger button
     danger: 'bg-[var(--vg-danger-bg)] border border-[var(--vg-danger)] text-[var(--vg-danger)] font-semibold transition-colors',
     // Ghost button (transparent)
-    ghost: 'hover:bg-[var(--space-surface-muted)] text-[var(--space-text-secondary)] transition-all',
+    ghost: 'bg-transparent text-[var(--vg-text)] hover:text-[var(--vg-accent)] transition-all',
     // Disabled state modifier
     disabled: 'opacity-50 cursor-not-allowed',
   },
@@ -237,10 +237,10 @@ export const tw = {
   badge: {
     default: 'px-2 py-0.5 text-xs font-medium rounded-md',
     primary: 'bg-[var(--space-surface-accent-soft)] text-[var(--space-text-brand)]',
-    accent: 'bg-[var(--space-brand-highlight-100)] text-[var(--space-text-accent)]',
+    accent: 'bg-[var(--vg-gold-tint)] text-[var(--space-text-accent)]',
     success: 'bg-[var(--space-semantic-success-50)] text-[var(--space-semantic-success)]',
     warning: 'bg-[var(--vg-warning-bg)] text-[var(--vg-warning)]',
-    danger: 'bg-[color-mix(in_srgb,#f87171_12%,transparent)] text-[var(--space-semantic-danger)]',
+    danger: 'bg-[var(--vg-danger-bg)] text-[var(--space-semantic-danger)]',
     neutral: 'bg-[var(--space-surface-muted)] text-[var(--space-text-secondary)]',
   },
   
@@ -300,7 +300,7 @@ export const tw = {
   
   category: {
     work: 'bg-[var(--space-surface-accent-soft)] text-[var(--space-text-brand)]',
-    ideas: 'bg-[var(--space-brand-highlight-100)] text-[var(--space-text-accent)]',
+    ideas: 'bg-[var(--vg-gold-tint)] text-[var(--space-text-accent)]',
     personal: 'bg-[var(--space-semantic-success-50)] text-[var(--space-semantic-success)]',
     other: 'bg-[var(--space-surface-muted)] text-[var(--space-text-secondary)]',
   },

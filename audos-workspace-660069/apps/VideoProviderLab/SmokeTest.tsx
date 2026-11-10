@@ -60,19 +60,19 @@ const SMOKE_CAP_MS = 150000;
 const LANES = 3;
 
 const C = {
-  bg: '#0D0B05',
-  card: '#15120A',
-  raised: '#1C1808',
-  line: 'rgba(245,158,11,0.18)',
-  lineStrong: 'rgba(245,158,11,0.45)',
-  accent: '#f59e0b',
-  ink: '#fffaf1',
-  soft: '#e6d9c9',
-  muted: '#bba899',
-  good: '#10b981',
-  bad: '#ef4444',
-  warn: '#f59e0b',
-  info: '#22d3ee',
+  bg: '#0B0D12',
+  card: '#12141B',
+  raised: '#1A1D26',
+  line: '#2A2E3A',
+  lineStrong: '#3A3F4D',
+  accent: '#D4AF37',
+  ink: '#F5F6F8',
+  soft: '#C3C7D1',
+  muted: '#9AA0AE',
+  good: '#3FB950',
+  bad: '#E5484D',
+  warn: '#FFB020',
+  info: '#E6C45A',
 };
 const FONT = "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";

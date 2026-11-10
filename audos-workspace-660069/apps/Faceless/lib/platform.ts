@@ -24,6 +24,7 @@ import {
   WORKSPACE_ID as WORKSPACE_UUID,
   callHook as callWorkspaceHook,
   spaceId,
+  workspaceFetch,
   workspaceTokenNow,
 } from '../../../lib/workspace';
 
@@ -151,9 +152,9 @@ export async function callClaude(options: ClaudeCallOptions): Promise<string> {
 
   let res: Response;
   try {
-    res = await fetch('/proxy/anthropic/v1/messages', {
+    res = await workspaceFetch('/proxy/anthropic/v1/messages', {
       method: 'POST',
-      headers: authHeaders(options.stage),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
@@ -212,16 +213,13 @@ export interface FastTextOptions {
  * the features built on it are load-bearing.
  */
 export async function callFastText(options: FastTextOptions): Promise<string> {
-  const token = workspaceToken();
-  if (!token) throw new Error('The workspace token is not available in this tab.');
-
   const messages: { role: 'system' | 'user'; content: string }[] = [];
   if (options.system) messages.push({ role: 'system', content: options.system });
   messages.push({ role: 'user', content: options.user });
 
-  const response = await fetch('/proxy/openai/v1/chat/completions', {
+  const response = await workspaceFetch('/proxy/openai/v1/chat/completions', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+    headers: { 'Content-Type': 'application/json' },
     signal: options.signal,
     body: JSON.stringify({
       model: FAST_TEXT_MODEL,
@@ -301,7 +299,7 @@ function tryParse<T>(value: string): T | undefined {
 
 /** Re-host a canvas data URL so Opus Vision can read it from a stable address. */
 export async function uploadDataUrl(dataUrl: string, fileName: string, stage: PipelineStageId): Promise<string> {
-  const res = await fetch('/api/upload/image', {
+  const res = await workspaceFetch('/api/upload/image', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-App-Id': appId() },
     body: JSON.stringify({ imageData: dataUrl, fileName }),

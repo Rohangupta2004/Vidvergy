@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Check, Copy, Download, Film, Loader2, Pencil, Play, RefreshCw, Search, X,
+  Check, Copy, Download, Film, Grid3X3, List, Loader2, Pencil, Play, RefreshCw, Search, X,
 } from 'lucide-react';
 import {
   backfillProviderLabHistory,
@@ -69,11 +69,13 @@ export default function VideoLibrary() {
   const [search, setSearch] = useState('');
   const [appFilter, setAppFilter] = useState('all');
   const [sort, setSort] = useState<'newest' | 'oldest'>('newest');
+  const [view, setView] = useState<'grid' | 'list'>('grid');
   const [playing, setPlaying] = useState<VideoHistoryRow | null>(null);
   const [editing, setEditing] = useState<VideoHistoryRow | null>(null);
   const [copiedId, setCopiedId] = useState('');
   const [fetchingProvider, setFetchingProvider] = useState(false);
   const [providerNotice, setProviderNotice] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (reset = true, quiet = false) => {
     if (quiet) setRefreshing(true);
@@ -112,10 +114,15 @@ export default function VideoLibrary() {
   }, []);
 
   useEffect(() => {
-    if (!playing) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setPlaying(null); };
-    window.addEventListener('keydown', close);
-    return () => window.removeEventListener('keydown', close);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && playing) setPlaying(null);
+      if (event.key === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !/input|textarea|select/i.test((event.target as HTMLElement)?.tagName || '')) {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [playing]);
 
   const apps = useMemo(() => {
@@ -169,7 +176,7 @@ export default function VideoLibrary() {
         <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--vg-accent)]">Every finished render</p>
-            <h1 className="mt-2 font-['Space_Grotesk'] text-3xl font-semibold tracking-tight text-[var(--vg-text)]">Library</h1>
+            <h1 className="mt-2 font-[var(--display)] text-3xl font-bold tracking-tight text-[var(--vg-text)]">Library</h1>
             <p className="mt-2 max-w-xl text-sm text-[var(--vg-secondary)]">Search, preview and download videos made across Verger and every specialist studio.</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -180,7 +187,7 @@ export default function VideoLibrary() {
               className="flex min-h-11 items-center gap-2 rounded-[10px] border border-[var(--vg-control-border)] bg-[var(--vg-surface)] px-4 text-sm font-semibold text-[var(--vg-text)] transition-colors hover:bg-[var(--vg-hover)] disabled:opacity-50"
             >
               {fetchingProvider ? <Loader2 className="h-4 w-4 animate-spin text-[var(--vg-accent)]" /> : <Film className="h-4 w-4 text-[var(--vg-accent)]" />}
-              Fetch Provider Lab renders
+              Import Provider Lab renders
             </button>
             <button
               type="button"
@@ -207,12 +214,14 @@ export default function VideoLibrary() {
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--vg-muted)]" />
                 <span className="sr-only">Search videos by title</span>
                 <input
+                  ref={searchRef}
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search by title"
+                  placeholder="Search your renders  /"
                   className="min-h-11 w-full rounded-[10px] border border-[var(--vg-control-border)] bg-[var(--vg-surface)] pl-10 pr-4 text-sm text-[var(--vg-text)] outline-none placeholder:text-[var(--vg-muted)] focus:border-[var(--vg-focus)] focus:outline focus:outline-2 focus:outline-offset-[3px] focus:outline-[var(--vg-focus)]"
                 />
               </label>
+              <div className="flex rounded-[10px] border border-[var(--vg-control-border)] bg-[var(--vg-surface)] p-1" role="group" aria-label="Library view"><button type="button" onClick={() => setView('grid')} aria-pressed={view === 'grid'} className={`grid min-h-10 min-w-10 place-items-center rounded-lg ${view === 'grid' ? 'bg-[var(--vg-accent-soft)] text-[var(--vg-accent)]' : 'text-[var(--vg-muted)]'}`} aria-label="Grid view"><Grid3X3 className="h-4 w-4" /></button><button type="button" onClick={() => setView('list')} aria-pressed={view === 'list'} className={`grid min-h-10 min-w-10 place-items-center rounded-lg ${view === 'list' ? 'bg-[var(--vg-accent-soft)] text-[var(--vg-accent)]' : 'text-[var(--vg-muted)]'}`} aria-label="List view"><List className="h-4 w-4" /></button></div>
               <select
                 value={sort}
                 onChange={(event) => setSort(event.target.value as 'newest' | 'oldest')}
@@ -263,14 +272,14 @@ export default function VideoLibrary() {
           <EmptyState title="No videos match this view" body="Try another app filter or clear the title search." />
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className={view === 'grid' ? 'columns-1 sm:columns-2 lg:columns-3 xl:columns-4 [column-gap:1rem]' : 'space-y-3'}>
               {shown.map((row) => (
-                <article key={row.id} className="overflow-hidden rounded-xl border border-[var(--vg-border)] bg-[var(--vg-surface)] transition-colors hover:border-[var(--vg-control-border)]">
-                  <button type="button" onClick={() => setPlaying(row)} className="group relative block aspect-video w-full bg-black" aria-label={`Play ${row.title}`}>
+                <article key={row.id} className={`mb-4 break-inside-avoid overflow-hidden rounded-xl border border-[var(--vg-border)] bg-[var(--vg-surface)] transition-colors hover:border-[var(--vg-control-border)] ${view === 'list' ? 'sm:grid sm:grid-cols-[240px_1fr]' : ''}`}>
+                  <button type="button" onClick={() => setPlaying(row)} className="group relative block w-full min-h-32 bg-black" aria-label={`Play ${row.title}`}>
                     {row.thumbnail_url ? (
-                      <img src={row.thumbnail_url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <img src={row.thumbnail_url} alt="" loading="lazy" className="h-auto min-h-32 w-full object-cover" />
                     ) : (
-                      <video src={row.video_url} preload="metadata" muted playsInline className="h-full w-full object-cover" />
+                      <video src={row.video_url} preload="metadata" muted playsInline className="h-auto min-h-32 w-full object-cover" />
                     )}
                     <span className="absolute inset-0 grid place-items-center bg-black/20 transition-colors group-hover:bg-black/35">
                       <span className="grid h-11 w-11 place-items-center rounded-full bg-[var(--vg-accent)] text-[var(--vg-on-accent)]"><Play className="h-5 w-5" /></span>
@@ -341,7 +350,7 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   return (
     <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-[var(--vg-control-border)] bg-[var(--vg-surface)] px-6 text-center">
       <Film className="h-7 w-7 text-[var(--vg-accent)]" />
-      <h2 className="mt-3 font-['Space_Grotesk'] text-lg font-semibold text-[var(--vg-text)]">{title}</h2>
+      <h2 className="mt-3 font-[var(--display)] text-lg font-semibold text-[var(--vg-text)]">{title}</h2>
       <p className="mt-1 max-w-sm text-sm text-[var(--vg-secondary)]">{body}</p>
     </div>
   );

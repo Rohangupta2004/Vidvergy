@@ -13,6 +13,7 @@
   "plans": [
     {
       "id": "creator-monthly",
+      "priceId": null,
       "name": "Creator",
       "priceCents": 3500,
       "currency": "usd",
@@ -23,6 +24,7 @@
     },
     {
       "id": "pro-monthly",
+      "priceId": null,
       "name": "Pro",
       "priceCents": 7000,
       "currency": "usd",
@@ -30,6 +32,18 @@
       "intervalCount": 1,
       "trialDays": 0,
       "planTier": "pro"
+    },
+    {
+      "id": "credits-60",
+      "priceId": null,
+      "name": "Credits 60",
+      "priceCents": 900,
+      "currency": "usd",
+      "interval": "one_time",
+      "intervalCount": 1,
+      "trialDays": 0,
+      "planTier": "payg",
+      "credits": 60
     }
   ]
 }

@@ -1,8 +1,8 @@
 /**
  * CREATIVE DIRECTOR — the reasoning brain of the Script-to-Video pipeline.
  *
- * Text writing and reasoning use Claude Opus 5 as the primary model with
- * adaptive thinking, then GPT Sol at high/xhigh as the explicit fallback.
+ * Text writing and reasoning use Claude Opus 5.5 as the primary model with
+ * adaptive thinking, then GPT 6.1 Sol at high/xhigh as the explicit fallback.
  * Multimodal frame inspection uses GPT 6.1 Sol vision because the approved
  * proxies expose no Gemini text/vision route for this call. Both proxy paths require the workspace token.
  */
@@ -20,7 +20,12 @@ import {
 import { resolveVideoModel } from './videoModelService';
 import { prepareContextBody, requestWithContextRetry } from '../contextBudget';
 import { scrubProviderPrompt } from './promptDirector';
-import { workspaceFetch } from '../../../lib/workspace';
+import {
+  SHOT_SPEC_MAX_REWRITES, SHOT_SPEC_RULES, assembleShotPrompt, defaultMustNot, mergeNegative, missingShotSections,
+  promptFamilyFor, promptFamilyGuidance, shotPromptBudget, shotRewriteNote, slowMotionRequested, timecodeLabels,
+} from './shotPromptSpec';
+import { filmStyleText, videoStyleBans } from '../styleGuard';
+import { getWorkspaceToken, workspaceFetch } from '../../../lib/workspace';
 
 interface OpusCall {
   system: string;
@@ -43,14 +48,10 @@ export async function askOpus(call: OpusCall): Promise<string> {
 }
 
 const S2V_GPT_MODEL = 'gpt-6.1-sol';
-const S2V_OPUS_MODEL = 'claude-opus-5';
+const S2V_OPUS_MODEL = 'claude-opus-5-5';
 // Platform text proxy contract (verified 2026-10-22): background work uses
 // 16,000 max completion tokens; gpt-6.1-sol accepts high/xhigh, never none.
 const S2V_TEXT_MAX_TOKENS = 16000;
-
-function workspaceToken(): string {
-  return typeof window === 'undefined' ? '' : String((window as any).__workspaceDb?.token || '');
-}
 
 const RETRYABLE_PROXY_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const retryPause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -125,8 +126,35 @@ async function callGptVision(system: string, user: string, token: string, images
   return { text, stopReason: String(data?.choices?.[0]?.finish_reason || ''), writtenBy: 'GPT Sol' };
 }
 
+/** Text-only GPT 6.1 Sol call used when Claude Opus 5.5 cannot answer. The
+ * model takes no tools on this route and never accepts reasoning_effort none. */
+async function callGptText(system: string, user: string, effort: 'high' | 'xhigh'): Promise<OpusReply> {
+  const messages: any[] = [{ role: 'user', content: user }];
+  const call = await requestWithContextRetry({
+    prepare: (aggressive) => prepareContextBody({
+      system, messages, aggressive,
+      buildBody: (safeSystem, safeMessages) => ({ model: S2V_GPT_MODEL, reasoning_effort: effort, max_completion_tokens: S2V_TEXT_MAX_TOKENS, messages: [{ role: 'system', content: safeSystem }, ...safeMessages], stream: false }),
+    }),
+    send: async (body) => proxyPostJson('/proxy/openai/v1/chat/completions', body, 'GPT 6.1 Sol', 240_000),
+  });
+  const data: any = call.result;
+  const text = String(data?.choices?.[0]?.message?.content || '');
+  if (!text.trim()) throw new Error('GPT 6.1 Sol returned no visible answer.');
+  return { text, stopReason: String(data?.choices?.[0]?.finish_reason || ''), writtenBy: 'GPT Sol' };
+}
+
+/** How many clips a requested runtime needs on one model, so the planner can
+ * size the plan to the exact total instead of defaulting every clip to max. */
+function durationClipGuide(total: number, model: { minDuration?: number; safeMaxDuration: number; discreteDurations?: boolean; supportedDurations: number[] }): string {
+  const min = Math.max(1, Number(model.minDuration) || 1);
+  const max = Math.max(min, Number(model.safeMaxDuration) || min);
+  const fewest = Math.max(1, Math.ceil(total / max));
+  const most = Math.max(fewest, Math.floor(total / min));
+  return `On this model that means between ${fewest} and ${most} clips, each ${model.discreteDurations ? `${model.supportedDurations.join('s or ')}s` : `${min}–${max}s`}.`;
+}
+
 export async function askGptVisionJson<T = any>(system: string, user: string, images: string[]): Promise<T> {
-  const token = workspaceToken();
+  const token = await getWorkspaceToken();
   if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const safeImages = images.filter((url) => /^https:\/\//.test(String(url || ''))).slice(0, 10);
   if (!safeImages.length) throw new Error('GPT vision needs at least one durable image URL.');
@@ -134,12 +162,13 @@ export async function askGptVisionJson<T = any>(system: string, user: string, im
   return extractJson<T>(reply.text);
 }
 
-/** Claude Opus 5 writes every director response. When images are present,
+/** Claude Opus 5.5 writes every director response. When images are present,
  * GPT 6.1 Sol performs only the documented vision step and hands a short text
- * description to Opus; the full prompt-writing call never switches models. */
+ * description to Opus. If Opus cannot answer, GPT 6.1 Sol writes the same
+ * response from the same system prompt as the fallback. */
 export async function askOpusRaw({ system, user, images = [], effort = 'medium' }: OpusCall): Promise<OpusReply> {
   const safeImages = images.filter((url) => /^https:\/\//.test(String(url || ''))).slice(0, 10);
-  const token = workspaceToken();
+  const token = await getWorkspaceToken();
   if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   let opusUser = user;
   if (safeImages.length) {
@@ -155,8 +184,13 @@ export async function askOpusRaw({ system, user, images = [], effort = 'medium' 
   try {
     return await callOpus(system, opusUser, token);
   } catch (primaryError: any) {
-    console.error('[ScriptToVideo] Opus director failed', String(primaryError?.message || primaryError));
-    throw new Error('Claude Opus could not save the plan or prompt. Your script is safe and no video generation credits were used. Tap Retry.');
+    console.error('[ScriptToVideo] Opus director failed; trying GPT 6.1 Sol', String(primaryError?.message || primaryError));
+    try {
+      return await callGptText(system, opusUser, effort === 'xhigh' ? 'xhigh' : 'high');
+    } catch (fallbackError: any) {
+      console.error('[ScriptToVideo] GPT 6.1 Sol fallback failed', String(fallbackError?.message || fallbackError));
+      throw new Error('Claude Opus could not save the plan or prompt. Your script is safe and no video generation credits were used. Tap Retry.');
+    }
   }
 }
 
@@ -544,12 +578,17 @@ const SEGMENT_RULES = `RULES:
 - The script is the source of truth. Never rewrite it. Split it into contiguous script_segment slices that together cover the whole script in order.
 - VERBATIM AND CONTIGUOUS (the pipeline verifies this against the script text): every script_segment is copied character-for-character from the script — never paraphrased, cleaned up, summarized or reordered. The first clip starts at the script's very first words and each next clip starts exactly where the previous one ended, so no word of the script is skipped; the last clip ends at the script's very last words. Title lines, headings, speaker labels and stage directions are part of the script and belong inside the clips' segments (they inform the visuals; they are never shown as text). A segment that cannot be found verbatim in the script is rejected and re-planned.
 - There is NO cap on the number of clips — the script decides. A 30-second script may need 3 clips; an 8-minute story typically needs 50–100. Every distinct beat gets its own clip. Do not pad; do not compress several distinct beats into one clip; never stop early — the clip list must run all the way to the script's final words. Keep "summary" and "visual_goal" to ONE tight line each so a long script still fits in your reply.
-- CHARACTER ANALYSIS (full-script, hard rule): read the COMPLETE script before returning any character. Propose every NAMED on-screen character, main or side, even when they appear in only one scene, plus every narrator/voiceover. Exclude only unnamed crowds, extras and background passers-by. For each return kind (main|narrator|side), role, age_appearance, wardrobe, personality_voice, a concise combined appearance lock, and coverage entries naming every scene number plus EXACT script lines/passages in which the person appears or speaks.
+- CHARACTER ANALYSIS (full-script, hard rule): read the COMPLETE script before returning any character. Propose every NAMED on-screen character, main or side, even when they appear in only one scene, plus every narrator/voiceover. Exclude only unnamed crowds, extras and background passers-by. For each return kind (main|narrator|side), role, age_appearance, wardrobe, personality_voice, a concise combined appearance lock, and coverage entries naming every scene number plus EXACT script lines/passages in which the person appears or speaks. A narrator is voice-only: leave its wardrobe and appearance empty.
 - SCRIPT GROUNDING: never invent a trait that contradicts the script. Copy explicit cues faithfully. A useful visual sheet may require an unspecified age band, wardrobe detail, or voice quality; make only a conservative inference and list the corresponding field name in inferred_fields. An empty unspecified field is better than false certainty. Never claim inferred wording came from the script.
-- NARRATOR / VOICEOVER: a narrator/VO is ALWAYS returned as kind "narrator", even when never shown on camera, with the exact VO lines in coverage. The later cast-review step decides how to visualize the sheet; do not drop the narrator from the cast.
+- NARRATOR / VOICEOVER: a narrator/VO is ALWAYS returned as kind "narrator" with the exact VO lines in coverage; do not drop the narrator from the cast, because its voice is needed. The narrator is a VOICE ONLY: it is NEVER shown on camera, never listed in any clip's characters array, never described as a presenter, host or person in frame, and never given a visual appearance, wardrobe or character sheet.
 - SPOKEN WORDS (do not skip): read the script for attributed lines and follow the FILM SOUND POLICY appended below. On-camera character speech uses kind "character"; narrator/VO speech uses kind "narrator" only when narration is enabled. Copy EXACT words from the accepted script — never paraphrase or pad. A disabled speech type becomes null.
 - No readable on-screen text, UI, logos or captions in any generated clip — the video model cannot render text reliably. (Spoken dialogue is allowed where the script has it — text on screen is not.)
-- POST-PRODUCTION TEXT (hard rule): when the accepted script EXPLICITLY requires visible copy such as a URL, brand name, tagline, CTA, statistic or end card, put it in on_screen_text instead of any clip prompt. Copy the required characters exactly. For each item name the 1-based scene_numbers, a start_s/end_s range relative to the first named scene, position top|center|bottom, and style clean|boxed|accent. Do not infer display copy that the script did not request.`;
+- POST-PRODUCTION TEXT (hard rule): when the accepted script EXPLICITLY requires visible copy such as a URL, brand name, tagline, CTA, statistic or end card, put it in on_screen_text instead of any clip prompt. Copy the required characters exactly. For each item name the 1-based scene_numbers, a start_s/end_s range relative to the first named scene, position top|center|bottom, and style clean|boxed|accent. Do not infer display copy that the script did not request.
+- RUNTIME CONTRACT (hard rule): when the user message carries a REQUESTED FINAL DURATION, the duration_s values of ALL clips — across this and every continuation pass — must add up to exactly that many seconds. Size each clip from the beat it carries (spoken words at the speaking rate above plus room for the action), stay inside the approved model's legal per-clip range, and spread time so no clip is starved or padded. Split one long beat into consecutive continuous clips rather than exceeding the model maximum. The requested runtime wins over any default clip length.
+- HOOK: the first clip opens on its strongest, most specific image or action within its first 2 seconds — a striking subject, motion or contrast that makes the viewer stay. No slow establishing shot, logo reveal or greeting first.
+- STORY BEATS: every clip carries exactly one clear beat that moves the story forward (hook → problem or desire → turn → payoff → close or call to action, as far as the script supports it). Name that beat in summary so every clip has a purpose the viewer can feel.
+- CONSISTENT CAST: each recurring character keeps one appearance lock (age band, face and hair, build, wardrobe, colours) repeated verbatim in every visual_goal where they appear; never rename, re-age or re-dress them between clips.
+- CONCRETE VISUALS: every visual_goal is a filmable prompt — the subject and their exact frame position, the one visible action, the setting with two or three specific props or textures, shot size and camera move, lens feel, motivated light and colour palette. Never abstract wording such as “success”, “innovation” or “a sense of”.`;
 
 const SEGMENT_SYSTEM = `You are the director of a sequential script-to-video pipeline. You read the ENTIRE script first and understand the complete story — characters, world, arc, tone — BEFORE splitting anything. Then you break the script into video clips by STORY LOGIC, never mechanical time slices. Reply with ONE JSON object and nothing else.
 
@@ -684,7 +723,7 @@ export async function segmentScript(params: {
   const header = [
     `ASPECT RATIO: ${params.aspect}`,
     `APPROVED MODEL CONTRACT: ${approvedModel.label} (${approvedModel.apiModel}); ${approvedModel.discreteDurations ? `only ${approvedModel.supportedDurations.join('s or ')}s` : `every whole second from ${approvedModel.minDuration || 1}s through ${approvedModel.safeMaxDuration}s`}; max references ${approvedModel.maxReferenceImages}; native generated audio ${approvedModel.audioSupported ? 'supported' : 'not supported'}. Respect this model unless the plan returns an explicit incompatibility warning.`,
-    params.targetDuration ? `REQUESTED FINAL DURATION: exactly ${Math.round(params.targetDuration)} seconds across all clips. Never pad a short beat merely to fill a model maximum; use internal timed beats inside each paid clip.` : '',
+    params.targetDuration ? `REQUESTED FINAL DURATION: exactly ${Math.round(params.targetDuration)} seconds across all clips — the duration_s values of every clip you return must add up to exactly ${Math.round(params.targetDuration)}. ${durationClipGuide(Math.round(params.targetDuration), approvedModel)} Never pad a short beat merely to fill a model maximum; use internal timed beats inside each paid clip.` : '',
     params.videoStyle ? `APPROVED VISUAL STYLE: ${params.videoStyle}` : '',
     params.audioPolicy ? `APPROVED AUDIO POLICY: ${params.audioPolicy}` : '',
     Number.isFinite(Number(params.maxAuthorizedCredits)) ? `AUTHORIZED MAXIMUM: ${Number(params.maxAuthorizedCredits)} credits. Planning must stay at or under this ceiling or return a warning; do not silently exceed it.` : '',
@@ -802,6 +841,7 @@ export async function segmentScript(params: {
     const speaker = characterById.get(speakerId);
     const offscreen = Boolean(scene.dialogue && (scene.dialogue.kind === 'narrator' || /\b(?:off[- ]?screen|out of frame|voice[- ]?over|narrat)/i.test(`${scene.visual_goal} ${scene.summary}`)));
     if (offscreen && speakerId) scene.characters = scene.characters.filter((id) => id !== speakerId);
+    if (Array.isArray(scene.characters)) scene.characters = scene.characters.filter((id) => characterById.get(id)?.kind !== 'narrator');
     if (speaker && !speaker.voice.voice_id && params.voices?.length) {
       const selected = params.voices.find((voice) => voice.id) || params.voices[0];
       if (selected?.id) {
@@ -811,23 +851,58 @@ export async function segmentScript(params: {
     }
   }
 
-  const critic = await askOpusJsonDetailed<{ pass: boolean; issues?: string[] }>({
-    system: `You are the final plan critic. Compare every proposed clip against the accepted source script and model contract. Reply only with {"pass":boolean,"issues":string[]}. Reject any invented event, claim, character, dialogue or prop; any omitted requested beat; any ON-SCREEN character listed but not explicitly placed in frame; any vague action; any teleporting, morphing or visibly impossible body or object motion; any dialogue split mid-line; or any duration/reference rule violation. Off-screen speakers and narrators are valid when omitted from the characters array. voice_id is optional metadata and never a rejection reason. engine_reason is deterministic pipeline metadata and must be judged only against the supplied approved model contract; do not invent capabilities from shot intent. script_segment is immutable source text: never reject wording inside it for a style conflict, because provider prompts apply the approved style and safety scrub later. Be specific and testable.`,
-    user: `MODEL CONTRACT: ${header}\n\nPROPOSED CLIPS:\n${JSON.stringify(scenes)}`,
+  const criticSystem = `You are the final plan critic. Compare every proposed clip against the accepted source script and model contract. Reply only with {"pass":boolean,"issues":string[]}. Reject any invented event, claim, character, dialogue or prop; any omitted requested beat; any ON-SCREEN character listed but not explicitly placed in frame; any vague action; any teleporting, morphing or visibly impossible body or object motion; any dialogue split mid-line; or any duration/reference rule violation. Off-screen speakers are valid when omitted from the characters array; a narrator is voice-only and must never be listed in it or shown on camera. voice_id is optional metadata and never a rejection reason. engine_reason is deterministic pipeline metadata and must be judged only against the supplied approved model contract; do not invent capabilities from shot intent. script_segment is immutable source text: never reject wording inside it for a style conflict, because provider prompts apply the approved style and safety scrub later. Never reject the plan for its TOTAL runtime: the pipeline re-times clip lengths to the requested total deterministically after this review, so judge only each clip's own legality. Be specific and testable.`;
+  const critique = (candidate: SegmentedPlan['scenes']) => askOpusJsonDetailed<{ pass: boolean; issues?: string[] }>({
+    system: criticSystem,
+    user: `MODEL CONTRACT: ${header}\n\nPROPOSED CLIPS:\n${JSON.stringify(candidate)}`,
     maxTokens: 16000,
     effort: 'xhigh',
   });
+  let critic = await critique(scenes);
   if (critic.writtenBy === 'Opus') writer_model = 'Opus';
   if (critic.value?.pass !== true) {
-    const issues = (Array.isArray(critic.value?.issues) ? critic.value.issues : ['The critic found an unspecified mismatch.']).map(String).join(' ');
-    throw new Error(`The critic rejected this plan before any render was submitted: ${issues} Revise the idea or retry planning.`);
+    const issues = (Array.isArray(critic.value?.issues) ? critic.value.issues : ['The critic found an unspecified mismatch.']).map(String);
+    const repair = await askOpusJsonDetailed<{ scenes?: unknown[] }>({
+      system: `You are the repair pass for a script-to-video plan. Fix every critic issue in one pass and reply only with {"scenes":[...]}. Return the SAME number of clips in the SAME order. Keep each script_segment and duration_s exactly unchanged. You may revise only summary, visual_goal, transition, timed_beats, characters, and visual staging. Timed beats must cover the full clip, keep each complete spoken line together, use an explicit cut when location/time/subject changes, motivate every object movement with a visible cause, place every listed character explicitly in frame, and remove a character id when that person is intentionally off screen. Do not add claims, props, characters, dialogue, or model capabilities.`,
+      user: `SOURCE SCRIPT:\n"""\n${script}\n"""\n\nMODEL CONTRACT:\n${header}\n\nCRITIC ISSUES:\n${issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n')}\n\nPLAN TO REPAIR:\n${JSON.stringify(scenes)}`,
+      maxTokens: 16000,
+      effort: 'xhigh',
+    });
+    if (repair.writtenBy === 'Opus') writer_model = 'Opus';
+    const suggestions = normalizeSegmentScenes(repair.value?.scenes);
+    if (suggestions.length !== scenes.length) {
+      throw new Error('The production plan could not be repaired safely. Your script is saved and no video credits were used. Tap Retry.');
+    }
+    const knownCharacters = new Set(characters.map((character) => character.id));
+    const repaired = scenes.map((original, index) => {
+      const suggestion = suggestions[index];
+      return {
+        ...original,
+        summary: suggestion.summary || original.summary,
+        visual_goal: suggestion.visual_goal || original.visual_goal,
+        transition: suggestion.transition,
+        timed_beats: suggestion.timed_beats.length ? suggestion.timed_beats : original.timed_beats,
+        characters: suggestion.characters.filter((id) => knownCharacters.has(id)),
+      };
+    });
+    const repairedCoverage = locateCoverage(source, repaired);
+    if (repairedCoverage.kept.length !== repaired.length || repairedCoverage.nextToken < source.length) {
+      throw new Error('The repaired plan changed the accepted script boundaries. Your script is saved and no video credits were used. Tap Retry.');
+    }
+    scenes.splice(0, scenes.length, ...repaired);
+    critic = await critique(scenes);
+    if (critic.writtenBy === 'Opus') writer_model = 'Opus';
+    if (critic.value?.pass !== true) {
+      throw new Error('The production plan still has a continuity or timing conflict after an automatic repair. Your script is saved and no video credits were used. Tap Retry.');
+    }
+    planningNotes.push('The critic repaired timing, continuity or physical staging before the plan was saved.');
   }
   return { title, writer_model, story_summary, world, visual_style, characters, on_screen_text, scenes, notes: Array.from(new Set(planningNotes)) };
 }
 
 const CAST_SYSTEM = `You are the casting continuity editor for a script-to-video production. Read the COMPLETE script and return ONE JSON object with a proposed cast. Do not rewrite the script.
 
-Include every named on-screen character, even a side character who appears in only one scene; include a narrator or voiceover as kind "narrator" even when voice-only. Exclude only unnamed extras, crowds and background passers-by. For each person fill EVERY field: name, kind, role, age/appearance cues, wardrobe, personality/voice cues, a concise combined appearance lock, a structured voice {tone, accent, pace, voice_id?, voice_name?}, and every scene/EXACT script line in which they appear or speak. Never invent a trait that contradicts the script. Conservative inferences are required when a field is unspecified; name every inferred field in inferred_fields. role and voice must never be empty. Use a specific voice_id only when it appears in AVAILABLE VOICES; otherwise omit it while still filling tone/accent/pace.
+Include every named on-screen character, even a side character who appears in only one scene; include a narrator or voiceover as kind "narrator" for its voice only — the narrator is never shown on camera, so leave its age_appearance, wardrobe and appearance empty. Exclude only unnamed extras, crowds and background passers-by. For each person fill EVERY field: name, kind, role, age/appearance cues, wardrobe, personality/voice cues, a concise combined appearance lock, a structured voice {tone, accent, pace, voice_id?, voice_name?}, and every scene/EXACT script line in which they appear or speak. Never invent a trait that contradicts the script. Conservative inferences are required when a field is unspecified; name every inferred field in inferred_fields. role and voice must never be empty. Use a specific voice_id only when it appears in AVAILABLE VOICES; otherwise omit it while still filling tone/accent/pace.
 
 OUTPUT: { "characters": [{ "id": snake_case str, "name": str, "kind": "main"|"narrator"|"side", "role": str, "age_appearance": str, "wardrobe": str, "personality_voice": str, "voice": {"tone":str,"accent":str,"pace":str,"voice_id"?:str,"voice_name"?:str}, "appearance": str, "coverage": [{"scene": whole number, "lines": [EXACT str]}], "inferred_fields": [str] }] }`;
 
@@ -852,7 +927,7 @@ function normalizePlannedOnScreenText(list: unknown): PlannedOnScreenText[] {
   return (Array.isArray(list) ? list : [])
     .map((item: any) => ({
       text: String(item?.text || '').replace(/\s+/g, ' ').trim().slice(0, 240),
-      scene_numbers: Array.from(new Set((Array.isArray(item?.scene_numbers) ? item.scene_numbers : [item?.scene_number]).map((value: unknown) => Math.max(1, Math.round(Number(value) || 1))))),
+      scene_numbers: Array.from(new Set<number>((Array.isArray(item?.scene_numbers) ? item.scene_numbers : [item?.scene_number]).map((value: unknown): number => Math.max(1, Math.round(Number(value) || 1))))),
       start_s: Math.max(0, Number(item?.start_s) || 0),
       end_s: Math.max(0.25, Number(item?.end_s) || 3),
       position: (['top', 'center', 'bottom'].includes(String(item?.position)) ? item.position : 'bottom') as PlannedOnScreenText['position'],
@@ -878,16 +953,18 @@ function normalizeSegmentCharacters(list: unknown): SegmentedPlan['characters'] 
         ...(rawVoice.voice_name ? { voice_name: String(rawVoice.voice_name).slice(0, 120) } : {}),
       };
       const fallbackAppearance = [ageAppearance, wardrobe].filter(Boolean).join('; ');
+      // The narrator is voice-only, so it never carries a visual appearance.
+      const voiceOnly = kind === 'narrator';
       return {
         id: String(c.id || `char_${i + 1}`).toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
         name: String(c.name || (kind === 'narrator' ? 'Narrator' : `Character ${i + 1}`)).slice(0, 80),
         kind,
         role: String(c.role || (kind === 'narrator' ? 'Narrator / voiceover' : kind === 'side' ? 'Recurring supporting character' : 'Main character')).slice(0, 240),
-        age_appearance: ageAppearance,
-        wardrobe,
+        age_appearance: voiceOnly ? '' : ageAppearance,
+        wardrobe: voiceOnly ? '' : wardrobe,
         personality_voice: personalityVoice,
         voice,
-        appearance: String(c.appearance || fallbackAppearance || 'Appearance inferred conservatively from the accepted script.').slice(0, 800),
+        appearance: voiceOnly ? '' : String(c.appearance || fallbackAppearance || 'Appearance inferred conservatively from the accepted script.').slice(0, 800),
         coverage: (Array.isArray(c.coverage) ? c.coverage : []).slice(0, 80).map((item: any) => ({
           scene: Math.max(1, Math.round(Number(item?.scene) || 1)),
           lines: (Array.isArray(item?.lines) ? item.lines : []).slice(0, 20).map((line: unknown) => String(line).slice(0, 800)),
@@ -1037,11 +1114,11 @@ REFERENCE PRIORITY:
 
 DIALOGUE (when the scene context includes an ON-CAMERA DIALOGUE line):
 - Stage the delivery VISUALLY: the speaking character faces or addresses the scene naturally, mouth clearly visible where the framing allows, gestures and expression matching the line's delivery and emotion.
-- Do NOT write the spoken words into your prompt text — the pipeline appends an explicit, exactly-worded Dialogue block (speaker, delivery, language, lip-sync) after your prompt. Your job is the staging; leave roughly 300 characters of budget for that block (keep your prompt ≤ 650 characters on dialogue scenes).
+- Do NOT write the spoken words into your prompt text — the pipeline appends an explicit, exactly-worded Dialogue block (speaker, delivery, language, lip-sync) after your prompt. Your job is the staging; leave roughly 300 characters of budget for that block (stay inside the PROMPT BUDGET stated in the user message).
 - A scene WITHOUT a dialogue line must not show anyone talking to camera: the narration layer carries the words, so the "negative" must additionally forbid: speaking to camera, moving lips as if talking, voice-over.
 
 PROMPT QUALITY (hard rules):
-- Keep each shot to roughly 40–80 words. NEVER generic: "A player takes a shot" is a defect; name the athlete, exact setup, visible action, ball path and camera move.
+- Fill EVERY section of the SHOT SPEC below concretely — the video model must never have to guess anything. NEVER generic: "A player takes a shot" is a defect; name the athlete, exact setup, visible action, ball path and camera move.
 - Cover: subject & character (reuse the LOCKED appearance verbatim wherever a character appears), environment, one primary action, camera framing & movement, lens/look, composition, lighting & time of day, background/foreground detail, visual style & mood — and, when continuation is true, an explicit instruction that the clip continues seamlessly from the reference frame's exact athlete pose and ball position (no reset, no greeting, no recap).
 - SPORTS-AWARE MOTION: detect basketball, golf, soccer, tennis, baseball, boxing, running and related sports from all context. For a sports shot, add ONE concrete visible motion clause of at most 15 words describing body setup, contact, ball path, follow-through, bounce or spin. Do not stack technical jargon. For a non-sports shot, add no such filler.
 - FINAL PROVIDER SAFETY: never use the words realism, realistic, photorealistic, hyper-realistic, gravity, inertia, or physics-accurate. At most one natural-camera phrase such as “natural motion” or “true-to-life movement” may appear in a shot.
@@ -1050,7 +1127,10 @@ PROMPT QUALITY (hard rules):
 - End the action on a clean, holdable state — the clip's final frame may seed the next clip.
 
 OUTPUT SHAPE:
-{ "continuation": bool, "reference_type": "previous_final_frame"|"character_reference"|"scene_reference"|"none", "needs_character": str|null, "prompt": str, "negative": str, "reasoning": str (one line: why continuation or not) }`;
+{ "continuation": bool, "reference_type": "previous_final_frame"|"character_reference"|"scene_reference"|"none", "needs_character": str|null, "prompt": str, "negative": str, "reasoning": str (one line: why continuation or not), "shot": { "subject": str, "pose_start": str, "motion_sequence": str, "pose_end": str, "hands": str, "face_gaze": str, "camera": str, "lighting": str, "environment": str, "depth_of_field": str, "physical_plausibility": str, "continuity": str, "must_not": str[] } }
+"prompt" is a one-paragraph summary of the shot; the pipeline assembles the provider prompt from "shot", leading with the chosen visual style.
+
+${SHOT_SPEC_RULES}`;
 
 /** Stage 2 — prepare ONE scene: continuation decision + reference choice +
  * the production-ready prompt, from all three context layers. */
@@ -1070,7 +1150,7 @@ export async function prepareScenePrompt(params: {
   const planScene = (Array.isArray(plan.scenes) ? plan.scenes : []).find((p) => p.scene_key === scene.scene_key) || null;
   const spec: any = scene.spec || {};
 
-  const charLines = (plan.characters || []).map((c) => {
+  const charLines = (plan.characters || []).filter((c) => c.kind !== 'narrator').map((c) => {
     const ref = characterRefs.find((r) => r.id === c.id);
     const lock = [c.role, c.age_appearance, c.wardrobe ? `wardrobe: ${c.wardrobe}` : '', c.personality_voice ? `personality/voice: ${c.personality_voice}` : '', c.appearance].filter(Boolean).join('; ');
     return `- [${c.id}] ${c.name} (${c.kind}): ${lock}${ref?.url ? ' (approved locked reference image AVAILABLE)' : ''}`;
@@ -1092,12 +1172,23 @@ export async function prepareScenePrompt(params: {
     ? scene.dialogue
     : (planScene?.dialogue && String((planScene.dialogue as any).line || '').trim()) ? planScene.dialogue! : null;
 
+  const shotModel = resolveVideoModel(spec.engine_id || film.video_model);
+  const shotFamily = promptFamilyFor(shotModel.id);
+  const lockedSubjects = lockedSubjectLines(plan, spec.characters);
+  const slowMo = slowMotionRequested(`${scene.script_segment} ${spec.visual_goal || planScene?.visual_goal || ''}`);
+  // Room left for the shot spec once the style lock, the dialogue block and
+  // the reference notes are added around it, so nothing gets cut later.
+  const shotBudget = shotPromptBudget({
+    maxChars: shotModel.promptMaxChars,
+    reservedChars: (film.style_lock === true && scene.idx > 0 ? String(film.style_lock_description || '').length + 40 : 0) + (dialogue ? 480 : 0) + 600,
+  });
+
   const globalLines = [
     `=== GLOBAL CONTEXT (the whole story) ===`,
     `TITLE: ${film.title || plan.title || ''}`,
     `STORY: ${plan.story_summary || ''}`,
     `WORLD: ${plan.world || ''}`,
-    `VISUAL STYLE (applies to every clip): ${plan.visual_style || plan.style_direction || ''}`,
+    `VISUAL STYLE (applies to every clip and leads every prompt automatically): ${filmStyleText(plan)}`,
     charLines ? `CHARACTERS (locked appearances — reuse verbatim):\n${charLines}` : 'CHARACTERS: none recurring.',
     film.product_screenshot_url ? `SCENE/PRODUCT REFERENCE IMAGE available: ${film.product_screenshot_url}` : '',
   ];
@@ -1105,6 +1196,10 @@ export async function prepareScenePrompt(params: {
     `\n=== SCENE CONTEXT (this clip) ===`,
     `CLIP ${scene.idx + 1}, duration ${scene.duration_s || planScene?.duration_s || 6}s, aspect ${film.aspect_ratio || '16:9'}.`,
     `PROVIDER ADAPTER: ${resolveVideoModel(spec.engine_id || film.video_model).label} (${resolveVideoModel(spec.engine_id || film.video_model).apiModel}). Write one request using only this adapter's supported duration, reference and native-audio semantics.`,
+    `PROMPT FAMILY: ${shotFamily}. ${promptFamilyGuidance(shotFamily)}`,
+    `PROMPT BUDGET: the assembled SHOT SPEC must fit about ${shotBudget} characters in total, so keep each section near ${Math.max(60, Math.round(shotBudget / 14))} characters. ${slowMo ? 'The script asks for slow motion in this clip.' : 'No slow motion: everything plays at real-time speed.'}`,
+    spec.timed_beats?.length ? `TIMECODE LABELS (use verbatim in motion_sequence): ${timecodeLabels(spec.timed_beats)}` : '',
+    lockedSubjects.length ? `ON-SCREEN CHARACTERS (repeat these locked descriptions verbatim in "subject"):\n${lockedSubjects.map((entry) => `- ${entry}`).join('\n')}` : 'ON-SCREEN CHARACTERS: none listed for this clip.',
     spec.timed_beats?.length ? `TIMED BEATS (inside this ONE request):\n${spec.timed_beats.map((beat: any) => `[${beat.start_s}–${beat.end_s}s] ${beat.action}${beat.camera ? `; camera ${beat.camera}` : ''}${beat.dialogue ? `; dialogue ${beat.dialogue}` : ''}`).join('\n')}` : (spec.visual_goal || planScene?.visual_goal) ? `TIMED VISUAL PLAN:\n${spec.visual_goal || planScene?.visual_goal}` : '',
     spec.shot_intent ? `SHOT INTENT: ${spec.shot_intent}. SHARED ROUTE: ${spec.workflow_kind || 'engine'}${spec.engine_id ? ` on ${spec.engine_id}` : ''}. ${spec.engine_reason || ''}` : '',
     `SCRIPT SEGMENT: "${scene.script_segment}"`,
@@ -1135,9 +1230,27 @@ export async function prepareScenePrompt(params: {
     : `SCRIPT PASSAGE AROUND THIS CLIP (the full script is ${fullScript.length} characters — more than one request may carry — so here are the neighbouring clips' segments, in order):\n"""\n${neighbourhood || scene.script_segment}\n"""`;
   const user = [...globalLines, scriptContext, ...sceneLines].filter(Boolean).join('\n');
 
-  const plannedTransition = spec.cut_type || planScene?.spec?.cut_type || 'new_shot';
+  const plannedTransition = spec.cut_type || (planScene?.spec as any)?.cut_type || 'new_shot';
   const images = !params.forceIndependent && plannedTransition === 'continuous' && prevScene?.keyframe_url ? [prevScene.keyframe_url] : [];
-  const out = await askOpusJson<any>({ system: PREPARE_SYSTEM, user, images, maxTokens: 16000, effort: 'medium' });
+  let out = await askOpusJson<any>({ system: PREPARE_SYSTEM, user, images, maxTokens: 16000, effort: 'medium' });
+  // Post-check: a shot spec with a missing or vague section is sent back once
+  // or twice with the exact gaps named, then assembled either way so a writer
+  // hiccup never blocks the render.
+  for (let rewrite = 0; rewrite < SHOT_SPEC_MAX_REWRITES; rewrite += 1) {
+    const missing = missingShotSections(out?.shot);
+    if (!missing.length) break;
+    try {
+      const again = await askOpusJson<any>({ system: PREPARE_SYSTEM, user: `${user}\n\n${shotRewriteNote(missing)}`, images, maxTokens: 16000, effort: 'medium' });
+      if (again && typeof again === 'object' && missingShotSections(again.shot).length < missing.length) out = { ...out, ...again };
+    } catch { break; }
+  }
+  const shotMustNot = [...defaultMustNot(slowMo), ...videoStyleBans(plan)];
+  if (out && typeof out === 'object') {
+    out.prompt = assembleShotPrompt({
+      shot: out.shot, style: filmStyleText(plan), lockedSubjects, mustNot: shotMustNot, budget: shotBudget, fallbackMotion: String(out.prompt || ''),
+      beats: Array.isArray(spec.timed_beats) && spec.timed_beats.length ? spec.timed_beats : [{ start_s: 0, end_s: Math.max(1, Math.round(Number(scene.duration_s || spec.duration_s || 0))) }],
+    });
+  }
 
   const refVocab: ReferenceType[] = ['previous_final_frame', 'character_reference', 'scene_reference', 'none'];
   let continuation = out?.continuation === true;
@@ -1153,6 +1266,7 @@ export async function prepareScenePrompt(params: {
   let prompt = String(out?.prompt || '').trim();
   if (prompt.length < 80) throw new Error('The director returned an unusably short prompt — prepare the scene again.');
   let negative = String(out?.negative || 'on-screen text, captions, subtitles, watermarks, logos, UI elements, warped anatomy').slice(0, 500);
+  negative = mergeNegative(negative, shotMustNot);
 
   // Prompt Director deterministically turns the planned beats into one
   // timecoded provider prompt. The model's creative detail remains appended,
@@ -1167,7 +1281,7 @@ export async function prepareScenePrompt(params: {
     return ref?.name ? `@${String(ref.name).replace(/^@/, '')}` : `@${character.id}`;
   };
   const anchor = (plan.characters || [])
-    .filter((character) => (spec.characters || []).includes(character.id))
+    .filter((character) => character.kind !== 'narrator' && (spec.characters || []).includes(character.id))
     .map((character) => `${tokenForCharacter(character)} ${character.name} — ${character.appearance}; wardrobe ${character.wardrobe || 'locked as approved'}`)
     .join(' | ') || `Environment — ${plan.world || spec.visual_goal || 'approved scene environment'}`;
   const atTokens = atReferences.filter((reference) => reference?.type === 'character').map((reference) => `@${String(reference.name || '').replace(/^@/, '')}`).filter((token) => token.length > 1);
@@ -1532,14 +1646,105 @@ export async function tightenNarrationLine(text: string, targetSeconds: number):
  * Model-made portraits are never rejected by the provider's real-person filter. */
 export function characterPortraitBrief(character: Pick<FilmCharacterProfile, 'name' | 'kind' | 'role' | 'age_appearance' | 'wardrobe' | 'personality_voice' | 'appearance'>, visualStyle: string): string {
   return [
+    visualStyle ? `MANDATORY VISUAL STYLE for every panel: ${visualStyle}` : '',
     `Wide 16:9 studio character sheet for ${character.name}, ${character.role || character.kind}.`,
     `Script-grounded appearance: ${character.age_appearance || character.appearance || 'appearance left deliberately neutral where the script is silent'}.`,
     character.wardrobe ? `Locked wardrobe: ${character.wardrobe}.` : '',
     character.personality_voice ? `Expression and presence: ${character.personality_voice}.` : '',
     'One large face close-up in the main left panel, plus four smaller full-body views on the right: front, three-quarter, side profile and back. The SAME person appears in every panel with identical face, hair, build, skin tone, wardrobe, shoes and accessories.',
     'Neutral standing poses, arms relaxed, every full-body view visible from head to shoes with clear spacing.',
-    'Plain seamless backdrop, soft even studio lighting, sharp focus, consistent scale and color.',
+    visualStyle
+      ? 'Plain seamless backdrop, even neutral light drawn in that same style, sharp focus, consistent scale and color.'
+      : 'Plain seamless backdrop, soft even studio lighting, sharp focus, consistent scale and color.',
     visualStyle ? `Rendered in the film's visual style: ${visualStyle}.` : '',
     'No text, no logos, no watermark.',
   ].filter(Boolean).join(' ');
+}
+
+/** Locked on-screen character descriptions, word for word, for SUBJECT. */
+function lockedSubjectLines(plan: FilmPlan, characterIds: unknown): string[] {
+  const ids = Array.isArray(characterIds) ? characterIds.map(String) : [];
+  return (plan.characters || [])
+    .filter((character) => character.kind !== 'narrator' && ids.includes(character.id))
+    .map((character) => `${character.name} — ${[character.age_appearance, character.appearance, character.wardrobe ? `wardrobe: ${character.wardrobe}` : ''].filter(Boolean).join('; ')}`);
+}
+
+const DETAILED_SHOT_SYSTEM = `You are the shot writer for ONE saved video block of a sequential script-to-video film. Reply with ONE JSON object and nothing else: { "shot": SHOT SPEC object }.
+- Stage exactly what the script segment and timed beats say: one story beat, nothing invented, no new characters or props.
+- Do not write the spoken words and do not add a Dialogue or Narration block — the pipeline appends the exact words. When someone speaks on camera, stage the delivery visually.
+- Never request on-screen text, captions, subtitles, logos, UI or numbers.
+- Never use the words realism, realistic, photorealistic, hyper-realistic, gravity, inertia or physics-accurate anywhere.
+- End the clip on a clean, holdable pose — its final frame may seed the next clip.
+
+${SHOT_SPEC_RULES}`;
+
+/**
+ * The durable runner's shot writer: one Opus call (with the GPT 6.1 Sol
+ * fallback inside askOpusJson) that returns a SHOT SPEC, a post-check that
+ * asks again when a section is missing, and deterministic assembly inside the
+ * model's character budget. Never throws — a writer outage still yields a
+ * complete, labelled prompt built from the approved plan.
+ */
+export async function writeDetailedShotPrompt(params: {
+  film: Film;
+  scene: FilmScene;
+  prevScene?: FilmScene | null;
+  /** Characters the caller adds around the shot spec (beat skeleton, speech, style lock). */
+  reservedChars?: number;
+}): Promise<{ text: string; negative: string; source: 'opus' | 'plan'; complete: boolean }> {
+  const { film, scene } = params;
+  const plan = film.plan || ({} as FilmPlan);
+  const spec: any = scene.spec || {};
+  const model = resolveVideoModel(spec.engine_id || film.video_model);
+  const family = promptFamilyFor(model.id);
+  const duration = Math.max(1, Math.round(Number(scene.duration_s || spec.duration_s) || 8));
+  const beats = Array.isArray(spec.timed_beats) && spec.timed_beats.length ? spec.timed_beats : [{ start_s: 0, end_s: duration, action: spec.visual_goal || spec.summary || scene.script_segment }];
+  const lockedSubjects = lockedSubjectLines(plan, spec.characters);
+  const slowMo = slowMotionRequested(`${scene.script_segment} ${spec.visual_goal || ''}`);
+  const budget = shotPromptBudget({ maxChars: model.promptMaxChars, reservedChars: params.reservedChars });
+  const prev = params.prevScene || null;
+  const continuing = spec.cut_type === 'continuous' && Boolean(prev);
+  const line = String(scene.dialogue?.line || '').trim();
+  const user = [
+    `FILM: ${film.title || plan.title || 'Untitled film'}`,
+    plan.story_summary ? `STORY: ${plan.story_summary}` : '',
+    plan.world ? `WORLD: ${plan.world}` : '',
+    `VISUAL STYLE (applied automatically as the leading clause — describe content inside it): ${filmStyleText(plan)}`,
+    `BLOCK ${scene.idx + 1}: ${duration}s, aspect ${film.aspect_ratio || '16:9'}, ${continuing ? 'continues from the previous block\u2019s last frame' : 'new shot'}.`,
+    `MODEL: ${model.label}. PROMPT FAMILY: ${family}. ${promptFamilyGuidance(family)}`,
+    `PROMPT BUDGET: the assembled SHOT SPEC must fit about ${budget} characters in total, so keep each section near ${Math.max(60, Math.round(budget / 14))} characters. ${slowMo ? 'The script asks for slow motion in this block.' : 'No slow motion: everything plays at real-time speed.'}`,
+    `TIMECODE LABELS (use verbatim in motion_sequence): ${timecodeLabels(beats)}`,
+    `TIMED BEATS: ${JSON.stringify(beats)}`,
+    `SCRIPT SEGMENT (verbatim): "${scene.script_segment}"`,
+    spec.summary ? `WHAT HAPPENS: ${spec.summary}` : '',
+    lockedSubjects.length ? `ON-SCREEN CHARACTERS (repeat these locked descriptions verbatim in "subject"):\n${lockedSubjects.map((entry) => `- ${entry}`).join('\n')}` : 'ON-SCREEN CHARACTERS: none listed for this block.',
+    line ? (scene.dialogue?.kind === 'narrator' ? 'SPEECH: off-screen narration only — nobody on camera speaks or lip-syncs.' : `SPEECH: ${scene.dialogue?.speaker || 'the character'} speaks one line on camera — stage the delivery (the exact words are appended automatically).`) : 'SPEECH: none — nobody talks to camera.',
+    continuing ? `PREVIOUS BLOCK (this clip starts from its last frame): ${String((prev?.spec as any)?.visual_goal || prev?.script_segment || '').slice(0, 600)}` : 'CONTINUITY: new shot — keep identity, wardrobe and look exactly as locked.',
+  ].filter(Boolean).join('\n');
+
+  let out: any = null;
+  try { out = await askOpusJson<any>({ system: DETAILED_SHOT_SYSTEM, user, maxTokens: 16000, effort: 'medium' }); } catch { out = null; }
+  for (let rewrite = 0; out && rewrite < SHOT_SPEC_MAX_REWRITES; rewrite += 1) {
+    const missing = missingShotSections(out?.shot);
+    if (!missing.length) break;
+    try {
+      const again = await askOpusJson<any>({ system: DETAILED_SHOT_SYSTEM, user: `${user}\n\n${shotRewriteNote(missing)}`, maxTokens: 16000, effort: 'medium' });
+      if (again && typeof again === 'object' && missingShotSections(again.shot).length < missing.length) out = again;
+    } catch { break; }
+  }
+  const mustNot = [...defaultMustNot(slowMo), ...videoStyleBans(plan)];
+  const text = assembleShotPrompt({
+    shot: out?.shot,
+    style: filmStyleText(plan),
+    lockedSubjects,
+    mustNot,
+    budget,
+    fallbackMotion: beats.map((beat: any) => `${Number(beat.start_s)}-${Number(beat.end_s)}s: ${String(beat.action || '').trim()}`).join('; '),
+  });
+  return {
+    text: scrubProviderPrompt(text),
+    negative: scrubProviderPrompt(mergeNegative('on-screen text, captions, subtitles, watermarks, logos, UI elements, warped anatomy', mustNot)).slice(0, 500),
+    source: out?.shot ? 'opus' : 'plan',
+    complete: missingShotSections(out?.shot).length === 0,
+  };
 }

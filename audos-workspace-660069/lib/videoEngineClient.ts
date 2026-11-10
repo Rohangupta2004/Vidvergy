@@ -5,6 +5,10 @@
  *  GROUP A  POST /api/veo/generate/video          (standard app session —
  *           Content-Type only; no extra token header needed)
  *           GET  /api/veo/status/:operationId      poll every 5s
+ *           Seedance 2.5 is the exception: it goes through the
+ *           stv-scene-generate server function (./serverVideoEngines)
+ *
+ *  KLING    stv-scene-generate server function, never the browser token
  *
  *  RUNWAY   POST /api/generate/runway/quote        (free — NO auth)
  *           POST /api/generate/runway/video        (X-Workspace-DB-Token +
@@ -33,9 +37,11 @@ import { OMNI_MODEL_ID, RUNWAY_DISABLED_MESSAGE, capPromptText, clampGroupADurat
 import { chargeCredits, newChargeKey, refundCredits } from './credits';
 import { isRegisteredAppId } from './appIds';
 import type { AppId } from './appIds';
-import { getSessionId, getWorkspaceToken, WORKSPACE_ID, workspaceTokenNow } from './workspace';
+import { getSessionId, getWorkspaceToken, WORKSPACE_ID, workspaceFetch, workspaceTokenNow } from './workspace';
 import { poll, PollTimeoutError } from './poll';
 import { adoptExternalOperation, resumeExternalOperation } from '../apps/VideoProviderLab/labClient';
+import { isSeedance25Model, isSeedance25Operation, readServerVideoStatus, submitServerVideo } from './serverVideoEngines';
+import type { ServerVideoSubmit } from './serverVideoEngines';
 
 export class EngineError extends Error {
   code: string;
@@ -145,6 +151,25 @@ function isAbortError(e: unknown): boolean {
   return name === 'TimeoutError' || name === 'AbortError';
 }
 
+/** A Seedance 2.5 or Kling submit that never reached the server function. */
+function serverFunctionError(e: any, service: string): EngineError {
+  if (isAbortError(e)) {
+    return new EngineError(`${service} did not answer within 2 minutes. Nothing was charged — try again.`, { code: 'timeout', retryable: true });
+  }
+  const status = Number(e?.status) || 0;
+  if (status) {
+    // HookError already carries the plain session-recovery message for 401/403.
+    return new EngineError(String(e?.message || e), { code: status === 401 || status === 403 ? 'session' : 'server_function', status, retryable: status >= 500 });
+  }
+  return new EngineError(`Could not reach ${service.replace(/^The /, 'the ')}: ${String(e?.message || e)}`, { code: 'network', retryable: true });
+}
+
+/** A Seedance 2.5 or Kling submit the provider or the credit gate refused. */
+function serverSubmitError(result: Extract<ServerVideoSubmit, { ok: false }>, context: string, fallback: string): EngineError {
+  if (result.httpStatus) return describeHttpError(result.httpStatus, result.data, context);
+  return new EngineError(result.error || fallback, { code: result.code || 'provider_rejected' });
+}
+
 // ---------------------------------------------------------------------------
 // APP IDENTITY — what the generation row is keyed to
 // ---------------------------------------------------------------------------
@@ -184,22 +209,13 @@ export async function postGeneration(
   body: Record<string, unknown>,
   appId?: AppId,
 ): Promise<{ res: Response; data: any }> {
-  const token = await getWorkspaceToken();
-  const sessionId = getSessionId();
   const named = isRegisteredAppId(appId) ? appId : null;
-  const base: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(token ? { 'X-Workspace-DB-Token': token } : {}),
-    ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
-  };
-
-  const send = (withIdentity: boolean) => fetch(path, {
+  const send = (withIdentity: boolean) => workspaceFetch(path, {
     method: 'POST',
-    credentials: 'include',
-    headers: withIdentity && named ? { ...base, 'X-App-Id': named } : base,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(withIdentity && named ? { ...body, appId: named } : body),
     signal: timeoutSignal(GENERATION_TIMEOUT_MS),
-  });
+  }, { appId: withIdentity && named ? named : null });
 
   let res = await send(Boolean(named));
   let data = await res.json().catch(() => null);
@@ -278,8 +294,16 @@ export async function submitGroupA(params: GroupASubmitParams): Promise<GroupAKi
   const creditKey = params.creditKey || newChargeKey('groupa');
   const charge = await chargeCredits({
     seconds,
+    engine: params.model,
+    options: {
+      seconds: params.duration ? clampGroupADuration(params.model, params.duration) : seconds,
+      resolution: params.resolution || '720p',
+      aspectRatio: params.aspectRatio || '16:9',
+      audio: Boolean(params.generateAudio),
+    },
     entryKey: creditKey,
     source: 'group-a',
+    label: `${params.model} · ${seconds}s clip`,
     note: `${seconds}s clip`,
   });
   /** Nothing was generated, so the customer keeps their credits. */
@@ -301,6 +325,21 @@ export async function submitGroupA(params: GroupASubmitParams): Promise<GroupAKi
   if (params.imageData) body.imageData = params.imageData;
   if (params.referenceImages?.length) body.referenceImages = params.referenceImages.slice(0, 10);
   if (params.lastFrameImage) body.lastFrameImage = params.lastFrameImage;
+
+  if (isSeedance25Model(params.model)) {
+    let submitted: ServerVideoSubmit;
+    try {
+      submitted = await submitServerVideo('seedance', body, creditKey, timeoutSignal(GENERATION_TIMEOUT_MS));
+    } catch (e: any) {
+      releaseCredits('The video service could not be reached');
+      throw serverFunctionError(e, 'The video service');
+    }
+    if (!submitted.ok) {
+      releaseCredits('The provider did not accept the generation');
+      throw serverSubmitError(submitted, 'The video request', 'The provider did not accept this generation.');
+    }
+    return { operationId: submitted.operationId, creditKey };
+  }
 
   let res: Response;
   let data: any;
@@ -347,14 +386,22 @@ export interface GroupAStatus {
 }
 
 export async function checkGroupA(operationId: string, appId?: AppId): Promise<GroupAStatus> {
+  if (isSeedance25Operation(operationId)) {
+    try {
+      return await readServerVideoStatus('seedance', operationId, timeoutSignal(STATUS_TIMEOUT_MS));
+    } catch (e: any) {
+      return {
+        status: 'processing',
+        error: isAbortError(e) ? 'The status check timed out after 30s.' : String(e?.message || e),
+      };
+    }
+  }
   let res: Response;
   try {
-    await getWorkspaceToken();
-    res = await fetch(`/api/veo/status/${encodeURIComponent(operationId)}`, {
-      credentials: 'include',
+    res = await workspaceFetch(`/api/veo/status/${encodeURIComponent(operationId)}`, {
       headers: generationHeaders(appId),
       signal: timeoutSignal(STATUS_TIMEOUT_MS),
-    });
+    }, { appId: isRegisteredAppId(appId) ? appId : null });
   } catch (e: any) {
     // A dropped or hung status read must neither hang the poll past its
     // deadline nor kill it outright — the miss counter decides when to stop.
@@ -459,6 +506,7 @@ export async function renderGroupAResilient(params: GroupASubmitParams, opts: Gr
         prompt: params.prompt, duration,
         cost: kickoff.cost, estimatedDuration: kickoff.estimatedDuration,
         note: opts.onStatus, onAdopted: opts.onAdopted,
+        creditKey: kickoff.creditKey,
       });
       const videoUrl = adopted?.videoUrl || await pollGroupA(kickoff.operationId, {
         onProgress: opts.onProgress,
@@ -496,7 +544,7 @@ export interface RunwayQuote {
 export async function runwayQuote(body: Record<string, unknown>): Promise<RunwayQuote> {
   let res: Response;
   try {
-    res = await fetch('/api/generate/runway/quote', {
+    res = await workspaceFetch('/api/generate/runway/quote', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -536,8 +584,8 @@ export async function checkRunwayAvailability(): Promise<{ available: boolean; r
 function runwayHeaders(): Record<string, string> {
   return {
     'Content-Type': 'application/json',
-    'X-Workspace-DB-Token': workspaceTokenNow(),
-    // Fresh UUID per submit — reusing one with different input answers 409.
+    // Fresh per logical submit, then reused by workspaceFetch if auth recovery
+    // replays that same request once. A different key could double-submit.
     'Idempotency-Key': (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `idem-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   };
 }
@@ -558,21 +606,32 @@ export interface RunwayCreditOptions {
   seconds?: number;
   /** Reuse across retries of the SAME clip so the retry is not billed twice. */
   creditKey?: string;
+  /** Defaults to the existing eager refund. A retry orchestrator can defer the
+   * refund until its entire bounded attempt ladder has failed. */
+  refundOnFailure?: boolean;
 }
 
 async function runwaySubmit(path: string, body: Record<string, unknown>, context: string, credit?: RunwayCreditOptions): Promise<RunwayKickoff> {
   // Credit gate. Runway clips are 5s unless the caller says otherwise.
   const seconds = Math.max(1, Math.round(Number(credit?.seconds ?? body.duration) || 5));
   const creditKey = credit?.creditKey || newChargeKey('runway');
-  const charge = await chargeCredits({ seconds, entryKey: creditKey, source: 'runway', note: `${seconds}s clip` });
-  /** Nothing was generated, so the customer keeps their credits. */
+  // Video submits are priced by model per second; Recipes by the platform's
+  // own live quote, which the wallet re-reads from these exact bodies.
+  const recipeId = /\/recipes\/([a-z0-9_]+)/i.exec(String(path))?.[1];
+  const charge = await chargeCredits(recipeId
+    ? { seconds, engine: 'runway/recipe', options: { seconds, quoteBodies: [{ ...body, recipeId }] }, entryKey: creditKey, source: 'runway', label: `Runway ${recipeId}`, note: `${recipeId} · ${seconds}s` }
+    : { seconds, engine: String(body.model || 'gen4.5'), options: { seconds }, entryKey: creditKey, source: 'runway', label: `Runway ${String(body.model || 'gen4.5')} · ${seconds}s`, note: `${seconds}s clip` });
+  /** Nothing was generated, so the customer keeps their credits. A bounded
+   * retry ladder may own the one terminal refund instead. */
   const releaseCredits = (reason: string) => {
-    if (charge.metered) void refundCredits(creditKey, reason);
+    if (credit?.refundOnFailure !== false && charge.metered) void refundCredits(creditKey, reason);
   };
 
   let res: Response;
   try {
-    res = await fetch(path, { method: 'POST', headers: runwayHeaders(), body: JSON.stringify(body), signal: timeoutSignal(GENERATION_TIMEOUT_MS) });
+    res = await workspaceFetch(path, {
+      method: 'POST', headers: runwayHeaders(), body: JSON.stringify(body), signal: timeoutSignal(GENERATION_TIMEOUT_MS),
+    }, { skipAppId: true });
   } catch (e: any) {
     releaseCredits('Runway could not be reached');
     if (isAbortError(e)) {
@@ -625,10 +684,9 @@ function collectMediaUrls(data: any): string[] {
 }
 
 export async function checkRunway(taskId: string): Promise<RunwayResult> {
-  const res = await fetch(`/api/generate/runway/status/${encodeURIComponent(taskId)}`, {
-    headers: { 'X-Workspace-DB-Token': workspaceTokenNow() },
+  const res = await workspaceFetch(`/api/generate/runway/status/${encodeURIComponent(taskId)}`, {
     signal: timeoutSignal(STATUS_TIMEOUT_MS),
-  });
+  }, { skipAppId: true });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw describeHttpError(res.status, data, 'The Runway status check');
   return { status: String(data?.status || 'unknown'), mediaUrls: collectMediaUrls(data), raw: data };
@@ -670,67 +728,85 @@ export async function pollRunway(taskId: string, opts: { onStatus?: (s: string) 
 }
 
 // ---------------------------------------------------------------------------
-// KLING — /api/generate/kling/*
+// KLING — /api/generate/kling/* via the stv-scene-generate server function
 // ---------------------------------------------------------------------------
-
-function klingHeaders(): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'X-Workspace-DB-Token': workspaceTokenNow(),
-  };
-}
 
 export interface KlingKickoff {
   taskId: string;
   status: string;
+  /** The credit charge behind this clip — hand it to pollKling so a failed
+   * render refunds itself, or to a retry so it is not billed twice. */
+  creditKey?: string;
 }
 
+/**
+ * Kling bills the workspace that holds the credential, so the clip goes out
+ * through the server function on this workspace's signed identity rather than
+ * the visitor's browser token (see ./serverVideoEngines).
+ */
 export async function submitKlingVideo(params: {
   model: string;
   prompt: string;
   aspectRatio?: '16:9' | '9:16' | '1:1';
   duration?: number;
   imageData?: string;
+  /** Reuse across retries of the SAME clip so the retry is not billed twice. */
+  creditKey?: string;
 }): Promise<KlingKickoff> {
   const durationSec = Math.round(Number(params.duration) || 5);
   const duration = durationSec >= 8 ? '10' : '5';
-  const path = params.imageData ? '/api/generate/kling/image-to-video' : '/api/generate/kling/text-to-video';
+  const model = params.model || 'kling-v1-5';
   const body: Record<string, unknown> = {
     prompt: capPromptText(params.prompt, 2500),
-    model: params.model || 'kling-v1-5',
+    model,
     mode: 'std',
     duration,
   };
   if (params.aspectRatio && params.aspectRatio !== '1:1') body.aspectRatio = params.aspectRatio;
   if (params.imageData) body.imageData = params.imageData;
 
-  let res: Response;
+  const seconds = Number(duration);
+  const creditKey = params.creditKey || newChargeKey('kling');
+  const charge = await chargeCredits({
+    seconds,
+    engine: model,
+    options: { seconds, mode: 'std' },
+    entryKey: creditKey,
+    source: 'kling',
+    label: `${model} · ${seconds}s clip`,
+    note: `${seconds}s clip`,
+  });
+  const releaseCredits = (reason: string) => {
+    if (charge.metered) void refundCredits(creditKey, reason);
+  };
+
+  let submitted: ServerVideoSubmit;
   try {
-    res = await fetch(path, { method: 'POST', headers: klingHeaders(), body: JSON.stringify(body), signal: timeoutSignal(GENERATION_TIMEOUT_MS) });
+    submitted = await submitServerVideo('kling', body, creditKey, timeoutSignal(GENERATION_TIMEOUT_MS));
   } catch (e: any) {
-    if (isAbortError(e)) {
-      throw new EngineError('Kling did not answer within 2 minutes — try again.', { code: 'timeout', retryable: true });
-    }
-    throw new EngineError(`Could not reach Kling: ${String(e?.message || e)}`, { code: 'network', retryable: true });
+    releaseCredits('Kling could not be reached');
+    throw serverFunctionError(e, 'Kling');
   }
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw describeHttpError(res.status, data, 'The Kling video request');
-  const taskId = String(data?.taskId || '');
-  if (!taskId) throw new EngineError(String(data?.error || 'Kling did not return a task id.'), { code: 'no_task_id' });
-  return { taskId, status: String(data?.status || 'queued') };
+  if (!submitted.ok) {
+    releaseCredits('Kling did not accept the generation');
+    throw serverSubmitError(submitted, 'The Kling video request', 'Kling did not return a task id.');
+  }
+  return { taskId: submitted.operationId, status: 'queued', creditKey };
 }
 
 export async function checkKling(taskId: string): Promise<{ status: string; videoUrl?: string; error?: string }> {
-  const res = await fetch(`/api/generate/kling/status/${encodeURIComponent(taskId)}`, { headers: klingHeaders(), signal: timeoutSignal(STATUS_TIMEOUT_MS) });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw describeHttpError(res.status, data, 'The Kling status check');
-  const status = String(data?.status || '').toLowerCase();
-  if (status === 'completed' && data?.videoUrl) return { status: 'completed', videoUrl: String(data.videoUrl) };
-  if (status === 'failed') return { status: 'failed', error: String(data?.errorMessage || data?.error || 'Kling reported the render failed.') };
-  return { status: status || 'processing' };
+  let st: Awaited<ReturnType<typeof readServerVideoStatus>>;
+  try {
+    st = await readServerVideoStatus('kling', taskId, timeoutSignal(STATUS_TIMEOUT_MS));
+  } catch (e: any) {
+    throw new EngineError(isAbortError(e) ? 'The Kling status check timed out after 30s.' : String(e?.message || e), { code: 'status_unavailable', status: Number(e?.status) || 0, retryable: true });
+  }
+  if (st.status === 'completed') return { status: 'completed', videoUrl: st.videoUrl };
+  if (st.status === 'failed') return { status: 'failed', error: st.error || 'Kling reported the render failed.' };
+  return { status: 'processing' };
 }
 
-export async function pollKling(taskId: string, opts: { onProgress?: (p: number) => void; timeoutMs?: number; isCancelled?: () => boolean } = {}): Promise<string> {
+export async function pollKling(taskId: string, opts: { onProgress?: (p: number) => void; timeoutMs?: number; isCancelled?: () => boolean; creditKey?: string } = {}): Promise<string> {
   let tick = 0;
   let st: { status: string; videoUrl?: string; error?: string };
   try {
@@ -756,7 +832,10 @@ export async function pollKling(taskId: string, opts: { onProgress?: (p: number)
     throw error;
   }
   if (st.status === '__cancelled__') throw new EngineError('This generation was cancelled.', { code: 'cancelled' });
-  if (st.status === 'failed') throw new EngineError(st.error || 'Kling render failed.', { code: 'render_failed' });
+  if (st.status === 'failed') {
+    if (opts.creditKey) void refundCredits(opts.creditKey, 'The render failed at Kling');
+    throw new EngineError(st.error || 'Kling render failed.', { code: 'render_failed' });
+  }
   return String(st.videoUrl);
 }
 
@@ -809,7 +888,7 @@ export async function submitHiggsfieldVideo(params: {
     // 2026). Stage inline images to workspace storage and send the public URL.
     let imageRef = params.imageData;
     if (/^data:/i.test(imageRef)) {
-      const up = await fetch('/api/upload/image', {
+      const up = await workspaceFetch('/api/upload/image', {
         method: 'POST',
         headers: higgsfieldHeaders(),
         body: JSON.stringify({ imageData: imageRef, fileName: 'higgsfield-input.png' }),
@@ -827,7 +906,7 @@ export async function submitHiggsfieldVideo(params: {
 
   let res: Response;
   try {
-    res = await fetch(path, { method: 'POST', headers: higgsfieldHeaders(), body: JSON.stringify(body), signal: timeoutSignal(GENERATION_TIMEOUT_MS) });
+    res = await workspaceFetch(path, { method: 'POST', headers: higgsfieldHeaders(), body: JSON.stringify(body), signal: timeoutSignal(GENERATION_TIMEOUT_MS) });
   } catch (e: any) {
     if (isAbortError(e)) {
       throw new EngineError('Higgsfield did not answer within 2 minutes — try again.', { code: 'timeout', retryable: true });
@@ -842,7 +921,7 @@ export async function submitHiggsfieldVideo(params: {
 }
 
 export async function checkHiggsfield(requestId: string): Promise<{ status: string; videoUrl?: string; error?: string }> {
-  const res = await fetch(`/api/generate/higgsfield/status/${encodeURIComponent(requestId)}`, {
+  const res = await workspaceFetch(`/api/generate/higgsfield/status/${encodeURIComponent(requestId)}`, {
     headers: higgsfieldHeaders(),
     signal: timeoutSignal(STATUS_TIMEOUT_MS),
   });

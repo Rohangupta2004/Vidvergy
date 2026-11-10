@@ -12,136 +12,143 @@
   "iconUrl": "https://storage.googleapis.com/audos-images/chat-attachments/8a9adad1-ad34-40e6-823c-8195cdcf7d6c.png",
   "logoOnDarkUrl": "https://storage.googleapis.com/audos-images/attachments/general/c0902809-6dc4-4e0c-b04e-1f60e01b31e6.png",
   "colors": {
-    "primary": "#D4A64A",
-    "highlight": "#F6D98B",
-    "contrast": "#0A0A0B",
-    "secondary": "#A8A39A",
-    "accent": "#D4A64A",
+    "primary": "#d4af37",
+    "highlight": "#d4af37",
+    "contrast": "#0b0d12",
+    "secondary": "#a8861f",
+    "accent": "#d4af37",
     "primaryScale": {
-      "50": "#241E13",
-      "100": "#241E13",
-      "200": "#B07D2A",
-      "500": "#D4A64A",
-      "600": "#C0923B",
-      "700": "#B07D2A",
-      "900": "#5D461D"
+      "50": "#29251a",
+      "100": "#29251a",
+      "200": "#d4af37",
+      "500": "#d4af37",
+      "600": "#e6c45a",
+      "700": "#d4af37",
+      "900": "#6b5512"
     },
     "highlightScale": {
-      "50": "#241E13",
-      "100": "#241E13",
-      "200": "#B07D2A",
-      "500": "#F6D98B",
-      "600": "#D4A64A",
-      "700": "#C0923B",
-      "900": "#B07D2A"
+      "50": "#29251a",
+      "100": "#29251a",
+      "200": "#d4af37",
+      "500": "#e6c45a",
+      "600": "#d4af37",
+      "700": "#d4af37",
+      "900": "#d4af37"
     },
     "surfaces": {
-      "page": "#0A0A0B",
-      "pageAlt": "#111114",
-      "gradientFrom": "#0A0A0B",
-      "gradientVia": "#111114",
-      "gradientTo": "#0A0A0B",
-      "card": "#111114",
-      "cardHover": "#1E1E23",
-      "panel": "#111114",
-      "panelStrong": "#17171B",
-      "muted": "#17171B",
-      "accentSoft": "#241E13",
-      "border": "#242428",
-      "borderStrong": "#3A3A40"
+      "page": "#0b0d12",
+      "pageAlt": "#12141b",
+      "gradientFrom": "#0b0d12",
+      "gradientVia": "#0e1016",
+      "gradientTo": "#12141b",
+      "card": "#12141b",
+      "cardHover": "#222631",
+      "panel": "#12141b",
+      "panelStrong": "#1a1d26",
+      "muted": "#1a1d26",
+      "accentSoft": "#29251a",
+      "border": "#2a2e3a",
+      "borderStrong": "#3a3f4d"
     },
     "text": {
-      "primary": "#F4F1EA",
-      "secondary": "#A8A39A",
-      "brand": "#D4A64A",
-      "accent": "#D4A64A",
-      "muted": "#7C776F",
-      "onPrimary": "#0A0A0B",
-      "onHighlight": "#0A0A0B",
-      "onContrast": "#D4A64A"
+      "primary": "#f5f6f8",
+      "secondary": "#9aa0ae",
+      "brand": "#d4af37",
+      "accent": "#d4af37",
+      "muted": "#9aa0ae",
+      "onPrimary": "#0b0d12",
+      "onHighlight": "#0b0d12",
+      "onContrast": "#d4af37"
     },
     "semantic": {
-      "success": "#7FC59B",
-      "warning": "#D7B66B",
-      "danger": "#E98585"
+      "success": "#3fb950",
+      "warning": "#ffb020",
+      "danger": "#e5484d"
     },
     "shell": {
-      "buttonText": "#0A0A0B",
-      "accentButtonText": "#0A0A0B",
-      "dockText": "#0A0A0B",
-      "icon": "#D4A64A",
-      "shadow": "#0A0A0B",
-      "shadowStrong": "#0A0A0B"
+      "buttonText": "#0b0d12",
+      "accentButtonText": "#0b0d12",
+      "dockText": "#ffffff",
+      "icon": "#d4af37",
+      "shadow": "#000000",
+      "shadowStrong": "#000000"
     }
   },
   "palette": {
-    "primary": "#D4A64A",
-    "highlight": "#F6D98B",
-    "contrast": "#0A0A0B",
-    "secondary": "#A8A39A",
-    "accent": "#D4A64A",
+    "primary": "#d4af37",
+    "highlight": "#d4af37",
+    "contrast": "#0b0d12",
+    "secondary": "#a8861f",
+    "accent": "#d4af37",
     "primaryScale": {
-      "50": "#241E13",
-      "100": "#241E13",
-      "200": "#B07D2A",
-      "500": "#D4A64A",
-      "600": "#C0923B",
-      "700": "#B07D2A",
-      "900": "#5D461D"
+      "50": "#29251a",
+      "100": "#29251a",
+      "200": "#d4af37",
+      "500": "#d4af37",
+      "600": "#e6c45a",
+      "700": "#d4af37",
+      "900": "#6b5512"
     },
     "highlightScale": {
-      "50": "#241E13",
-      "100": "#241E13",
-      "200": "#B07D2A",
-      "500": "#F6D98B",
-      "600": "#D4A64A",
-      "700": "#C0923B",
-      "900": "#B07D2A"
+      "50": "#29251a",
+      "100": "#29251a",
+      "200": "#d4af37",
+      "500": "#e6c45a",
+      "600": "#d4af37",
+      "700": "#d4af37",
+      "900": "#d4af37"
     },
     "surfaces": {
-      "page": "#0A0A0B",
-      "pageAlt": "#111114",
-      "gradientFrom": "#0A0A0B",
-      "gradientVia": "#111114",
-      "gradientTo": "#0A0A0B",
-      "card": "#111114",
-      "cardHover": "#1E1E23",
-      "panel": "#111114",
-      "panelStrong": "#17171B",
-      "muted": "#17171B",
-      "accentSoft": "#241E13",
-      "border": "#242428",
-      "borderStrong": "#3A3A40"
+      "page": "#0b0d12",
+      "pageAlt": "#12141b",
+      "gradientFrom": "#0b0d12",
+      "gradientVia": "#0e1016",
+      "gradientTo": "#12141b",
+      "card": "#12141b",
+      "cardHover": "#222631",
+      "panel": "#12141b",
+      "panelStrong": "#1a1d26",
+      "muted": "#1a1d26",
+      "accentSoft": "#29251a",
+      "border": "#2a2e3a",
+      "borderStrong": "#3a3f4d"
     },
     "text": {
-      "primary": "#F4F1EA",
-      "secondary": "#A8A39A",
-      "brand": "#D4A64A",
-      "accent": "#D4A64A",
-      "muted": "#7C776F",
-      "onPrimary": "#0A0A0B",
-      "onHighlight": "#0A0A0B",
-      "onContrast": "#D4A64A"
+      "primary": "#f5f6f8",
+      "secondary": "#9aa0ae",
+      "brand": "#d4af37",
+      "accent": "#d4af37",
+      "muted": "#9aa0ae",
+      "onPrimary": "#0b0d12",
+      "onHighlight": "#0b0d12",
+      "onContrast": "#d4af37"
     },
     "semantic": {
-      "success": "#7FC59B",
-      "warning": "#D7B66B",
-      "danger": "#E98585"
+      "success": "#3fb950",
+      "warning": "#ffb020",
+      "danger": "#e5484d"
     },
     "shell": {
-      "buttonText": "#0A0A0B",
-      "accentButtonText": "#0A0A0B",
-      "dockText": "#0A0A0B",
-      "icon": "#D4A64A",
-      "shadow": "#0A0A0B",
-      "shadowStrong": "#0A0A0B"
+      "buttonText": "#0b0d12",
+      "accentButtonText": "#0b0d12",
+      "dockText": "#ffffff",
+      "icon": "#d4af37",
+      "shadow": "#000000",
+      "shadowStrong": "#000000"
     }
   },
   "typography": {
-    "font": "Manrope",
+    "font": "Geist",
     "category": "sans-serif",
-    "weights": [400, 500, 600, 700],
-    "headingFont": "Space Grotesk",
-    "bodyFont": "Manrope"
-  }
+    "weights": [
+      400,
+      500,
+      600,
+      700,
+      800
+    ],
+    "headingFont": "Bricolage Grotesque",
+    "bodyFont": "Geist"
+  },
+  "heroVideoUrl": "https://storage.googleapis.com/audos-images/videos/scene_group_1793725812621_stitched.mp4"
 }

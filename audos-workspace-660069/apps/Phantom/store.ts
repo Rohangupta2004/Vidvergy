@@ -198,16 +198,122 @@ export function emptyAnalysis(): Analysis {
   };
 }
 
+function objectValue(value: unknown): any {
+  if (value && typeof value === 'object') return value;
+  if (typeof value === 'string' && value.trim()) {
+    try { const parsed = JSON.parse(value); return parsed && typeof parsed === 'object' ? parsed : {}; } catch { return {}; }
+  }
+  return {};
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
+}
+
+function normalizeProfile(value: unknown): Profile | null {
+  const source = objectValue(value);
+  if (!Object.keys(source).length) return null;
+  return {
+    ...source,
+    id: String(source.id || ''), url: String(source.url || ''), name: String(source.name || ''),
+    tagline: String(source.tagline || ''), category: String(source.category || ''), audience: String(source.audience || ''),
+    pricing: String(source.pricing || ''), usp: String(source.usp || ''), positioning: String(source.positioning || ''),
+    features: stringList(source.features), colors: stringList(source.colors), accent: String(source.accent || ''),
+    logoUrl: String(source.logoUrl || ''), fetched: Boolean(source.fetched),
+  };
+}
+
+function normalizeCompetitor(value: unknown, index: number): Competitor | null {
+  const source = objectValue(value);
+  if (!Object.keys(source).length) return null;
+  return {
+    ...source,
+    id: String(source.id || `competitor_${index}`), url: String(source.url || ''), name: String(source.name || `Competitor ${index + 1}`),
+    included: source.included !== false, source: source.source === 'manual' ? 'manual' : 'discovered', fetched: Boolean(source.fetched),
+    features: stringList(source.features), colors: stringList(source.colors), evidenceUrls: stringList(source.evidenceUrls),
+  };
+}
+
+function normalizeMatrix(value: unknown): Matrix | null {
+  const source = objectValue(value);
+  if (!Object.keys(source).length) return null;
+  return {
+    rows: stringList(source.rows), columns: stringList(source.columns),
+    cells: source.cells && typeof source.cells === 'object' && !Array.isArray(source.cells) ? source.cells : {},
+  };
+}
+
+function normalizeInsights(value: unknown): Insights | null {
+  const source = objectValue(value);
+  if (!Object.keys(source).length) return null;
+  const researchSource = objectValue(source.research);
+  const research = Object.keys(researchSource).length ? {
+    ...researchSource,
+    cacheKey: String(researchSource.cacheKey || ''), generatedAt: String(researchSource.generatedAt || ''),
+    refreshedAt: String(researchSource.refreshedAt || ''), approvedAt: String(researchSource.approvedAt || ''),
+    findings: Array.isArray(researchSource.findings) ? researchSource.findings.filter((item: any) => item && typeof item === 'object') : [],
+    agents: Array.isArray(researchSource.agents) ? researchSource.agents.filter((item: any) => item && typeof item === 'object') : [],
+    unavailableSources: stringList(researchSource.unavailableSources),
+  } as ResearchReport : undefined;
+  return {
+    ...source,
+    competitorsBetter: stringList(source.competitorsBetter), yourAdvantages: stringList(source.yourAdvantages),
+    positioningGaps: stringList(source.positioningGaps), messagingImprovements: stringList(source.messagingImprovements),
+    research,
+    creativeStrategy: Object.keys(objectValue(source.creativeStrategy)).length ? objectValue(source.creativeStrategy) : undefined,
+  };
+}
+
+function normalizeScriptPlan(value: unknown): ScriptPlan | null {
+  const source = objectValue(value);
+  if (!Object.keys(source).length) return null;
+  const overlay = objectValue(source.overlay);
+  return {
+    ...source,
+    script: String(source.script || ''), durationSec: Math.max(0, Number(source.durationSec) || 0),
+    scenes: (Array.isArray(source.scenes) ? source.scenes : []).filter((scene: any) => scene && typeof scene === 'object').map((scene: any) => ({
+      beat: String(scene.beat || ''), narration: String(scene.narration || ''), prompt: String(scene.prompt || ''),
+    })),
+    overlay: {
+      headline: String(overlay.headline || ''), stat: String(overlay.stat || ''), statLabel: String(overlay.statLabel || ''),
+      lowerThirds: stringList(overlay.lowerThirds), cta: String(overlay.cta || ''),
+    },
+  };
+}
+
+export function normalizeAnalysis(value: unknown): Analysis {
+  const source = objectValue(value);
+  const base = emptyAnalysis();
+  const brand = normalizeProfile(source.brand);
+  const competitors = (Array.isArray(source.competitors) ? source.competitors : [])
+    .map(normalizeCompetitor).filter(Boolean) as Competitor[];
+  const allowedStatuses: AnalysisStatus[] = ['brand', 'competitors', 'compared', 'scripted', 'rendering', 'video', 'failed'];
+  return {
+    ...base,
+    ...source,
+    id: Math.max(0, Number(source.id) || 0), name: String(source.name || ''),
+    brandUrl: String(source.brandUrl || brand?.url || ''), brandName: String(source.brandName || brand?.name || ''),
+    accentColor: String(source.accentColor || brand?.accent || ''), brand, competitors,
+    matrix: normalizeMatrix(source.matrix), insights: normalizeInsights(source.insights),
+    script: String(source.script || ''), scriptPlan: normalizeScriptPlan(source.scriptPlan),
+    characterUrl: String(source.characterUrl || ''), mockupUrl: String(source.mockupUrl || ''),
+    rawVideoUrl: String(source.rawVideoUrl || ''), videoUrl: String(source.videoUrl || ''),
+    videoJob: Object.keys(objectValue(source.videoJob)).length ? objectValue(source.videoJob) as VideoJob : null,
+    status: allowedStatuses.includes(source.status) ? source.status : 'brand',
+    handoff: Object.keys(objectValue(source.handoff)).length ? objectValue(source.handoff) : null,
+  };
+}
+
 /** "Pictory vs 6 competitors" — the auto-name the Saved tab lists rows under. */
 export function autoName(brandName: string, competitors: Competitor[]): string {
-  const included = competitors.filter((c) => c.included && c.fetched).length;
+  const included = (Array.isArray(competitors) ? competitors : []).filter((c) => c && c.included && c.fetched).length;
   const subject = (brandName || 'Your brand').slice(0, 60);
   if (included === 0) return subject;
   return `${subject} vs ${included} competitor${included === 1 ? '' : 's'}`;
 }
 
 export function includedCompetitors(analysis: Analysis): Competitor[] {
-  return analysis.competitors.filter((c) => c.included && c.fetched);
+  return (Array.isArray(analysis?.competitors) ? analysis.competitors : []).filter((c) => c && c.included && c.fetched);
 }
 
 // ---------------------------------------------------------------------------
@@ -358,18 +464,20 @@ export async function saveAnalysis(analysis: Analysis): Promise<number> {
 
 export async function listSaved(): Promise<SavedSummary[]> {
   const res = await ops('list', { limit: 40 });
-  return (res.comparisons || []) as SavedSummary[];
+  return (Array.isArray(res.comparisons) ? res.comparisons : [])
+    .filter((row: any) => row && typeof row === 'object')
+    .map((row: any) => ({
+      ...row,
+      id: Math.max(0, Number(row.id) || 0), name: String(row.name || 'Untitled comparison'),
+      brandName: String(row.brandName || ''), brandUrl: String(row.brandUrl || ''), accentColor: String(row.accentColor || ''),
+      status: String(row.status || 'brand'), videoUrl: String(row.videoUrl || ''), competitorCount: Math.max(0, Number(row.competitorCount) || 0),
+      hasScript: Boolean(row.hasScript), createdAt: String(row.createdAt || ''), updatedAt: String(row.updatedAt || ''),
+    }));
 }
 
 export async function loadAnalysis(id: number): Promise<Analysis> {
   const res = await ops('get', { id });
-  const row = (res.comparison || {}) as any;
-  return {
-    ...emptyAnalysis(),
-    ...row,
-    competitors: Array.isArray(row.competitors) ? row.competitors : [],
-    status: (row.status || 'brand') as AnalysisStatus,
-  };
+  return normalizeAnalysis(res.comparison || {});
 }
 
 export async function removeAnalysis(id: number): Promise<void> {

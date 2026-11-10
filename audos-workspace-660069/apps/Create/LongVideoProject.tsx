@@ -149,11 +149,11 @@ function slugify(text: string): string {
 
 function StatusPill({ run }: { run: SceneRun }) {
   const map: Record<string, { label: string; color: string; bg: string; border: string }> = {
-    pending: { label: 'Queued', color: T.muted, bg: 'rgba(180,120,0,0.06)', border: T.border },
-    submitting: { label: 'Starting', color: '#B45309', bg: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.28)' },
-    rendering: { label: 'Rendering', color: '#B45309', bg: 'rgba(180,83,9,0.1)', border: 'rgba(180,83,9,0.28)' },
-    done: { label: 'Done', color: T.success, bg: 'rgba(22,101,52,0.1)', border: 'rgba(22,101,52,0.28)' },
-    failed: { label: 'Failed', color: T.danger, bg: 'rgba(153,27,27,0.08)', border: 'rgba(153,27,27,0.28)' },
+    pending: { label: 'Queued', color: T.muted, bg: 'var(--vg-raised)', border: T.border },
+    submitting: { label: 'Starting', color: 'var(--vg-warning)', bg: 'var(--vg-warning-bg)', border: 'color-mix(in srgb, var(--vg-warning) 35%, transparent)' },
+    rendering: { label: 'Rendering', color: 'var(--vg-warning)', bg: 'var(--vg-warning-bg)', border: 'color-mix(in srgb, var(--vg-warning) 35%, transparent)' },
+    done: { label: 'Done', color: T.success, bg: 'var(--vg-success-bg)', border: 'color-mix(in srgb, var(--vg-success) 35%, transparent)' },
+    failed: { label: 'Failed', color: T.danger, bg: 'var(--vg-danger-bg)', border: 'color-mix(in srgb, var(--vg-danger) 35%, transparent)' },
   };
   const s = map[run.status] || map.pending;
   return (
@@ -211,10 +211,10 @@ function AnchorStrip({ anchor, sceneCount }: { anchor: CharacterAnchor; sceneCou
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'linear-gradient(160deg, rgba(200,146,10,0.3), #FFF3D6)',
+              background: 'linear-gradient(160deg, rgba(212,175,55,0.3), var(--vg-raised))',
             }}
           >
-            <User size={18} color="#7A6030" />
+            <User size={18} color="var(--vg-muted)" />
           </span>
         )}
       </span>
@@ -974,7 +974,7 @@ export default function LongVideoProject({
                             color: T.sub,
                             textDecoration: 'none',
                             border: `1px solid ${T.border}`,
-                            background: 'rgba(180,120,0,0.05)',
+                            background: 'var(--vg-raised)',
                           }}
                         >
                           <Download size={13} /> Download
@@ -1197,7 +1197,7 @@ export default function LongVideoProject({
                     background: phoneShotOn ? T.accent : 'transparent',
                   }}
                 >
-                  {phoneShotOn ? <Check size={12} color="#fff" /> : null}
+                  {phoneShotOn ? <Check size={12} color="var(--vg-on-btn)" /> : null}
                 </span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span
@@ -1270,8 +1270,8 @@ export default function LongVideoProject({
                 <div style={{ marginBottom: 16 }}>
                   <Card
                     style={{
-                      borderColor: 'rgba(180,83,9,0.3)',
-                      background: 'rgba(180,83,9,0.07)',
+                      borderColor: 'color-mix(in srgb, var(--vg-warning) 35%, transparent)',
+                      background: 'var(--vg-warning-bg)',
                       fontSize: 12.5,
                       color: T.sub,
                       lineHeight: 1.55,
@@ -1400,7 +1400,7 @@ export default function LongVideoProject({
                           fontSize: 11,
                           fontWeight: 600,
                           color: '#fff',
-                          background: 'rgba(26,16,0,0.62)',
+                          background: 'rgba(0,0,0,0.62)',
                           backdropFilter: 'blur(4px)',
                           whiteSpace: 'nowrap',
                           overflow: 'hidden',
@@ -1415,7 +1415,7 @@ export default function LongVideoProject({
                           label="Redraw this scene preview"
                           onClick={() => generateStill(scene, true)}
                           disabled={(!!img && img.status === 'loading') || !(scene.prompt || '').trim()}
-                          style={{ background: 'rgba(26,16,0,0.55)', border: '1px solid rgba(255,255,255,0.28)' }}
+                          style={{ background: 'rgba(0,0,0,0.55)', border: '1px solid rgba(255,255,255,0.28)' }}
                         >
                           {img && img.status === 'loading' ? (
                             <Loader2 size={14} className="rc-spin" />
@@ -1457,7 +1457,7 @@ export default function LongVideoProject({
                             padding: '4px 6px',
                             borderRadius: 7,
                             border: `1px solid ${T.border}`,
-                            background: 'rgba(180,120,0,0.06)',
+                            background: 'var(--vg-raised)',
                             color: T.sub,
                             fontSize: 12,
                             textAlign: 'center',
@@ -1615,7 +1615,7 @@ export default function LongVideoProject({
               marginBottom: 16,
               borderRadius: 999,
               overflow: 'hidden',
-              background: 'rgba(180,120,0,0.1)',
+              background: 'var(--vg-raised)',
             }}
             role="progressbar"
             aria-valuenow={doneCount}
@@ -1629,7 +1629,7 @@ export default function LongVideoProject({
                 top: 0,
                 bottom: 0,
                 width: `${Math.round((doneCount / Math.max(1, scenes.length)) * 100)}%`,
-                background: 'linear-gradient(90deg, #E8B737, #C8920A)',
+                background: 'var(--vg-accent)',
                 transition: 'width .4s ease',
               }}
             />
@@ -1664,7 +1664,7 @@ export default function LongVideoProject({
                   key={scene.key}
                   style={{
                     padding: '12px 14px',
-                    borderColor: run.status === 'failed' ? 'rgba(153,27,27,0.3)' : T.border,
+                    borderColor: run.status === 'failed' ? 'color-mix(in srgb, var(--vg-danger) 35%, transparent)' : T.border,
                   }}
                   data-testid={`project-scene-${scene.index}`}
                 >
@@ -1680,11 +1680,11 @@ export default function LongVideoProject({
                         borderRadius: 999,
                         fontSize: 11,
                         fontWeight: 700,
-                        color: run.status === 'done' ? '#fff' : T.muted,
+                        color: run.status === 'done' ? 'var(--vg-on-btn)' : T.muted,
                         background:
                           run.status === 'done'
-                            ? 'linear-gradient(135deg, #16A34A, #166534)'
-                            : 'rgba(180,120,0,0.1)',
+                            ? 'var(--vg-success)'
+                            : 'var(--vg-raised)',
                       }}
                     >
                       {run.status === 'done' ? <Check size={12} /> : scene.index}
@@ -1931,7 +1931,7 @@ export default function LongVideoProject({
                               fontSize: 9.5,
                               fontWeight: 700,
                               color: '#fff',
-                              background: 'rgba(26,16,0,0.65)',
+                              background: 'rgba(0,0,0,0.65)',
                             }}
                           >
                             {scene.index}
@@ -1967,12 +1967,12 @@ export default function LongVideoProject({
                   width: 52,
                   height: 52,
                   borderRadius: 999,
-                  background: 'rgba(180,83,9,0.1)',
-                  border: '1px solid rgba(180,83,9,0.3)',
+                  background: 'var(--vg-warning-bg)',
+                  border: '1px solid color-mix(in srgb, var(--vg-warning) 35%, transparent)',
                   marginBottom: 16,
                 }}
               >
-                <AlertTriangle size={22} color="#B45309" />
+                <AlertTriangle size={22} color="var(--vg-warning)" />
               </div>
               <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: T.text }}>
                 Your scenes rendered — the stitch didn't
@@ -2002,7 +2002,7 @@ export default function LongVideoProject({
                       color: T.sub,
                       textDecoration: 'none',
                       border: `1px solid ${T.border}`,
-                      background: 'rgba(180,120,0,0.05)',
+                      background: 'var(--vg-raised)',
                     }}
                     data-testid={`link-project-clip-${i + 1}`}
                   >

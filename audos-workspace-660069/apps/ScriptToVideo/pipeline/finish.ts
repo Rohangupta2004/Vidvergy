@@ -7,7 +7,7 @@
  * pass can rewrite the words or drift the timing.
  */
 
-import { WORKSPACE_ID, getWorkspaceToken } from '../../../lib/workspace';
+import { WORKSPACE_ID, workspaceFetch } from '../../../lib/workspace';
 import { Film, FilmScene, fingerprint } from '../api';
 
 export const MUSIC_PRESETS = ['corporate', 'tech', 'uplifting', 'calm', 'energetic', 'playful', 'cinematic', 'lofi'] as const;
@@ -45,14 +45,10 @@ export interface PreparedFinish {
   captionsSrt?: string;
 }
 
-async function audioHeaders(): Promise<Record<string, string>> {
-  const token = await getWorkspaceToken();
-  if (!token) throw new Error('Workspace session is still loading — audio generation cannot start yet.');
-  return { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token };
-}
-
 async function audioPost(path: string, body: unknown): Promise<any> {
-  const res = await fetch(path, { method: 'POST', headers: await audioHeaders(), body: JSON.stringify(body) });
+  const res = await workspaceFetch(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(String(data?.error || data?.message || `Audio generation failed (HTTP ${res.status}).`));
   return data;

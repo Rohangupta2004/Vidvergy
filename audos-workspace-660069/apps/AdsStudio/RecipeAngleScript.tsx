@@ -25,6 +25,7 @@ import {
   autoWriteAngles, clipOverLimit, clipWords, writeAngleScript,
 } from './recipesApi';
 import type { AngleTone, ScriptClip, WrittenAngle } from './recipesApi';
+import { OptionThumb, TONE_NOTES, VISUAL_STYLE_HELPER, previewFor } from './optionPreviews';
 
 export interface RecipeBrief {
   /** One line of creative direction a recipe reads. */
@@ -91,16 +92,16 @@ function StepRail({ stage }: { stage: 0 | 1 | 2 }) {
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               borderRadius: 999, padding: '4px 11px', fontSize: 12, fontWeight: 700,
-              color: done || current ? '#fff' : T.muted,
-              background: done ? T.good : current ? T.accent : T.panel,
-              border: `1px solid ${done ? T.good : current ? 'transparent' : T.line}`,
+              color: done ? T.accent : current ? 'var(--vg-on-accent)' : T.muted,
+              background: done ? 'var(--vg-gold-tint)' : current ? T.accent : T.panel,
+              border: `1px solid ${done ? T.accent : current ? 'transparent' : T.line}`,
               transition: 'background-color .28s ease, color .28s ease, border-color .28s ease',
             }}>
               {done ? <Check size={12} /> : <span style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />}
               {step.label}
             </span>
             {index < STEPS.length - 1 ? (
-              <span style={{ width: 24, height: 2, borderRadius: 2, background: done ? T.good : T.line, transition: 'background-color .28s ease' }} />
+              <span style={{ width: 24, height: 2, borderRadius: 2, background: done ? T.accent : T.line, transition: 'background-color .28s ease' }} />
             ) : null}
           </div>
         );
@@ -207,7 +208,7 @@ export default function RecipeAngleScript(props: RecipeAngleScriptProps) {
               : 'Optional — analyse ad angles and write the script before the recipe films it. Skip it and generate straight away.'}
           </span>
         </span>
-        {props.applied ? <Tag tone="ok">In the brief</Tag> : <Tag>Optional</Tag>}
+        {props.applied ? <Tag tone="info">In the brief</Tag> : <Tag>Optional</Tag>}
         <ChevronDown size={17} color={T.muted} style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .3s cubic-bezier(.22,.9,.3,1)' }} />
       </button>
 
@@ -236,11 +237,13 @@ export default function RecipeAngleScript(props: RecipeAngleScriptProps) {
                   <select value={tone} onChange={(event) => setTone(event.target.value as AngleTone)} style={inputStyle}>
                     {ANGLE_TONES.map((option) => <option key={option} value={option}>{option}</option>)}
                   </select>
+                  <div style={{ marginTop: 6, color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{TONE_NOTES[tone]}</div>
                 </div>
               </div>
 
               <div style={{ marginTop: 12 }}>
                 <span style={labelStyle}>Visual style</span>
+                <div style={{ margin: '-2px 0 8px', color: T.muted, fontSize: 12, lineHeight: 1.5 }}>{VISUAL_STYLE_HELPER}</div>
                 <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
                   {VISUAL_STYLES.map((option) => (
                     <button
@@ -252,10 +255,11 @@ export default function RecipeAngleScript(props: RecipeAngleScriptProps) {
                         borderRadius: 999, padding: '7px 14px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer',
                         fontFamily: T.sans,
                         background: style === option ? T.accent : T.panel,
-                        color: style === option ? '#fff' : T.soft,
+                        color: style === option ? 'var(--vg-on-accent)' : T.soft,
                         border: `1px solid ${style === option ? 'transparent' : T.line}`,
                       }}
                     >
+                      <OptionThumb src={previewFor('visual-style', option)} ratio="1 / 1" style={{ width: 56, height: 56, borderRadius: 999, margin: '0 auto 5px' }} />
                       {option}
                     </button>
                   ))}
@@ -272,7 +276,7 @@ export default function RecipeAngleScript(props: RecipeAngleScriptProps) {
               </div>
 
               {error ? (
-                <div className="ras-rise" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 14, borderRadius: 12, padding: '12px 14px', background: 'rgba(153,27,27,.08)', border: `1px solid ${T.bad}` }}>
+                <div className="ras-rise" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 14, borderRadius: 12, padding: '12px 14px', background: 'var(--vg-danger-bg)', border: `1px solid ${T.bad}` }}>
                   <AlertTriangle size={15} color={T.bad} style={{ flexShrink: 0, marginTop: 1 }} />
                   <span style={{ minWidth: 0, flex: 1, color: T.soft, fontSize: 13, lineHeight: 1.55 }}>{error}</span>
                   <Btn small kind="primary" onClick={() => void (chosen ? writeScript(chosen) : analyseAngles())}>Retry</Btn>
@@ -299,14 +303,14 @@ export default function RecipeAngleScript(props: RecipeAngleScriptProps) {
                         onClick={() => { setChosen(angle); setClips([]); }}
                         style={{
                           textAlign: 'left', borderRadius: 12, padding: '12px 14px', cursor: 'pointer',
-                          background: picked ? 'rgba(212,146,10,.14)' : T.panel,
+                          background: picked ? 'var(--vg-gold-tint)' : T.panel,
                           border: `1px solid ${picked ? T.accent : T.line}`,
                           color: T.ink, fontFamily: T.sans, animationDelay: `${index * 45}ms`,
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 13.5, fontWeight: 700 }}>{angle.angle_name}</span>
-                          {picked ? <Tag tone="ok">Chosen</Tag> : null}
+                          {picked ? <Tag tone="info">Chosen</Tag> : null}
                         </div>
                         <div style={{ marginTop: 6, color: T.soft, fontSize: 13, lineHeight: 1.55 }}>“{angle.hook}”</div>
                         <div style={{ marginTop: 5, color: T.muted, fontSize: 12.5, lineHeight: 1.55 }}>{angle.body}</div>

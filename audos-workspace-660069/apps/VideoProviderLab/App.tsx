@@ -53,12 +53,14 @@ import {
 } from './labClient';
 import type { LabRun, RunContext, RunResult } from './labClient';
 import HealthPanel from './HealthPanel';
+import { MODEL_NOTES, MODEL_PICKER_HELP } from './modelNotes';
 import { useSpaceRuntime } from '../../SpaceRuntimeContext';
 import AppShell from '../../components/ui/AppShell';
 import { COLORS, FONT as THEME_FONT, alpha } from '../../components/theme';
 import { withBrandContext } from '../../components/BrandContextLayer';
 import { VideoHistory } from '../../components/VideoHistory';
 import { saveVideoToHistory } from '../../lib/videoHistory';
+import { createControllerBus, useAppController, type AppController, type FieldSpec } from '../../lib/appBridge';
 
 // ---------------------------------------------------------------------------
 // Look
@@ -234,6 +236,7 @@ function useLabStyles() {
       `.vpl-scroll::-webkit-scrollbar-thumb { background: ${COLORS.border}; border-radius: 6px; }`,
       `.vpl-scroll::-webkit-scrollbar-thumb:hover { background: ${COLORS.controlBorder}; }`,
       '.vpl-scroll::-webkit-scrollbar-track { background: transparent; }',
+      '@media(max-width:720px){.vpl-featured-models{grid-template-columns:1fr!important}}',
       `.vpl-input:focus, .vpl-select:focus { outline: 2px solid ${COLORS.focus}; outline-offset: 3px; border-color: ${COLORS.focus}; box-shadow: none; }`,
     ].join('\n');
     document.head.appendChild(style);
@@ -457,6 +460,8 @@ function App() {
 function VideoProviderLab() {
   useLabStyles();
 
+  const bridgeBus = useRef(createControllerBus()).current;
+  const bridgeValues = useRef<Record<string, unknown>>({ prompt: '', model: DEFAULT_LAB_MODEL_KEY, duration: 8, aspectRatio: '9:16', audio: true });
   const [activeKey, setActiveKey] = useState(DEFAULT_LAB_MODEL_KEY);
   const active = labModel(activeKey) || LAB_MODELS[0];
   const [input, setInput] = useState<LabRunInput>(() => defaultRunInput(active, ''));
@@ -465,7 +470,7 @@ function VideoProviderLab() {
   const [pending, setPending] = useState<Attachment[]>([]);
   const [attachNotice, setAttachNotice] = useState('');
   const [tick, setTick] = useState(0);
-  const [controlsOpen, setControlsOpen] = useState(true);
+  const [controlsOpen, setControlsOpen] = useState(false);
   // The Health view replaces the conversation rather than floating over it, so
   // a diagnostic read can never be mistaken for a run in the thread.
   const [showHealth, setShowHealth] = useState(false);
@@ -682,7 +687,7 @@ function VideoProviderLab() {
     active.params.audio ||
     imageRoles.length > 1 ||
     Boolean(active.params.capabilityHint);
-  const controlsLabel = active.group === 'kling' ? 'Kling controls' : 'Run controls';
+  const controlsLabel = 'Advanced settings';
   const controlsHint = active.params.durationMin !== null && active.params.durationMax !== null
     ? `${active.name} accepts every whole second from ${active.params.durationMin} to ${active.params.durationMax}. The exact value is sent with the run — longer clips cost more.`
     : active.params.durations.length
@@ -837,6 +842,7 @@ function VideoProviderLab() {
         knownJobs.current.add(jobId);
         patchRun(run.id, { jobId });
       },
+      creditKey: `provider-lab:${run.id}`,
     };
 
     void (async () => {
@@ -913,6 +919,87 @@ function VideoProviderLab() {
   const hasToken = Boolean(workspaceToken());
   const credentialWarning = hasToken ? '' : 'no workspace credential — reload the space';
   const canSend = !busy && !runBlock && (tool ? true : Boolean(prompt.trim() || pending.length));
+  const featuredModels = [
+    { label: 'Seedance 2.5', goodFor: 'Longer product and story clips', match: (model: LabModel) => /seedance-2\.5/i.test(`${model.modelId} ${model.name}`) },
+    { label: 'Kling', goodFor: 'Cinematic people and camera motion', match: (model: LabModel) => /kling/i.test(`${model.modelId} ${model.name}`) && !isKlingTool(model) },
+    { label: 'Omni Flash 1.1', goodFor: 'Fast consistent subjects and edits', match: (model: LabModel) => /omni.*1\.1|1\.1.*omni/i.test(`${model.modelId} ${model.name}`) },
+  ].map((item) => ({ ...item, model: LAB_MODELS.find((model) => model.available && item.match(model)) })).filter((item) => item.model);
+
+  const bridgeController = useMemo<AppController>(() => {
+    const fields: FieldSpec[] = [
+      { key: 'prompt', label: 'Clip brief', type: 'longtext', required: true, defaultFrom: 'request' },
+      { key: 'model', label: 'Model', type: 'model', required: true, options: async () => LAB_MODELS.filter((model) => model.available && !isKlingTool(model)).map((model) => ({ value: model.key, label: model.name })) },
+      { key: 'duration', label: 'Duration', type: 'number', required: true, defaultFrom: 'request' },
+      { key: 'aspectRatio', label: 'Shape', type: 'choice', required: true, options: async () => [{ value: '9:16', label: '9:16' }, { value: '16:9', label: '16:9' }, { value: '1:1', label: '1:1' }] },
+      { key: 'audio', label: 'Generate audio', type: 'toggle', required: false },
+    ];
+    const generate = { key: 'generate', label: 'Generate clip', paid: true, estimate: async (values: Record<string, unknown>) => ({ credits: Math.max(1, Math.round(Number(values.duration || bridgeValues.current.duration || 8))) }) };
+    return {
+      appId: 'video-provider-lab',
+      schema: () => ({ fields, actions: [generate] }),
+      getState: () => {
+        const latest = [...messages].reverse().find((message): message is RunMessage => message.kind === 'run');
+        return {
+          values: { ...bridgeValues.current },
+          screen: latest?.phase === 'done' ? 'finished' : latest?.phase === 'error' ? 'error' : latest?.phase === 'generating' ? 'generating' : 'intake',
+          busy: latest?.phase === 'generating',
+          can: { generate: { ok: !latest || latest.phase !== 'generating', reason: latest?.phase === 'generating' ? 'A clip is already generating.' : undefined } },
+        };
+      },
+      fill: async (values) => {
+        bridgeValues.current = { ...bridgeValues.current, ...values };
+        const requestedModel = String(values.model || '');
+        const selected = requestedModel ? (labModel(requestedModel) || LAB_MODELS.find((model) => model.key === requestedModel || model.modelId === requestedModel)) : null;
+        if (selected?.available) { setActiveKey(selected.key); setInput((current) => retargetRunInput(current, selected)); }
+        if (values.prompt != null) setPrompt(String(values.prompt));
+        setInput((current) => ({
+          ...current,
+          ...(values.duration != null ? { duration: Math.max(1, Math.round(Number(values.duration) || current.duration)) } : {}),
+          ...(values.aspectRatio != null ? { aspectRatio: String(values.aspectRatio) } : {}),
+          ...(values.audio != null ? { audio: values.audio === true } : {}),
+        }));
+        const applied = Object.keys(values);
+        applied.forEach((key) => bridgeBus.emit({ type: 'field_changed', key, value: values[key], by: 'verger' }));
+        return { applied, rejected: [] };
+      },
+      run: async (action, opts) => {
+        if (action !== 'generate') return { ok: false, error: `${action} is not available in Provider Lab.` };
+        const values = bridgeValues.current;
+        const model = labModel(String(values.model || '')) || LAB_MODELS.find((item) => item.key === String(values.model || '') || item.modelId === String(values.model || '')) || active;
+        const duration = Math.max(1, Math.round(Number(values.duration || 8)));
+        if (opts?.approvedCredits !== duration) return { ok: false, error: `Generate requires approval for exactly ${duration} credits.` };
+        const runInput = effectiveRunInput(model, {
+          ...defaultRunInput(model, String(values.prompt || '')),
+          prompt: String(values.prompt || '').trim(),
+          duration,
+          aspectRatio: String(values.aspectRatio || '9:16'),
+          audio: values.audio !== false,
+        });
+        const blocked = describeRunBlock(model, runInput);
+        if (blocked) return { ok: false, error: blocked };
+        pushMessage({ kind: 'user', id: messageId('verger'), text: runInput.prompt, attachments: [] });
+        launch(model, runInput, (ctx) => runLabModel(model, runInput, ctx));
+        return { ok: true, result: { status: 'started', model: model.name, duration } };
+      },
+      subscribe: bridgeBus.subscribe,
+    };
+  }, [active, bridgeBus, launch, messages, pushMessage]);
+  useAppController(bridgeController);
+
+  useEffect(() => {
+    const latest = [...messages].reverse().find((message): message is RunMessage => message.kind === 'run');
+    if (!latest) return;
+    if (latest.phase === 'generating') {
+      bridgeBus.emit({ type: 'progress', label: latest.note || 'Generating clip', done: 0, total: 1 });
+    } else if (latest.phase === 'done' && latest.videoUrl) {
+      const duration = Math.max(1, Math.round(Number(bridgeValues.current.duration || 8)));
+      const portrait = String(bridgeValues.current.aspectRatio || '9:16') === '9:16';
+      bridgeBus.emit({ type: 'progress', label: 'Clip ready', done: 1, total: 1 });
+      bridgeBus.emit({ type: 'finished', videoId: String(latest.jobId || latest.id), url: latest.videoUrl, width: portrait ? 1080 : 1920, height: portrait ? 1920 : 1080, durationS: duration });
+    } else if (latest.phase === 'error') {
+      bridgeBus.emit({ type: 'error', message: latest.error || 'Provider Lab could not finish the clip.', actions: ['retry'] });
+    }
+  }, [messages, bridgeBus]);
 
   return (
     <AppShell
@@ -1042,6 +1129,18 @@ function VideoProviderLab() {
           </select>
         </div>
 
+        <div className="vpl-featured-models" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8, padding: '10px 16px', borderBottom: `1px solid ${C.line}`, background: C.card }}>
+          {featuredModels.map((item) => {
+            const model = item.model!;
+            const selected = model.key === activeKey;
+            return <button key={model.key} type="button" onClick={() => selectModel(model.key)} aria-pressed={selected} className="vpl-btn" style={{ minHeight: 68, textAlign: 'left', padding: '10px 12px', borderRadius: 12, border: `1px solid ${selected ? C.accent : C.line}`, background: selected ? C.accentSurface : C.bg, color: selected ? C.ink : C.soft, cursor: 'pointer' }}><strong style={{ display: 'block', fontFamily: 'var(--display)', fontSize: 13.5 }}>{item.label}</strong><span style={{ display: 'block', marginTop: 3, color: C.muted, fontSize: 10.5, lineHeight: 1.35 }}>{item.goodFor}</span></button>;
+          })}
+          <span style={{ gridColumn: '1 / -1', display: 'inline-flex', alignItems: 'center', gap: 7, color: credentialWarning ? C.warn : C.good, fontSize: 10.5 }}><span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', boxShadow: '0 0 8px currentColor' }} />{credentialWarning || 'All models online'}</span>
+          <span role="note" style={{ gridColumn: '1 / -1', color: C.muted, fontSize: 10.5, lineHeight: 1.45 }}>
+            {MODEL_NOTES[active.key] ? `${active.name}: ${MODEL_NOTES[active.key]} ` : ''}{MODEL_PICKER_HELP}
+          </span>
+        </div>
+
         {/* Row 2 — the owner-only health read, or the conversation */}
         {showHealth ? <HealthPanel onClose={() => setShowHealth(false)} /> : null}
 
@@ -1064,8 +1163,8 @@ function VideoProviderLab() {
               <div style={{ fontSize: 15, fontWeight: 700, color: C.soft }}>Describe a shot to generate it</div>
               <p style={{ margin: '8px 0 0', fontSize: 12.5, color: C.muted, lineHeight: 1.7 }}>
                 {tool
-                  ? `${active.name} is selected. Fill in the Kling controls below, then press send — every run goes through the Audos proxy and bills the workspace wallet.`
-                  : `${active.name} is selected. Attach reference images or a source clip with the paperclip — every run goes through the Audos proxy and bills the workspace wallet.`}
+                  ? `${active.name} is selected. Fill in the Kling controls below, then press send — the shown duration is authorized once through your Vidverge credits.`
+                  : `${active.name} is selected. Attach reference images or a source clip with the paperclip — the shown duration is authorized once through your Vidverge credits.`}
               </p>
             </div>
           ) : null}
@@ -1112,6 +1211,7 @@ function VideoProviderLab() {
             const elapsedMs = message.phase === 'generating'
               ? Math.max(0, now - message.startedAt)
               : message.finishedMs;
+            const runFailure = message.phase === 'error' ? splitRunError(message.error) : null;
 
             return (
               <div key={message.id} className="vpl-turn" style={{ display: 'flex', justifyContent: 'flex-start' }}>
@@ -1243,7 +1343,7 @@ function VideoProviderLab() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
                         {message.jobId !== undefined ? (
                           <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', color: COLORS.error }}>
-                            {splitRunError(message.error).timedOut ? 'Timed out' : 'Render failed'}
+                            {runFailure?.timedOut ? 'Timed out' : 'Render failed'}
                           </div>
                         ) : null}
                         <div
@@ -1256,7 +1356,7 @@ function VideoProviderLab() {
                             fontFamily: MONO,
                           }}
                         >
-                          {message.jobId !== undefined ? splitRunError(message.error).message : message.error}
+                          {message.jobId !== undefined ? runFailure?.message : message.error}
                         </div>
                       </div>
                     </div>
@@ -1274,9 +1374,10 @@ function VideoProviderLab() {
                         color: C.soft,
                       }}
                     >
-                      <strong style={{ color: C.warn }}>Credit charge: </strong>
-                      credits for this render were taken when it was submitted. A failed or timed-out run is not refunded
-                      automatically — ask Otto to review run #{message.jobId} if you want the charge looked at.
+                      <strong style={{ color: C.warn }}>Credit status: </strong>
+                      {runFailure?.timedOut
+                        ? `run #${message.jobId} is still uncertain, so its one charge is preserved while the provider can still finish; reopening this Lab rechecks it without resubmitting.`
+                        : `run #${message.jobId} failed at the provider and its one charge is refunded automatically; reopening this Lab safely retries any pending refund.`}
                     </div>
                   ) : null}
 
@@ -1634,7 +1735,7 @@ function VideoProviderLab() {
                     height: 15,
                     borderRadius: 99,
                     background: C.accent,
-                    color: '#FFFFFF',
+                    color: 'var(--vg-on-accent)',
                     fontSize: 9.5,
                     fontWeight: 800,
                     display: 'flex',
@@ -1698,7 +1799,7 @@ function VideoProviderLab() {
                 alignItems: 'center',
                 justifyContent: 'center',
                 background: canSend ? C.accent : 'transparent',
-                color: canSend ? '#FFFFFF' : C.muted,
+                color: canSend ? 'var(--vg-on-accent)' : C.muted,
                 border: canSend ? 'none' : `1px solid ${C.line}`,
                 borderRadius: 10,
                 cursor: 'pointer',

@@ -112,7 +112,7 @@ const RS_CSS = `
 .rs-btn:hover:not(:disabled) { filter: brightness(1.12); }
 .rs-btn:disabled { opacity: .55; cursor: default; }
 .rs-input { transition: border-color .16s ease, box-shadow .16s ease; outline: none; }
-.rs-input:focus { border-color: rgba(245,158,11,0.5) !important; box-shadow: 0 0 0 3px rgba(245,158,11,0.12); }
+.rs-input:focus { border-color: var(--vg-focus) !important; box-shadow: 0 0 0 3px var(--vg-gold-tint); }
 ${LB_SHIMMER_CSS}
 `;
 
@@ -123,7 +123,7 @@ function Pills<T extends string | number>(props: { options: readonly T[]; value:
   return (
     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
       {props.options.map((o) => (
-        <button key={String(o)} className="rs-btn" onClick={() => props.onChange(o)} style={{ background: props.value === o ? LB.accent : 'rgba(255,255,255,0.05)', color: props.value === o ? '#241503' : LB.textSecondary, border: props.value === o ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>
+        <button key={String(o)} className="rs-btn" onClick={() => props.onChange(o)} style={{ background: props.value === o ? LB.accent : 'rgba(255,255,255,0.05)', color: props.value === o ? 'var(--vg-on-btn)' : LB.textSecondary, border: props.value === o ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>
           {props.format ? props.format(o) : String(o)}
         </button>
       ))}
@@ -536,7 +536,7 @@ export default function RemotionStudio() {
         )}
       </div>
       {slot.subject ? (
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginTop: 8, background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', color: LB.accent, borderRadius: 999, padding: '3px 12px', fontSize: 11, fontWeight: 650 }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, marginTop: 8, background: 'rgba(212,175,55,0.12)', border: '1px solid rgba(212,175,55,0.4)', color: LB.accent, borderRadius: 999, padding: '3px 12px', fontSize: 11, fontWeight: 650 }}>
           <Sparkles size={11} /> Gemini analyzed: {slot.subject.slice(0, 60)}
         </div>
       ) : null}
@@ -567,7 +567,7 @@ export default function RemotionStudio() {
             className="rs-btn"
             disabled={busy || sdef.n > step}
             onClick={() => setStep(sdef.n)}
-            style={{ background: step === sdef.n ? LB.accent : 'rgba(255,255,255,0.05)', color: step === sdef.n ? '#241503' : sdef.n < step ? LB.textPrimary : LB.textMuted, border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '6px 14px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}
+            style={{ background: step === sdef.n ? LB.accent : 'rgba(255,255,255,0.05)', color: step === sdef.n ? 'var(--vg-on-btn)' : sdef.n < step ? LB.textPrimary : LB.textMuted, border: '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '6px 14px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}
           >
             {sdef.n < step ? '✓ ' : ''}{sdef.label}
           </button>
@@ -595,7 +595,7 @@ export default function RemotionStudio() {
               onClick={() => void readWebsite()}
               data-testid="button-read-website"
               title="Read the whole page — copy, colours, logo, screenshot, images and any video already on it"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 9, padding: '10px 18px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: '0 0 auto' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 9, padding: '10px 18px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: '0 0 auto' }}
             >
               {urlBusy ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />} {brand ? 'Read it again' : 'Read my site'}
             </button>
@@ -632,11 +632,11 @@ export default function RemotionStudio() {
                           key={u}
                           className="rs-btn"
                           onClick={() => toggleImage(u)}
-                          style={{ position: 'relative', padding: 0, lineHeight: 0, background: 'none', cursor: 'pointer', borderRadius: 8, border: on ? `2px solid ${accent}` : '1px solid rgba(255,255,255,0.12)' }}
+                          style={{ position: 'relative', padding: 0, lineHeight: 0, background: 'none', cursor: 'pointer', borderRadius: 8, border: on ? '2px solid var(--vg-accent)' : '1px solid rgba(255,255,255,0.12)' }}
                         >
                           <img src={u} alt="" style={{ width: 74, height: 46, objectFit: 'cover', borderRadius: 6, opacity: on ? 1 : 0.5 }} onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none'; }} />
                           {on ? (
-                            <span style={{ position: 'absolute', top: 3, right: 3, width: 15, height: 15, borderRadius: 99, background: accent, color: '#241503', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <span style={{ position: 'absolute', top: 3, right: 3, width: 15, height: 15, borderRadius: 99, background: 'var(--vg-accent)', color: 'var(--vg-on-btn)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               <Check size={9} />
                             </span>
                           ) : null}
@@ -697,7 +697,7 @@ export default function RemotionStudio() {
 
           <span style={fieldLabel}>Target audience</span>
           <input className="rs-input" style={inputStyle} value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="e.g. indie founders and marketers" />
-              <button className="rs-btn" disabled={!productName.trim()} onClick={() => setStep(2)} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 20, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 11, padding: '12px 24px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
+              <button className="rs-btn" disabled={!productName.trim()} onClick={() => setStep(2)} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 20, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 11, padding: '12px 24px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
                 Continue → Script
               </button>
               <div style={{ color: LB.textMuted, fontSize: 10.5, marginTop: 8 }}>Next: six script options to choose between — then tone, length, images and sound, then I render.</div>
@@ -721,7 +721,7 @@ export default function RemotionStudio() {
                       disabled={writing || !productName.trim()}
                       onClick={() => void writeScripts()}
                       data-testid="button-write-scripts"
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 11, padding: '12px 22px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 11, padding: '12px 22px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}
                     >
                       <Sparkles size={14} /> Write script options
                     </button>
@@ -735,7 +735,7 @@ export default function RemotionStudio() {
                     </button>
                   </div>
                   {scriptError ? (
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: '#f87171', fontSize: 12, lineHeight: 1.5, marginTop: 14, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 9, padding: '9px 13px' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: 'var(--vg-danger)', fontSize: 12, lineHeight: 1.5, marginTop: 14, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 30%, transparent)', borderRadius: 9, padding: '9px 13px' }}>
                       <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{scriptError}</span>
                     </div>
                   ) : null}
@@ -769,7 +769,7 @@ export default function RemotionStudio() {
                         <button
                           className="rs-btn"
                           onClick={() => setStep(3)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 8, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 11, padding: '10px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 11, padding: '10px 20px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                         >
                           Continue → Style & sound
                         </button>
@@ -784,8 +784,8 @@ export default function RemotionStudio() {
           {step === 3 ? (
             <>
           {variant ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '9px 12px', marginBottom: 4 }}>
-              <Check size={13} color={accent} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', background: 'rgba(212,175,55,0.1)', border: '1px solid rgba(212,175,55,0.3)', borderRadius: 10, padding: '9px 12px', marginBottom: 4 }}>
+              <Check size={13} color="var(--vg-accent)" />
               <span style={{ color: LB.textSecondary, fontSize: 12 }}>
                 Script locked: <strong style={{ color: LB.textPrimary }}>{variant.styleLabel}</strong> · {variant.scenes.length} scenes · {variant.totalSeconds}s.
                 Its own scene timings drive the length, so the Video length pills below only apply if you drop the script.
@@ -811,22 +811,22 @@ export default function RemotionStudio() {
           <span style={fieldLabel}>Background music</span>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {PV_MUSIC_BEDS.map((m) => (
-              <button key={m.id} className="rs-btn" onClick={() => setMusicBedId(m.id)} style={{ background: musicBedId === m.id ? LB.accent : 'rgba(255,255,255,0.05)', color: musicBedId === m.id ? '#241503' : LB.textSecondary, border: musicBedId === m.id ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>{m.label}</button>
+              <button key={m.id} className="rs-btn" onClick={() => setMusicBedId(m.id)} style={{ background: musicBedId === m.id ? LB.accent : 'rgba(255,255,255,0.05)', color: musicBedId === m.id ? 'var(--vg-on-btn)' : LB.textSecondary, border: musicBedId === m.id ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>{m.label}</button>
             ))}
-            <button className="rs-btn" onClick={() => setMusicBedId('none')} style={{ background: musicBedId === 'none' ? LB.accent : 'rgba(255,255,255,0.05)', color: musicBedId === 'none' ? '#241503' : LB.textSecondary, border: musicBedId === 'none' ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>None</button>
+            <button className="rs-btn" onClick={() => setMusicBedId('none')} style={{ background: musicBedId === 'none' ? LB.accent : 'rgba(255,255,255,0.05)', color: musicBedId === 'none' ? 'var(--vg-on-btn)' : LB.textSecondary, border: musicBedId === 'none' ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)', borderRadius: 999, padding: '7px 14px', fontSize: 12, fontWeight: 650, cursor: 'pointer' }}>None</button>
           </div>
 
           <span style={fieldLabel}>Narration (ElevenLabs) <span style={{ textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>— off by default, nothing is recorded unless you turn it on</span></span>
           <Pills options={['off', 'on'] as const} value={voiceover} onChange={setVoiceover} format={(v) => (v === 'on' ? 'Voiceover on' : 'No narration')} />
               <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
                 <button className="rs-btn" onClick={() => setStep(2)} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: LB.textSecondary, borderRadius: 11, padding: '12px 20px', fontSize: 13, fontWeight: 650, cursor: 'pointer' }}>← Back</button>
-                <button className="rs-btn" onClick={() => setStep(4)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 11, padding: '12px 24px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>Continue → Generate</button>
+                <button className="rs-btn" onClick={() => setStep(4)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 11, padding: '12px 24px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>Continue → Generate</button>
               </div>
             </>
           ) : null}
 
           {error ? (
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: '#f87171', fontSize: 12, lineHeight: 1.5, marginTop: 14, background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)', borderRadius: 9, padding: '9px 13px' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', color: 'var(--vg-danger)', fontSize: 12, lineHeight: 1.5, marginTop: 14, background: 'var(--vg-danger-bg)', border: '1px solid color-mix(in srgb, var(--vg-danger) 30%, transparent)', borderRadius: 9, padding: '9px 13px' }}>
               <AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{error}</span>
             </div>
           ) : null}
@@ -850,7 +850,7 @@ export default function RemotionStudio() {
                 className="rs-btn"
                 disabled={busy || !productName.trim()}
                 onClick={() => void generate()}
-                style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 16, background: LB.accentGradient, color: '#241503', border: 'none', borderRadius: 11, padding: '13px 26px', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 14px rgba(245,158,11,0.3)' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 16, background: 'var(--vg-btn)', color: 'var(--vg-on-btn)', border: 'none', borderRadius: 11, padding: '13px 26px', fontSize: 14, fontWeight: 700, cursor: 'pointer', boxShadow: '0 2px 14px rgba(212,175,55,0.3)' }}
               >
                 {busy ? <Loader2 size={15} className="animate-spin" /> : <Clapperboard size={15} />}
                 {busy ? 'Working…' : renderUrl ? 'Generate again' : 'Generate video'}
@@ -868,7 +868,7 @@ export default function RemotionStudio() {
                   const copyDef = TRAIL_COPY[k];
                   return (
                     <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
-                      {state === 'active' ? <Loader2 size={12} color={LB.accent} className="animate-spin" /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: state === 'done' ? '#4ade80' : 'rgba(255,255,255,0.2)', display: 'inline-block', flexShrink: 0 }} />}
+                      {state === 'active' ? <Loader2 size={12} color={LB.accent} className="animate-spin" /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: state === 'done' ? 'var(--vg-success)' : 'rgba(255,255,255,0.2)', display: 'inline-block', flexShrink: 0 }} />}
                       <span style={{ color: state === 'active' ? LB.accent : state === 'done' ? LB.textSecondary : LB.textMuted, fontSize: 12 }}>{state === 'active' ? copyDef.active : state === 'done' ? copyDef.done : copyDef.todo}</span>
                     </div>
                   );
@@ -894,7 +894,7 @@ export default function RemotionStudio() {
                 ) : renderUrl ? (
                   <div>
                     <video src={renderUrl} controls style={{ width: '100%', borderRadius: 12, background: '#000', border: LB.border }} />
-                    <a className="rs-btn" href={renderUrl} download target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 12, background: LB.accent, color: '#241503', borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}>
+                    <a className="rs-btn" href={renderUrl} download target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 12, background: LB.accent, color: 'var(--vg-on-btn)', borderRadius: 10, padding: '10px 20px', fontSize: 13, fontWeight: 700, textDecoration: 'none' }}>
                       <Download size={14} /> Download MP4
                     </a>
                     {mode === 'story' ? <div style={{ color: LB.textMuted, fontSize: 10.5, marginTop: 8 }}>Story Mode renders a centered 9:16 stage inside the platform's fixed 1920×1080 canvas — crop to 9:16 in the Video Enhancer if you need a pure vertical file.</div> : null}

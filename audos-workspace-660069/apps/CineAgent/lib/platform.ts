@@ -16,6 +16,7 @@
 //   /api/render/remotion + status         server-side Remotion render
 
 import { workspaceToken } from './ai';
+import { callHook } from '../../../lib/workspace';
 import {
   finishPortrait as finishCloudPortrait,
   readRender as readCloudRender,
@@ -194,25 +195,44 @@ export interface VideoGenRequest {
   generateAudio?: boolean;
 }
 
+const pendingVideoCredits = new Map<string, { entryKey: string; seconds: number; engine: string }>();
+
+import { authorizeCredits, newChargeKey, refundCredits } from '../../../lib/credits';
+
 export async function startVideoGeneration(req: VideoGenRequest): Promise<string> {
+  const seconds = Math.max(4, Math.min(8, Math.round(req.durationSec || 6)));
+  const engine = String(req.model || 'gemini-omni-1.1-flash');
+  const entryKey = newChargeKey('cineagent-video');
+  await authorizeCredits({ seconds, engine, options: { seconds }, entryKey, source: 'cineagent-video', label: `CineAgent insert · ${seconds}s`, note: `${seconds}s generated CineAgent insert` });
   const body: Record<string, unknown> = {
     model: req.model,
     prompt: req.prompt,
     aspectRatio: '16:9',
-    duration: Math.max(4, Math.min(8, Math.round(req.durationSec || 6))),
+    duration: seconds,
     generateAudio: Boolean(req.generateAudio),
     resolution: '1080p',
   };
   if (req.imageData) body.imageData = req.imageData;
   if (req.videoData) body.videoData = req.videoData;
-  const response = await fetch('/api/veo/generate/video', {
-    method: 'POST',
-    headers: jsonHeaders(),
-    body: JSON.stringify(body),
-  });
-  const data = await readJson(response);
-  if (!data?.operationId) throw new Error(String(data?.error || 'Video generation did not start'));
-  return String(data.operationId);
+  let data: any;
+  try {
+    const response = await fetch('/api/veo/generate/video', {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify(body),
+    });
+    data = await readJson(response);
+  } catch (error) {
+    await refundCredits(entryKey, 'CineAgent insert could not start');
+    throw error;
+  }
+  if (!data?.operationId) {
+    await refundCredits(entryKey, 'CineAgent insert could not start');
+    throw new Error(String(data?.error || 'Video generation did not start'));
+  }
+  const operationId = String(data.operationId);
+  pendingVideoCredits.set(operationId, { entryKey, seconds, engine });
+  return operationId;
 }
 
 export async function pollVideoGeneration(operationId: string, timeoutMs = 360000): Promise<string> {
@@ -220,11 +240,20 @@ export async function pollVideoGeneration(operationId: string, timeoutMs = 36000
   while (Date.now() - start < timeoutMs) {
     const response = await fetch('/api/veo/status/' + encodeURIComponent(operationId), { headers: tokenHeaders() });
     const data = await response.json().catch(() => null);
-    if (data?.status === 'completed' && data?.videoUrl) return String(data.videoUrl);
-    if (data?.status === 'failed') throw new Error(String(data?.errorMessage || 'Video generation failed'));
+    if (data?.status === 'completed' && data?.videoUrl) {
+      pendingVideoCredits.delete(operationId);
+      return String(data.videoUrl);
+    }
+    if (data?.status === 'failed') {
+      const credit = pendingVideoCredits.get(operationId);
+      if (credit) { await refundCredits(credit.entryKey, 'CineAgent insert failed'); pendingVideoCredits.delete(operationId); }
+      throw new Error(String(data?.errorMessage || 'Video generation failed'));
+    }
     await sleep(5000);
   }
-  throw new Error('Video generation timed out.');
+  const credit = pendingVideoCredits.get(operationId);
+  if (credit) { await refundCredits(credit.entryKey, 'CineAgent insert timed out'); pendingVideoCredits.delete(operationId); }
+  throw new Error('Video generation timed out. Your credits were refunded.');
 }
 
 /** Generate an image; returns a DURABLE GCS URL (data: URLs are re-uploaded). */

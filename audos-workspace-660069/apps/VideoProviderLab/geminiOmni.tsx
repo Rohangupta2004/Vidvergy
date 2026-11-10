@@ -63,19 +63,19 @@ async function finishOnServer(opts: {
 // ---------------------------------------------------------------------------
 
 const C = {
-  bg: '#0a0a0a',
-  card: '#111111',
-  raised: '#171717',
-  line: '#242424',
-  lineStrong: '#343434',
-  accent: '#f59e0b',
-  gemini: '#4f8cff',
-  ink: '#f4f4f5',
-  soft: '#c9c9d1',
-  muted: '#86868f',
-  good: '#22c55e',
-  bad: '#f87171',
-  warn: '#fbbf24',
+  bg: '#0B0D12',
+  card: '#12141B',
+  raised: '#1A1D26',
+  line: '#2A2E3A',
+  lineStrong: '#3A3F4D',
+  accent: '#D4AF37',
+  gemini: '#D4AF37',
+  ink: '#F5F6F8',
+  soft: '#C3C7D1',
+  muted: '#9AA0AE',
+  good: '#3FB950',
+  bad: '#E5484D',
+  warn: '#FFB020',
 };
 const FONT = "'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
@@ -262,7 +262,7 @@ function useOmniStyles() {
       '.gof-btn:hover:not(:disabled) { filter: brightness(1.14); }',
       '.gof-btn:active:not(:disabled) { transform: translateY(1px); }',
       '.gof-btn:disabled { opacity: 0.45; cursor: not-allowed; }',
-      '.gof-input:focus { outline: none; border-color: #4b4b4b; }',
+      '.gof-input:focus { outline: none; border-color: #D4AF37; }',
     ].join('\n');
     document.head.appendChild(style);
   }, []);

@@ -1,4 +1,5 @@
-import { ActorAccessError, runPlatformActors, type ResearchPlatform } from './apifyActors';
+import { ActorAccessError, normalizePublicUrl, runPlatformActors, type ResearchPlatform } from './apifyActors';
+export type { ResearchPlatform } from './apifyActors';
 
 export type ResearchTopic = {
   id: number; normalized_topic_key: string; label: string; platforms: ResearchPlatform[];
@@ -17,7 +18,15 @@ export type ResearchItem = {
 
 export type PlatformResearchStatus = {
   platform: ResearchPlatform; status: 'waiting' | 'running' | 'success' | 'empty' | 'failed' | 'access_denied';
-  actorId?: string; itemCount?: number; message?: string;
+  actorId?: string; itemCount?: number; message?: string; fallbackIndex?: number; costUsd?: number;
+};
+
+export type ReferenceResearch = {
+  sourceUrl: string; platform: ResearchPlatform; actorId: string; fallbackIndex: number;
+  fromCache: boolean; cachedAt: string; productName: string; tagline: string; summary: string;
+  features: string[]; tone: string; colors: string[]; logoUrls: string[]; imageUrls: string[];
+  caption: string; hook: string; structure: string[]; engagement: Record<string, number> | null;
+  contextText: string;
 };
 
 export type CreativeBreakdown = {
@@ -31,7 +40,9 @@ export type UgcRecreation = {
   scenes: Array<{ role: 'hook' | 'demo' | 'proof' | 'cta'; duration: number; line: string; action: string }>;
 };
 
-const PLATFORMS: ResearchPlatform[] = ['meta', 'tiktok', 'linkedin', 'instagram', 'youtube', 'reddit', 'web'];
+const PLATFORMS: ResearchPlatform[] = ['meta', 'tiktok', 'linkedin', 'social', 'discovery', 'instagram', 'youtube', 'reddit', 'web'];
+const CACHE_MS = 24 * 60 * 60 * 1000;
+const DAILY_SCRAPE_CAP = 20;
 
 function db(): any {
   const client = (window as any).__workspaceDb;
@@ -100,10 +111,10 @@ export function normalizeResearchItem(raw: any, platform: ResearchPlatform, topi
   const runDays = runDaysFrom(raw, firstSeen);
   const engagement = engagementFrom(raw);
   const variantCount = finite(pick(raw, ['variantCount', 'variant_count', 'variantsCount', 'creativeCount', 'adsCount']));
-  const creativeUrl = text(pick(raw, ['creativeUrl', 'creative_url', 'url', 'postUrl', 'post_url', 'adLibraryUrl', 'link', 'videoUrl', 'video_url']));
-  const thumbnailUrl = text(pick(raw, ['thumbnailUrl', 'thumbnail_url', 'imageUrl', 'image_url', 'displayUrl', 'picture', 'video.thumbnailUrl']));
-  const copy = text(pick(raw, ['copy', 'caption', 'text', 'body', 'description', 'transcript', 'adText', 'title']));
-  const advertiser = text(pick(raw, ['advertiser', 'advertiserName', 'pageName', 'accountName', 'channelName', 'username', 'author', 'ownerUsername']));
+  const creativeUrl = text(pick(raw, ['creativeUrl', 'creative_url', 'url', 'postUrl', 'post_url', 'adLibraryUrl', 'libraryUrl', 'link', 'videoUrl', 'video_url']));
+  const thumbnailUrl = text(pick(raw, ['thumbnailUrl', 'thumbnail_url', 'imageUrl', 'image_url', 'coverImageUrl', 'displayUrl', 'picture', 'video.thumbnailUrl', 'metadata.ogImage']));
+  const copy = text(pick(raw, ['copy', 'caption', 'text', 'markdown', 'body', 'description', 'transcript', 'adText', 'title', 'metadata.description'])).slice(0, 24000);
+  const advertiser = text(pick(raw, ['advertiser', 'advertiserName', 'pageName', 'accountName', 'channelName', 'username', 'author', 'ownerUsername', 'metadata.title']));
   const score = estimatePerformanceScore({ runDays, engagement, variantCount: variantCount === null ? null : Math.round(variantCount) });
   return {
     topic_id: topicId,
@@ -166,6 +177,21 @@ export async function getSavedResearch(topic: string, platforms: ResearchPlatfor
   return saved ? { topic: saved, items: await loadResearchItems(saved.id) } : null;
 }
 
+function cacheFresh(topic: ResearchTopic): boolean {
+  const time = topic.scraped_at ? new Date(topic.scraped_at).getTime() : 0;
+  return Number.isFinite(time) && Date.now() - time < CACHE_MS;
+}
+
+async function enforceDailyCap(): Promise<void> {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const saved = await listSavedResearchTopics().catch(() => []);
+  const databaseCount = saved.filter((topic) => new Date(topic.updated_at || topic.scraped_at || 0).getTime() >= today.getTime()).length;
+  let local: number[] = [];
+  try { local = JSON.parse(localStorage.getItem('vidverge:apify-runs:v1') || '[]').filter((time: unknown) => Number(time) >= today.getTime()); } catch { local = []; }
+  if (Math.max(databaseCount, local.length) >= DAILY_SCRAPE_CAP) throw new Error('Daily research limit reached (20 scrapes). Saved results remain available; try again tomorrow.');
+  try { localStorage.setItem('vidverge:apify-runs:v1', JSON.stringify([...local, Date.now()])); } catch { /* database count remains the cross-device guard */ }
+}
+
 export async function researchTopic(
   label: string,
   platforms: ResearchPlatform[],
@@ -177,7 +203,13 @@ export async function researchTopic(
   if (!selected.length) throw new Error('Choose at least one platform.');
   const key = normalizeTopicKey(cleaned, selected);
   let topic = await loadTopicByKey(key);
-  if (topic && !options.refresh) return { topic, items: await loadResearchItems(topic.id), fromCache: true };
+  // A fresh cache entry only counts when it actually holds items: a cached
+  // FAILED scrape must not block a retry for 24 hours.
+  if (topic && !options.refresh && cacheFresh(topic)) {
+    const cachedItems = await loadResearchItems(topic.id);
+    if (cachedItems.length) return { topic, items: cachedItems, fromCache: true };
+  }
+  await enforceDailyCap();
   if (!topic) topic = await createTopic(cleaned, selected, key);
   const previous = await loadResearchItems(topic.id);
   let statuses: PlatformResearchStatus[] = selected.map((platform) => ({ platform, status: 'waiting' }));
@@ -194,7 +226,8 @@ export async function researchTopic(
       });
       const items = result.results.slice(0, 24).map((raw: any) => normalizeResearchItem(raw, platform, topic!.id, result.actorId));
       normalized.push(...items);
-      statuses = statuses.map((status) => status.platform === platform ? { platform, status: items.length ? 'success' : 'empty', actorId: result.actorId, itemCount: items.length, message: items.length ? undefined : 'No public items were returned.' } : status);
+      const costUsd = Number(result.metadata?.costUsd || 0);
+      statuses = statuses.map((status) => status.platform === platform ? { platform, status: items.length ? 'success' : 'empty', actorId: result.actorId, fallbackIndex: result.fallbackIndex, itemCount: items.length, costUsd, message: items.length ? `Used ${result.actorId}${result.fallbackIndex ? ` (fallback #${result.fallbackIndex})` : ''}${costUsd > 0 ? ` · measured actor cost $${costUsd.toFixed(4)}` : ' · actor reported $0.0000'}.` : 'No public items were returned.' } : status);
     } catch (error) {
       const accessDenied = error instanceof ActorAccessError;
       statuses = statuses.map((status) => status.platform === platform ? { ...status, status: accessDenied ? 'access_denied' : 'failed', message: error instanceof Error ? error.message : String(error) } : status);
@@ -259,6 +292,71 @@ async function aiJson(system: string, user: string): Promise<any> {
   const data = await response.json().catch(() => null);
   if (!response.ok) throw new Error(String(data?.error?.message || data?.error || `AI analysis failed (HTTP ${response.status}).`));
   return jsonFromText(String(data?.choices?.[0]?.message?.content || '{}'));
+}
+
+function urlsFrom(value: unknown, output = new Set<string>()): Set<string> {
+  if (typeof value === 'string') {
+    const matches = value.match(/https?:\/\/[^\s"'<>]+/g) || [];
+    matches.forEach((url) => { if (/\.(?:png|jpe?g|webp|gif)(?:\?|$)/i.test(url)) output.add(url); });
+  } else if (Array.isArray(value)) value.slice(0, 30).forEach((item) => urlsFrom(item, output));
+  else if (value && typeof value === 'object') Object.entries(value as Record<string, unknown>).slice(0, 100).forEach(([key, item]) => { if (/image|logo|thumb|cover|picture|media/i.test(key)) urlsFrom(item, output); });
+  return output;
+}
+
+function platformForReference(url: string, kind: 'auto' | 'web' | 'social' | 'ad'): ResearchPlatform {
+  const host = new URL(url).hostname.toLowerCase();
+  if (kind === 'web') return 'web';
+  if (kind === 'ad') return /tiktok/.test(host) ? 'tiktok' : /linkedin/.test(host) ? 'linkedin' : 'meta';
+  if (/instagram/.test(host)) return 'instagram';
+  if (/youtu/.test(host)) return 'youtube';
+  if (/reddit/.test(host)) return 'reddit';
+  if (/tiktok|twitter|x\.com|facebook/.test(host)) return 'social';
+  return kind === 'social' ? 'social' : 'web';
+}
+
+export async function researchReference(sourceUrl: string, kind: 'auto' | 'web' | 'social' | 'ad' = 'auto', refresh = false): Promise<ReferenceResearch> {
+  const url = normalizePublicUrl(sourceUrl);
+  const platform = platformForReference(url, kind);
+  const result = await researchTopic(url, [platform], { refresh });
+  const item = result.items[0];
+  if (!item) {
+    const status = result.topic.platform_status?.[0];
+    throw new Error(status?.message || 'No data found. The app can continue without importing this reference.');
+  }
+  const evidence = result.items.slice(0, 8).map((entry) => ({ copy: entry.copy_transcript, advertiser: entry.advertiser, engagement: entry.engagement, raw: entry.raw_json })).slice(0, 8);
+  let extracted: any = {};
+  try {
+    extracted = await aiJson(
+      'Extract only facts explicitly present in the supplied public evidence. Return JSON with productName, tagline, summary, features (array), tone, colors (hex array), logoUrls (array), imageUrls (array), caption, hook, structure (array). Empty string or [] when absent. Never infer or invent a claim, metric, color, hook, or asset URL.',
+      JSON.stringify({ sourceUrl: url, platform, evidence }).slice(0, 50000),
+    );
+  } catch { extracted = {}; }
+  const status = result.topic.platform_status?.find((entry) => entry.platform === platform);
+  const discoveredImages = Array.from(urlsFrom(evidence)).slice(0, 20);
+  const imageUrls = Array.from(new Set([...(Array.isArray(extracted.imageUrls) ? extracted.imageUrls.map(String) : []), ...discoveredImages])).filter((value) => /^https?:\/\//i.test(value)).slice(0, 20);
+  const record: ReferenceResearch = {
+    sourceUrl: url,
+    platform,
+    actorId: status?.actorId || item.source_actor,
+    fallbackIndex: Number(status?.fallbackIndex || 0),
+    fromCache: result.fromCache,
+    cachedAt: result.topic.scraped_at || new Date().toISOString(),
+    productName: text(extracted.productName) || item.advertiser || '',
+    tagline: text(extracted.tagline),
+    summary: text(extracted.summary) || item.copy_transcript || '',
+    features: Array.isArray(extracted.features) ? extracted.features.map(String).filter(Boolean).slice(0, 12) : [],
+    tone: text(extracted.tone),
+    colors: Array.isArray(extracted.colors) ? extracted.colors.map(String).filter((color: string) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 12) : [],
+    logoUrls: Array.isArray(extracted.logoUrls) ? extracted.logoUrls.map(String).filter((value: string) => /^https?:\/\//i.test(value)).slice(0, 6) : [],
+    imageUrls,
+    caption: text(extracted.caption) || item.copy_transcript || '',
+    hook: text(extracted.hook),
+    structure: Array.isArray(extracted.structure) ? extracted.structure.map(String).filter(Boolean).slice(0, 8) : [],
+    engagement: item.engagement || null,
+    contextText: '',
+  };
+  record.contextText = [record.productName, record.tagline, record.summary, record.features.length ? `Features: ${record.features.join('; ')}` : '', record.tone ? `Tone: ${record.tone}` : '', record.hook ? `Observed hook: ${record.hook}` : '', record.structure.length ? `Observed structure: ${record.structure.join(' → ')}` : ''].filter(Boolean).join('\n');
+  return record;
 }
 
 function sourceForAi(item: ResearchItem): string {

@@ -69,9 +69,12 @@ function leadSentence(text: string, fallback: string): string {
 // config.json — a prompt that routes to a retired app is a dead end on the
 // first screen the customer sees.
 const VIDVERGE_STARTERS = [
-  'Make a launch video from my website',
-  'Turn my script into a cinematic film',
-  'Edit my footage into a sharp short',
+  'Make an ad from a script',
+  'Make a UGC ad with an actor',
+  'Edit my video',
+  'Make a launch video for my product',
+  'Make a faceless video',
+  'Translate and dub an avatar video',
 ];
 
 /**
@@ -251,7 +254,7 @@ const markdownComponents: Components = {
     }
     return (
       <code
-        className="bg-[var(--space-neutral-800)] text-[var(--space-neutral-100)] px-1.5 py-0.5 rounded text-sm break-all"
+        className="bg-[var(--vg-raised)] text-[var(--vg-text)] px-1.5 py-0.5 rounded text-sm break-all"
         {...props}
       >
         {children}
@@ -261,7 +264,7 @@ const markdownComponents: Components = {
   pre({ node: _node, children, ...props }) {
     return (
       <pre
-        className="bg-[var(--space-neutral-800)] text-[var(--space-neutral-100)] rounded-lg p-3 my-2 overflow-x-auto max-w-full"
+        className="bg-[var(--vg-raised)] text-[var(--vg-text)] rounded-lg p-3 my-2 overflow-x-auto max-w-full"
         style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
         {...props}
       >
@@ -459,7 +462,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          className={`rounded-2xl border transition-all overflow-hidden shadow-[0_18px_48px_rgba(0,0,0,0.32),0_1px_0_rgba(255,255,255,0.03)] focus-within:shadow-[0_22px_58px_rgba(0,0,0,0.4),0_0_0_3px_color-mix(in_srgb,var(--space-brand-primary-500)_10%,transparent)] ${
+          className={`rim ${loading ? 'is-working' : ''} overflow-hidden transition-all focus-within:shadow-[0_22px_58px_color-mix(in_srgb,var(--vg-focus)_18%,transparent)] ${
             isDraggingOver
               ? 'border-[var(--space-brand-primary-500)] bg-[var(--space-surface-accent-soft)]'
               : 'border-[var(--space-border-default)] bg-[var(--space-surface-card)]'
@@ -550,7 +553,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
       className={`h-full flex flex-col ${
         isBeaconSpace
           ? 'bg-gradient-to-br from-[var(--space-surface-gradient-from)] via-[var(--space-surface-gradient-via)] to-[var(--space-surface-gradient-to)]'
-          : 'bg-[radial-gradient(ellipse_72%_42%_at_50%_-8%,color-mix(in_srgb,var(--space-brand-primary-500)_12%,transparent),transparent_64%),var(--space-surface-bg)]'
+          : 'bg-[var(--space-surface-bg)]'
       }`}
     >
       {isHomeView ? (
@@ -558,12 +561,11 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
         <div className="flex-1 overflow-y-auto flex flex-col justify-center">
           <div className="mx-auto w-full max-w-2xl px-6 sm:px-10 py-10" data-testid="home-view">
             <div className="text-center mb-7">
-              <p className="mb-4 text-[10px] font-bold uppercase tracking-[0.28em] text-[var(--space-text-brand)]">AI video production suite</p>
               <div className="mb-4 flex justify-center">
                 <BrandLogo size={176} />
               </div>
-              <h1 className="text-2xl font-semibold tracking-tight text-[var(--space-text-primary)] sm:text-[28px]">
-                What do you want to make?
+              <h1 className="font-[var(--display)] text-[40px] font-black leading-none tracking-[-.045em] text-[var(--space-text-primary)] sm:text-[56px]">
+                What should we make today?
               </h1>
               <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-[var(--space-text-secondary)]">
                 {leadSentence(homeWelcomeText || VIDVERGE_HOME_WELCOME, VIDVERGE_HOME_LEAD)}
@@ -572,8 +574,8 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
             {composerElement}
             {homeStarters.length > 0 && (
               <div className="mt-7">
-                <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--space-text-muted)]">
-                  Choose a production brief
+                <p className="mb-3 text-center text-xs font-semibold text-[var(--space-text-muted)]">
+                  Try an idea
                 </p>
                 <StarterGrid
                   prompts={homeStarters}
@@ -598,9 +600,9 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
 
         {!isLoadingHistory && hasLoadedHistory && shouldShowBeaconIntake && beaconIntake && (
           <div className="px-4">
-            <div className="mx-auto max-w-2xl overflow-hidden rounded-3xl border border-[var(--space-semantic-success-100)] bg-[var(--space-surface-card)] shadow-sm">
-              <div className="border-b border-[var(--space-semantic-success-100)] bg-gradient-to-r from-[var(--space-semantic-success-50)] via-[var(--space-surface-card)] to-[var(--space-surface-accent-soft)] px-6 py-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--space-semantic-success-700)]">
+            <div className="mx-auto max-w-2xl overflow-hidden rounded-3xl border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-[var(--space-surface-card)] shadow-sm">
+              <div className="border-b border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-gradient-to-r from-[var(--vg-gold-tint)] via-[var(--space-surface-card)] to-[var(--space-surface-accent-soft)] px-6 py-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--vg-accent)]">
                   Your Beacon starting point
                 </p>
                 <h2 className="mt-2 text-xl font-semibold text-[var(--space-text-primary)]">
@@ -610,8 +612,8 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
               </div>
 
               <div className="space-y-5 px-6 py-5">
-                <div className="rounded-2xl border border-[var(--space-semantic-success-100)] bg-[var(--space-semantic-success-50)] px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--space-semantic-success-700)]">
+                <div className="rounded-2xl border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-[var(--vg-gold-tint)] px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--vg-accent)]">
                     Today's anchor
                   </p>
                   <p className="mt-2 text-sm leading-6 text-[var(--space-text-secondary)]">{beaconIntake.anchor}</p>
@@ -625,7 +627,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
                         key={step}
                         className="flex items-start gap-3 rounded-2xl bg-[var(--space-surface-muted)] px-4 py-3 text-sm text-[var(--space-text-secondary)]"
                       >
-                        <div className="mt-0.5 h-2 w-2 rounded-full bg-[var(--space-semantic-success-600)]" />
+                        <div className="mt-0.5 h-2 w-2 rounded-full bg-[var(--vg-accent)]" />
                         <span>{step}</span>
                       </div>
                     ))}
@@ -642,7 +644,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
                         onClick={() => {
                           void sendMessageWithContent(prompt, []);
                         }}
-                        className="rounded-full border border-[var(--space-semantic-success-100)] bg-[var(--space-surface-card)] px-4 py-2 text-sm font-medium text-[var(--space-semantic-success-700)] shadow-sm transition hover:border-[var(--space-semantic-success-500)] hover:bg-[var(--space-semantic-success-50)]"
+                        className="rounded-full border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-[var(--space-surface-card)] px-4 py-2 text-sm font-medium text-[var(--vg-accent)] shadow-sm transition hover:border-[var(--vg-accent)] hover:bg-[var(--vg-gold-tint)]"
                       >
                         {prompt}
                       </button>
@@ -658,8 +660,8 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
         {showEmptyStateWelcome ? (
           <div className="mt-8 px-4">
             {isBeaconSpace ? (
-              <div className="mx-auto max-w-xl rounded-3xl border border-[var(--space-semantic-success-100)] bg-gradient-to-b from-[var(--space-semantic-success-50)] via-[var(--space-surface-card)] to-[var(--space-surface-card)] px-6 py-8 text-center shadow-sm">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--space-semantic-success-700)] text-[var(--space-text-on-primary)] shadow-sm">
+              <div className="mx-auto max-w-xl rounded-3xl border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-gradient-to-b from-[var(--vg-gold-tint)] via-[var(--space-surface-card)] to-[var(--space-surface-card)] px-6 py-8 text-center shadow-sm">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--vg-btn)] text-[var(--vg-on-btn)] shadow-sm">
                   <Bot className="h-6 w-6" />
                 </div>
                 <h2 className="text-xl font-semibold text-[var(--space-text-primary)]">Start with the hard part</h2>
@@ -674,7 +676,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
                       onClick={() => {
                         void sendMessageWithContent(prompt, []);
                       }}
-                      className="rounded-full border border-[var(--space-semantic-success-100)] bg-[var(--space-surface-card)] px-4 py-2 text-sm font-medium text-[var(--space-semantic-success-700)] shadow-sm transition hover:border-[var(--space-semantic-success-500)] hover:bg-[var(--space-semantic-success-50)]"
+                      className="rounded-full border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] bg-[var(--space-surface-card)] px-4 py-2 text-sm font-medium text-[var(--vg-accent)] shadow-sm transition hover:border-[var(--vg-accent)] hover:bg-[var(--vg-gold-tint)]"
                     >
                       {prompt}
                     </button>
@@ -818,7 +820,7 @@ export default function AgentChatView({ runtime }: AgentChatViewProps) {
 
         {streamingContent && (
           <div
-            className={`${isBeaconSpace ? 'bg-[var(--space-surface-card)] border border-[var(--space-semantic-success-100)] shadow-sm' : 'bg-[var(--space-surface-panel)]'} mr-8 p-3 rounded-lg overflow-hidden min-w-0`}
+            className={`${isBeaconSpace ? 'bg-[var(--space-surface-card)] border border-[color-mix(in_srgb,var(--vg-accent)_30%,transparent)] shadow-sm' : 'bg-[var(--space-surface-panel)]'} mr-8 p-3 rounded-lg overflow-hidden min-w-0`}
           >
             <p className="text-sm font-medium mb-1">{agentLabel}</p>
             <div className="prose prose-base max-w-none text-base">

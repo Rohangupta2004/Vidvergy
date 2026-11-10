@@ -1,3 +1,5 @@
+import { withBrandBrief } from './brandDoc';
+
 export const VIDVERGE_HANDOFF_KEY = 'vidverge_agent_handoff_v1';
 
 export interface VidvergeAttachment {
@@ -57,7 +59,10 @@ const MAX_AGE_MS = 30 * 60 * 1000;
 
 export function saveVidvergeHandoff(handoff: Omit<VidvergeHandoff, 'version' | 'ts'>): void {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(VIDVERGE_HANDOFF_KEY, JSON.stringify({ ...handoff, version: 2, ts: Date.now() }));
+  // "For my brand" / "for <saved brand>" briefs arrive in the studio with the
+  // Brand doc facts already written in, so the studio never asks for them.
+  const prompt = typeof handoff.prompt === 'string' ? withBrandBrief(handoff.prompt) : handoff.prompt;
+  window.localStorage.setItem(VIDVERGE_HANDOFF_KEY, JSON.stringify({ ...handoff, prompt, version: 2, ts: Date.now() }));
 }
 
 export function consumeVidvergeHandoff(appId: string): VidvergeHandoff | null {
@@ -75,6 +80,23 @@ export function consumeVidvergeHandoff(appId: string): VidvergeHandoff | null {
   } catch {
     window.localStorage.removeItem(VIDVERGE_HANDOFF_KEY);
     return null;
+  }
+}
+
+const VERGER_PREFILL_KEY = 'verger:prefill:v1';
+
+/** Carry a prompt from the Verge home into Verger's composer. */
+export function prefillVerger(text: string): void {
+  try { window.sessionStorage.setItem(VERGER_PREFILL_KEY, String(text || '').slice(0, 4000)); } catch { /* storage unavailable */ }
+}
+
+export function consumeVergerPrefill(): string {
+  try {
+    const value = window.sessionStorage.getItem(VERGER_PREFILL_KEY) || '';
+    window.sessionStorage.removeItem(VERGER_PREFILL_KEY);
+    return value;
+  } catch {
+    return '';
   }
 }
 

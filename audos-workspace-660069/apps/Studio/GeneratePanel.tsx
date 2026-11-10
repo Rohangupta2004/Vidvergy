@@ -303,13 +303,13 @@ export default function GeneratePanel({
       {/* Progress */}
       {working && (
         <>
-          <div style={{ marginTop: 16, height: 6, borderRadius: 999, overflow: 'hidden', background: 'rgba(180,120,0,0.14)' }}>
+          <div style={{ marginTop: 16, height: 6, borderRadius: 999, overflow: 'hidden', background: 'var(--vg-raised)' }}>
             <div
               style={{
                 height: '100%',
                 width: `${barWidth}%`,
                 borderRadius: 999,
-                background: 'linear-gradient(90deg, var(--space-brand-primary-600), var(--space-brand-primary-500))',
+                background: 'var(--vg-accent)',
                 transition: 'width .7s ease',
               }}
             />
@@ -379,7 +379,7 @@ export default function GeneratePanel({
                   color: 'var(--space-text-on-primary)',
                   textDecoration: 'none',
                   background: 'var(--space-brand-primary)',
-                  boxShadow: '0 8px 24px rgba(200,146,10,0.35)',
+                  boxShadow: '0 8px 24px rgba(212,175,55,0.3)',
                 }}
                 data-testid="button-download-video"
               >

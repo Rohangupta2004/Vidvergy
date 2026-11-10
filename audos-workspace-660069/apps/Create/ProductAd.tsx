@@ -399,7 +399,7 @@ export default function ProductAd({ onExit }: { onExit: () => void }) {
                       onClick={() => setProductImageUrls((current) => current.filter((item) => item !== url))}
                       aria-label={`Remove product reference ${index + 1}`}
                       className="rc-iconbtn rc-ring"
-                      style={{ position: 'absolute', right: 4, top: 4, width: 24, height: 24, borderRadius: 999, border: 0, background: 'rgba(26,16,0,0.72)', color: '#fff', cursor: 'pointer' }}
+                      style={{ position: 'absolute', right: 4, top: 4, width: 24, height: 24, borderRadius: 999, border: 0, background: 'rgba(0,0,0,0.72)', color: '#fff', cursor: 'pointer' }}
                     >
                       <X size={12} />
                     </button>
@@ -450,7 +450,7 @@ export default function ProductAd({ onExit }: { onExit: () => void }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: 9, color: T.success }}><CheckCircle2 size={19} /><strong>Your Product Ad is ready</strong></div>
           {downloadUrl ? <video src={downloadUrl} controls playsInline style={{ width: '100%', marginTop: 16, borderRadius: 13, background: '#000', aspectRatio: '16 / 9' }} data-testid="product-ad-player" /> : null}
           <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-            {downloadUrl ? <a href={downloadUrl} download target="_blank" rel="noopener noreferrer" className="rc-btn rc-ring rc-press" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 44, padding: '10px 16px', borderRadius: 12, color: '#fff', background: T.accent, textDecoration: 'none', fontSize: 14, fontWeight: 700 }}><Download size={14} /> Download MP4</a> : null}
+            {downloadUrl ? <a href={downloadUrl} download target="_blank" rel="noopener noreferrer" className="rc-btn rc-ring rc-press" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, minHeight: 44, padding: '10px 16px', borderRadius: 12, color: 'var(--vg-on-btn)', background: 'var(--vg-btn)', textDecoration: 'none', fontSize: 14, fontWeight: 700 }}><Download size={14} /> Download MP4</a> : null}
             <TextLink onClick={reset} testId="button-another-product-ad">Make another Product Ad</TextLink>
           </div>
         </Card>
@@ -464,7 +464,7 @@ export default function ProductAd({ onExit }: { onExit: () => void }) {
           ) : (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><Loader2 className="rc-spin" size={19} color={T.accentFg} /><strong style={{ color: T.text }}>{stageLabel(phase)}</strong></div>
-              <div style={{ height: 7, borderRadius: 99, overflow: 'hidden', background: T.panelHover, marginTop: 16 }}><div style={{ height: '100%', width: `${Math.max(4, progress)}%`, background: `linear-gradient(90deg, ${T.accent}, ${T.accentFg})`, transition: 'width .5s ease' }} /></div>
+              <div style={{ height: 7, borderRadius: 99, overflow: 'hidden', background: T.panel, marginTop: 16 }}><div style={{ height: '100%', width: `${Math.max(4, progress)}%`, background: T.accent, transition: 'width .5s ease' }} /></div>
               <p style={{ margin: '10px 0 0', color: T.sub, fontSize: 12.5 }}>{notice || 'This continues through motion, overlays, and stitching.'}</p>
               {jobId ? <p style={{ margin: '8px 0 0', color: T.muted, fontSize: 10.5 }}>Job {jobId}</p> : null}
             </>

@@ -11,10 +11,10 @@ import { AlertTriangle, Check, Info } from 'lucide-react';
 import VergeLoader from '../../components/VergeLoader';
 import {
   CARD, CARD_HI, DANGER, DEFAULT_ACCENT, INK_DEEP, LINE, LINE_HI, MONO, PANEL,
-  SUCCESS, TEXT, TEXT_DIM, TEXT_MUTED, monogram, normalizeHex, readableOn, rgba, tileColor,
+  SUCCESS, TEXT, TEXT_DIM, TEXT_MUTED, WARN, monogram, normalizeHex, readableOn, rgba, tileColor,
 } from './theme';
 
-const AccentContext = createContext(DEFAULT_ACCENT);
+const AccentContext = createContext<string>(DEFAULT_ACCENT);
 
 export function AccentProvider({ accent, children }: { accent: string; children: React.ReactNode }) {
   return <AccentContext.Provider value={normalizeHex(accent) || DEFAULT_ACCENT}>{children}</AccentContext.Provider>;
@@ -179,7 +179,7 @@ export type Tone = 'idle' | 'accent' | 'good' | 'bad' | 'warn';
 function toneHex(tone: Tone, accent: string): string {
   if (tone === 'good') return SUCCESS;
   if (tone === 'bad') return DANGER;
-  if (tone === 'warn') return '#B45309';
+  if (tone === 'warn') return WARN;
   if (tone === 'accent') return accent;
   return TEXT_MUTED;
 }
@@ -297,7 +297,7 @@ export function Breadcrumb<T extends string>({
                 width: 18, height: 18, borderRadius: 999, flexShrink: 0,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 10.5, fontWeight: 800, fontFamily: MONO,
-                background: active ? rgba('#000000', 0.18) : done ? rgba(accent, 0.22) : rgba('#b47800', 0.1),
+                background: active ? rgba('#000000', 0.18) : done ? rgba(accent, 0.22) : rgba(TEXT_MUTED, 0.1),
               }}>
                 {done ? <Check size={11} /> : index + 1}
               </span>

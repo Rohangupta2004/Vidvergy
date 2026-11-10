@@ -52,7 +52,7 @@ interface IntentCardsProps {
 export default function IntentCards({ selectedId, onSelect }: IntentCardsProps) {
   return (
     <div className="mb-4">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9E8B55]">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--vg-muted)]">
         Step 2 · Choose your path
       </p>
       <div role="radiogroup" aria-label="What kind of video do you want?" className="grid gap-2.5 sm:grid-cols-3">
@@ -66,29 +66,29 @@ export default function IntentCards({ selectedId, onSelect }: IntentCardsProps) 
               role="radio"
               aria-checked={active}
               onClick={() => onSelect(card.id)}
-              className="rounded-2xl border p-4 text-left transition-colors hover:border-[var(--vv-border-hover)]"
+              className="rounded-2xl border p-4 text-left transition-colors hover:border-[var(--vg-accent)]"
               style={{
-                borderColor: active ? 'var(--vv-gold)' : 'var(--vv-border)',
+                borderColor: active ? 'var(--vg-accent)' : 'var(--vg-border)',
                 background: active
-                  ? 'color-mix(in srgb, var(--vv-gold) 8%, var(--vv-surface))'
-                  : 'var(--vv-surface)',
-                boxShadow: active ? '0 0 0 1px var(--vv-gold), 0 0 26px -14px var(--vv-gold-glow)' : 'none',
+                  ? 'color-mix(in srgb, var(--vg-accent) 8%, var(--vg-surface))'
+                  : 'var(--vg-surface)',
+                boxShadow: active ? '0 0 0 1px var(--vg-accent), 0 0 26px -14px color-mix(in srgb, var(--vg-gold) 45%, transparent)' : 'none',
               }}
             >
               <span className="flex items-center justify-between">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--vv-gold)_14%,transparent)] text-[var(--vv-gold)]">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--vg-accent)_14%,transparent)] text-[var(--vg-accent)]">
                   <Icon size={15} />
                 </span>
                 {active && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--vv-gold)_45%,transparent)] px-2 py-[2px] text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--vv-gold)]">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--vg-accent)_45%,transparent)] px-2 py-[2px] text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--vg-accent)]">
                     <Check size={10} />
                     Selected
                   </span>
                 )}
               </span>
-              <span className="mt-3 block text-[13.5px] font-semibold text-[#F5E9C8]">{card.title}</span>
-              <span className="mt-1 block text-[11.5px] leading-relaxed text-[var(--vv-text-dim)]">{card.benefit}</span>
-              <span className="mt-2 block text-[10px] uppercase tracking-[0.14em] text-[#9E8B55]">→ {card.studio}</span>
+              <span className="mt-3 block text-[13.5px] font-semibold text-[var(--vg-text)]">{card.title}</span>
+              <span className="mt-1 block text-[11.5px] leading-relaxed text-[var(--vg-muted)]">{card.benefit}</span>
+              <span className="mt-2 block text-[10px] uppercase tracking-[0.14em] text-[var(--vg-muted)]">→ {card.studio}</span>
             </button>
           );
         })}

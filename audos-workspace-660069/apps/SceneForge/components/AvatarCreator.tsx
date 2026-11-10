@@ -23,6 +23,7 @@ import {
   uploadWorkspaceAvatarFile,
 } from '../lib/forgeClient';
 import type { ForgeCreatedAvatar, ForgeAvatarMethod } from '../lib/forgeTypes';
+import { safeErrorText } from '../lib/safeError';
 
 const IMAGE_TYPES = ['image/jpeg', 'image/png'];
 const VIDEO_TYPES = ['video/mp4', 'video/webm'];
@@ -95,7 +96,7 @@ function validateImage(file: File): string | null {
 }
 
 function errorMessage(error: any): { message: string; code: string } {
-  return { message: String(error?.message || error || 'Something went wrong.'), code: String(error?.code || '') };
+  return { message: safeErrorText(String(error?.message || error || ''), 'Something went wrong — please try again.', { maxLength: 260, context: 'avatar creator error' }), code: String(error?.code || '') };
 }
 
 export default function AvatarCreator({ onUse }: { onUse?: (avatar: ForgeCreatedAvatar) => void }) {
@@ -277,7 +278,7 @@ export default function AvatarCreator({ onUse }: { onUse?: (avatar: ForgeCreated
     try {
       const warning = await deleteCreatedAvatar(avatar.id);
       setAvatars((current) => current.filter((item) => item.id !== avatar.id));
-      setSuccess(warning ? `Removed from SceneForge. Provider cleanup could not complete: ${warning}` : `${avatar.name} was deleted.`);
+      setSuccess(warning ? `Removed from SceneForge. Provider cleanup could not complete: ${safeErrorText(warning, 'please try again later.', { maxLength: 160, context: 'avatar provider cleanup' })}` : `${avatar.name} was deleted.`);
     } catch (e) { setError(errorMessage(e).message); }
   };
 
@@ -373,7 +374,7 @@ export default function AvatarCreator({ onUse }: { onUse?: (avatar: ForgeCreated
               </>
             ) : null}
 
-            {!parentId ? <label style={{ alignItems: 'flex-start', background: consentAttested ? COLORS.successBg : COLORS.raised, border: `1px solid ${consentAttested ? COLORS.success : COLORS.controlBorder}`, borderRadius: RADIUS.sm, color: COLORS.secondary, cursor: 'pointer', display: 'flex', fontSize: 12.5, gap: 9, lineHeight: '19px', padding: 11 }}>
+            {!parentId ? <label style={{ alignItems: 'flex-start', background: consentAttested ? COLORS.accentSoft : COLORS.raised, border: `1px solid ${consentAttested ? COLORS.accent : COLORS.controlBorder}`, borderRadius: RADIUS.sm, color: COLORS.secondary, cursor: 'pointer', display: 'flex', fontSize: 12.5, gap: 9, lineHeight: '19px', padding: 11 }}>
               <input type="checkbox" checked={consentAttested} onChange={(event) => setConsentAttested(event.target.checked)} style={{ accentColor: COLORS.accent, height: 17, marginTop: 1, width: 17 }} data-testid="avatar-consent-attestation" />
               <span><strong style={{ color: COLORS.text }}>I have this person’s consent.</strong><br />This one-time attestation is stored with the avatar and is not requested again for later looks or video generation.</span>
             </label> : null}
@@ -430,7 +431,7 @@ export default function AvatarCreator({ onUse }: { onUse?: (avatar: ForgeCreated
                       <div style={{ color: COLORS.text, fontFamily: FONT.heading, fontSize: 14, fontWeight: 700 }}>{group.name}</div>
                       <div style={{ color: COLORS.muted, fontSize: 11.5, marginTop: 2, textTransform: 'capitalize' }}>{group.looks.length} look{group.looks.length === 1 ? '' : 's'} · {avatar.method.replace('_', ' ')}</div>
                     </div>
-                    {avatar.status === 'enterprise_required' ? <div style={{ color: COLORS.warning, fontSize: 11.5, lineHeight: '17px' }}><AlertCircle size={12} style={{ marginRight: 4, verticalAlign: '-2px' }} />Digital Twin requires Enterprise access on your avatar provider account.<br /><span style={{ color: COLORS.muted }}>{avatar.error}</span></div> : avatar.status === 'failed' ? <div style={{ color: COLORS.danger, fontSize: 11.5, lineHeight: '17px' }}>{avatar.error}</div> : ACTIVE.indexOf(avatar.status) >= 0 ? <div style={{ color: COLORS.muted, fontSize: 11.5, lineHeight: '17px' }}>Provider training is in progress. This card will update automatically.</div> : avatar.consent_status && !/approved|complete|verified|attested|accepted/i.test(avatar.consent_status) ? <div style={{ color: COLORS.warning, fontSize: 11.5 }}>Provider consent status: {avatar.consent_status}</div> : null}
+                    {avatar.status === 'enterprise_required' ? <div style={{ color: COLORS.warning, fontSize: 11.5, lineHeight: '17px' }}><AlertCircle size={12} style={{ marginRight: 4, verticalAlign: '-2px' }} />Digital Twin requires Enterprise access on your avatar provider account.<br /><span style={{ color: COLORS.muted }}>{safeErrorText(avatar.error, '', { maxLength: 200, context: 'avatar card error' })}</span></div> : avatar.status === 'failed' ? <div style={{ color: COLORS.danger, fontSize: 11.5, lineHeight: '17px' }}>{safeErrorText(avatar.error, 'The provider could not create this avatar.', { maxLength: 200, context: 'avatar card error' })}</div> : ACTIVE.indexOf(avatar.status) >= 0 ? <div style={{ color: COLORS.muted, fontSize: 11.5, lineHeight: '17px' }}>Provider training is in progress. This card will update automatically.</div> : avatar.consent_status && !/approved|complete|verified|attested|accepted/i.test(avatar.consent_status) ? <div style={{ color: COLORS.warning, fontSize: 11.5 }}>Provider consent status: {avatar.consent_status}</div> : null}
                     {avatar.consent_attested ? <div style={{ color: COLORS.success, fontSize: 11.5 }}><Check size={12} style={{ marginRight: 4, verticalAlign: '-2px' }} />Consent attested once</div> : null}
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {avatar.status === 'ready' && onUse ? <button type="button" onClick={() => onUse(avatar)} style={{ ...buttonStyle(true), flex: 1, minHeight: 38, padding: '0 10px' }}><Check size={13} /> Use in SceneForge</button> : null}

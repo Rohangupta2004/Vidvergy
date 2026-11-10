@@ -154,12 +154,12 @@ export default function JobTracker({
               key={index}
               className="flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-[12.5px] leading-relaxed"
               style={{
-                background: 'color-mix(in srgb, var(--space-brand-highlight-500) 10%, transparent)',
-                border: '1px solid color-mix(in srgb, var(--space-brand-highlight-500) 28%, transparent)',
+                background: 'var(--vg-warning-bg)',
+                border: '1px solid color-mix(in srgb, var(--vg-warning) 28%, transparent)',
                 color: 'var(--space-text-secondary)',
               }}
             >
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--space-brand-highlight)]" />
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--vg-warning)]" />
               <span>{notice}</span>
             </li>
           ))}

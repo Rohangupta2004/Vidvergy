@@ -128,9 +128,9 @@ export const CAPTION_STYLES: CaptionStyleSpec[] = [
   {
     id: 'comic', label: 'Comic Burst', hint: 'Bright outlined words that spring in like a comic panel',
     sizeRatio: 0.066, weight: 900, uppercase: true, fontId: 'anton',
-    color: '#fff7a8', activeColor: '#ff5ca8', inactiveColor: '#fff7a8',
+    color: '#fff7a8', activeColor: '#FF8A4C', inactiveColor: '#fff7a8',
     background: 'transparent', radius: 0, padX: 0, padY: 0,
-    outlineWidth: 4, outlineColor: '#27104a', shadow: '5px 6px 0 rgba(39,16,74,0.78)',
+    outlineWidth: 4, outlineColor: '#140E00', shadow: '5px 6px 0 rgba(20,14,0,0.78)',
     letterSpacing: 0.3, lineHeight: 1.05, mode: 'word',
   },
   {
@@ -212,12 +212,11 @@ export function captionWordStyle(
     };
   }
   if (spec.mode === 'gradient') {
-    // A hue sweep that walks along the line over time.
-    const phase = (t * 0.9 + index * 0.12) % 1;
-    const hue = Math.round(phase * 360);
+    // A warm orange-to-gold sweep that stays inside the v3 palette.
+    const phase = Math.round(((t * 0.9 + index * 0.12) % 1) * 100);
     return {
       color: spec.color, scale: 1, opacity: 1, shadow: spec.shadow,
-      gradient: `linear-gradient(90deg, hsl(${hue} 92% 62%) 0%, hsl(${(hue + 60) % 360} 92% 68%) 50%, hsl(${(hue + 130) % 360} 92% 62%) 100%)`,
+      gradient: `linear-gradient(90deg, #FF8A4C 0%, #FFC23D ${Math.max(35, phase)}%, #FFD36E 100%)`,
     };
   }
   // Plain editorial presets still animate: every word settles gently from
@@ -404,7 +403,7 @@ export function transitionState(id: string, p: number): TransitionState {
         transform: `translateX(${Math.sin(p * 34) * jitter}px)`,
         filter: `saturate(${1 + (1 - e) * 1.6}) contrast(${1 + (1 - e) * 0.5})`,
         overlay: {
-          background: `repeating-linear-gradient(0deg, rgba(255,0,80,0.18) 0px, rgba(0,255,220,0.18) ${2 + jitter}px, transparent ${4 + jitter}px, transparent ${10 + jitter}px)`,
+          background: `repeating-linear-gradient(0deg, rgba(255,138,76,0.18) 0px, rgba(45,225,194,0.18) ${2 + jitter}px, transparent ${4 + jitter}px, transparent ${10 + jitter}px)`,
           opacity: 1 - e, blend: 'screen',
         },
       };

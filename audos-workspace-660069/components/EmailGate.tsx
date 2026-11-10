@@ -4,10 +4,14 @@ import VergeLoader from './VergeLoader';
 import FreeVideoAnalyzer from './FreeVideoAnalyzer';
 import { saveVidvergeHandoff } from '../lib/vidvergeHandoff';
 import type { DesktopThemeTokens } from '../types';
+import GlobalStyles from './ui/GlobalStyles';
+import { persistSessionIdentity } from '../lib/workspace';
+import { getTenantDelegationScope, scopedSpaceSessionStorageKey } from '../lib/tenant-delegation-scope';
+import { COST_PLUS_MARKUP, CREDIT_VALUE_USD, quote } from '../lib/pricing';
 
 // Version marker for auto-upgrade detection
 // Increment this when making breaking changes that stale copies need
-export const EMAIL_GATE_VERSION = 125; // v125: email one-time code restored; unverified sessions are never accepted
+export const EMAIL_GATE_VERSION = 126; // v126: tenant delegation bypass + shared cookie/local session identity
 
 type ParsedResponseBody = { data: unknown; rawText: string };
 
@@ -152,24 +156,24 @@ type PendingOtp = {
 type GateStep = 'loading' | 'email' | 'otp' | 'complete';
 
 // ── Vidverge landing design system ──────────────────────────────────────
-// Presentation only for the SIGNED-OUT view. The dark-cosmic ground with
-// layered dark-gold studio light, mirroring components/theme.ts so the gate and
-// the shell behind it read as one product. No rainbow gradients, no pastels,
-// no white surfaces anywhere.
-const BG = '#0A0A0B';
-const BG_DEEP = '#0A0A0B';
-const CARD = '#111114';
-const LINE = 'rgba(255,255,255,.08)';
-const BRAND = '#D4A64A';
-const BRAND_HI = '#F6D98B';
+// Presentation only for the SIGNED-OUT view. Rich Black / Deep Navy (dark) and
+// Soft White (light) ground, mirroring components/theme.ts so the gate and the
+// shell behind it read as one product. Gold is the single accent (CTAs,
+// selected states, icons, links); amber is reserved for credit counters.
+const BG = 'var(--void)';
+const BG_DEEP = 'var(--void)';
+const CARD = 'var(--ash)';
+const LINE = 'var(--line)';
+const BRAND = 'var(--vg-accent)';
+const BRAND_HI = 'var(--vg-accent-hover)';
 /** Text sitting on a BRAND-filled surface. */
-const INK = '#0A0A0B';
-const TEXT = '#F4F1EA';
-const MUTED = '#A8A39A';
-const DIM = '#7C776F';
-const BRAND_GLOW = '0 0 0 1px rgba(246,217,139,.14), 0 0 28px rgba(212,166,74,.25)';
-const MONO = "ui-monospace, 'SFMono-Regular', Consolas, monospace";
-const FONT = "'Manrope', 'Segoe UI', sans-serif";
+const INK = 'var(--vg-on-accent)';
+const TEXT = 'var(--ivory)';
+const MUTED = 'var(--muted)';
+const DIM = 'var(--faint)';
+const BRAND_GLOW = '0 0 0 1px color-mix(in srgb,var(--vg-accent) 26%,transparent)';
+const MONO = "'Geist Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace";
+const FONT = 'var(--body)';
 const CONTAINER = 1180;
 
 // ── Section 3 · Finished customer renders ───────────────────────────────
@@ -348,41 +352,58 @@ type Plan = {
   badge?: string;
 };
 
+// Pay per use: credit packs at $0.15 per credit; every example cost below is
+// computed from the live rate card in lib/pricing.ts (real engine cost + 30%).
+const creditCost = (engine: string, options: Parameters<typeof quote>[1]) => quote(engine, options).credits;
+const packPrice = (credits: number) => `$${Math.round(credits * CREDIT_VALUE_USD * 100) / 100}`;
+
 const PLANS: Plan[] = [
   {
-    name: 'Free Trial',
-    price: '$0',
-    period: 'to start',
-    credits: '60 credits',
-    features: ['No card required', 'Every studio unlocked', 'Watermarked export'],
+    name: 'Starter credits',
+    price: 'Free',
+    period: 'on sign-up',
+    credits: '30 credits',
+    features: ['No card required', 'Chat, scripts and images are always free', 'Every studio unlocked'],
     cta: 'Start free',
     featured: false,
   },
   {
-    name: 'Creator',
-    price: '$35',
-    period: 'per month',
-    credits: '250 credits',
-    features: ['Credits roll over', 'No watermark', 'Priority rendering'],
-    cta: 'Get Creator',
+    name: '100 credits',
+    price: packPrice(100),
+    period: 'one-time',
+    credits: '100 credits',
+    features: [
+      `Omni Flash 8 s clip · ${creditCost('gemini-omni-1.1-flash', { seconds: 8 })} credits`,
+      `Seedance 2.5 8 s, 720p · ${creditCost('openrouter/bytedance/seedance-2.5', { seconds: 8, resolution: '720p' })} credits`,
+      'Credits never expire',
+    ],
+    cta: 'Buy credits',
     featured: false,
   },
   {
-    name: 'Pro',
-    price: '$70',
-    period: 'per month',
+    name: '500 credits',
+    price: packPrice(500),
+    period: 'one-time',
     credits: '500 credits',
-    features: ['Credits roll over', 'Fastest render queue', 'Vergeye competitive reports'],
-    cta: 'Get Pro',
+    features: [
+      `30 s HeyGen avatar · ${creditCost('heygen/avatar_iv', { seconds: 30 })} credits`,
+      `Veo 3.1 8 s with audio · ${creditCost('openrouter/google/veo-3.1', { seconds: 8, audio: true })} credits`,
+      'Failed renders refunded automatically',
+    ],
+    cta: 'Buy credits',
     featured: true,
-    badge: 'Most Popular',
+    badge: 'Pay per use',
   },
   {
-    name: 'Pay-as-you-go',
-    price: '$9',
+    name: '1,000 credits',
+    price: packPrice(1000),
     period: 'one-time',
-    credits: '60 credits',
-    features: ['No cap, no subscription', 'Credits never expire', 'Top up any time'],
+    credits: '1,000 credits',
+    features: [
+      `Kling 3.0 Omni 10 s · ${creditCost('kling-3.0-omni', { seconds: 10 })} credits`,
+      `60 s music bed · ${creditCost('elevenlabs/music', { seconds: 60 })} credits`,
+      'Exact cost shown before every generation',
+    ],
     cta: 'Buy credits',
     featured: false,
   },
@@ -391,36 +412,17 @@ const PLANS: Plan[] = [
 const PROOF_STATS: Array<{ value: string; label: string }> = [
   { value: '5', label: 'studio families, one login' },
   { value: '0', label: 'character drift' },
-  { value: '1s', label: 'of video per credit' },
+  { value: `+${Math.round((COST_PLUS_MARKUP - 1) * 100)}%`, label: 'over real engine cost, pay per use' },
 ];
 
 // ── Injected CSS (keyframes, beams, hovers, responsive grids) ───────────
 const GATE_STYLES = `
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap');
-h1,h2,h3,h4 { font-family:'Space Grotesk','Segoe UI',sans-serif; font-synthesis:none; }
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Geist:wght@400..700&family=Geist+Mono:wght@500&display=swap');
+h1,h2,h3,h4 { font-family:var(--display); font-optical-sizing:auto; font-weight:800; font-synthesis:none; }
+[data-theme="light"] .vv-card { color:var(--ivory); background:var(--ash); border-color:var(--line-2); }
 @keyframes vvFadeUp { from { opacity:0; transform:translateY(34px); } to { opacity:1; transform:translateY(0); } }
 @keyframes vvPulse { 0%,100% { opacity:.5; } 50% { opacity:1; } }
-@keyframes vvFieldA { 0%,100% { transform:translate3d(-1.4%,-1%,0) scale(1.04); } 50% { transform:translate3d(1.4%,1%,0) scale(1.09); } }
-@keyframes vvFieldB { 0%,100% { transform:translate3d(1.8%,.8%,0) scale(1.08); } 50% { transform:translate3d(-1.8%,-.8%,0) scale(1.03); } }
-@keyframes vvFieldC { 0%,100% { transform:translate3d(0,1.2%,0) scale(1.05); } 50% { transform:translate3d(0,-1.2%,0) scale(1.10); } }
 @keyframes vvBootIn { to { opacity:1; } }
-
-/* Logo light field: the Vidverge "V" itself — swooping amber filaments with a
-   hot core — blown up and drifting slowly behind EVERY section. Fixed to the
-   viewport so it backs the whole page rather than just the hero. */
-.vv-field { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
-.vv-field::after {
-  content:''; position:absolute; inset:0;
-  background:radial-gradient(1300px 820px at 50% 42%, transparent 0%, rgba(8,9,11,.26) 62%, rgba(8,9,11,.64) 100%);
-}
-.vv-layer { position:absolute; inset:0; width:100%; height:100%; mix-blend-mode:screen; will-change:transform; }
-.vv-field-a, .vv-field-b, .vv-field-c { animation:none; }
-.vv-bloom {
-  position:absolute; left:50%; top:44%; width:min(1020px, 94vw); height:min(620px, 56vw);
-  transform:translate(-50%,-50%);
-  background:radial-gradient(closest-side, rgba(255,209,104,.17), rgba(214,171,74,.05) 50%, transparent 74%);
-  filter:blur(26px); animation:none;
-}
 
 /* Session check in flight: fade the loader in a beat late so a cached session
    resolves straight into the app without flashing a spinner. */
@@ -429,31 +431,32 @@ h1,h2,h3,h4 { font-family:'Space Grotesk','Segoe UI',sans-serif; font-synthesis:
 .vv-reveal { opacity:0; }
 .vv-reveal.vv-in { animation:vvFadeUp .6s cubic-bezier(.16,1,.3,1) forwards; }
 
-.vv-cta { min-height:44px; background:linear-gradient(115deg,#F6D98B 0%,#D4A64A 52%,#B07D2A 100%); color:${INK}; font-weight:600; border:none; border-radius:10px; cursor:pointer; box-shadow:0 8px 28px rgba(212,166,74,.18); transition:background .18s cubic-bezier(.2,0,0,1),transform .18s cubic-bezier(.2,0,0,1),box-shadow .18s cubic-bezier(.2,0,0,1); }
-.vv-cta:hover:not(:disabled) { background:linear-gradient(115deg,#FBE7AE 0%,#E0B85F 52%,#C28D35 100%); box-shadow:${BRAND_GLOW}; }
-.vv-cta:active:not(:disabled) { background:#B07D2A; box-shadow:0 4px 16px rgba(212,166,74,.16); transform:translateY(1px); }
-.vv-ghost { min-height:44px; background:${CARD}; border:1px solid rgba(255,255,255,.16); color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1); }
-.vv-ghost:hover:not(:disabled) { background:#1E1E23; border-color:rgba(246,217,139,.34); }
-.vv-navcta { min-height:44px; border:1px solid rgba(255,255,255,.16); background:${CARD}; color:${TEXT}; border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1); }
-.vv-navcta:hover { background:#1E1E23; border-color:rgba(246,217,139,.34); }
-.vv-navlink { color:${MUTED}; background:none; border:none; cursor:pointer; font-size:13px; font-weight:500; transition:color .18s ease; text-decoration:none; }
-.vv-navlink:hover { color:${TEXT}; }
+.vv-cta { min-height:44px; background:var(--vg-gradient-action); color:${INK}; font-weight:600; border:none; border-radius:10px; cursor:pointer; box-shadow:0 8px 24px rgba(0,0,0,.16); transition:background .18s cubic-bezier(.2,0,0,1),transform .18s cubic-bezier(.2,0,0,1),box-shadow .18s cubic-bezier(.2,0,0,1); }
+.vv-cta:hover:not(:disabled) { background:var(--vg-gradient-action-hover); box-shadow:0 10px 30px rgba(0,0,0,.2); }
+.vv-cta:active:not(:disabled) { background:var(--vg-btn-pressed); box-shadow:0 4px 14px rgba(0,0,0,.14); transform:translateY(1px); }
+.vv-ghost { min-height:44px; background:transparent; border:1px solid var(--vg-accent); color:var(--vg-accent); border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1),color .18s cubic-bezier(.2,0,0,1); }
+.vv-ghost:hover:not(:disabled) { background:var(--vg-gold-tint); border-color:var(--vg-accent-hover); color:var(--vg-accent-hover); }
+.vv-ghost:focus-visible, .vv-navcta:focus-visible { outline:2px solid var(--vg-focus); outline-offset:2px; }
+.vv-navcta { min-height:44px; border:1px solid var(--vg-accent); background:transparent; color:var(--vg-accent); border-radius:10px; cursor:pointer; font-weight:600; transition:background .18s cubic-bezier(.2,0,0,1),border-color .18s cubic-bezier(.2,0,0,1),color .18s cubic-bezier(.2,0,0,1); }
+.vv-navcta:hover { background:var(--vg-gold-tint); border-color:var(--vg-accent-hover); color:var(--vg-accent-hover); }
+.vv-navlink { color:${TEXT}; background:none; border:none; cursor:pointer; font-size:13px; font-weight:500; transition:color .18s ease; text-decoration:none; }
+.vv-navlink:hover { color:${BRAND}; }
 .vv-input::placeholder { color:${DIM}; }
-.vv-input:focus { border-color:${BRAND_HI} !important; box-shadow:0 0 0 3px rgba(212,166,74,.16),0 0 24px rgba(212,166,74,.2) !important; outline:none; }
+.vv-input:focus { border-color:${BRAND} !important; box-shadow:0 0 0 3px color-mix(in srgb,var(--vg-focus) 18%,transparent) !important; outline:none; }
 .vv-link { color:${MUTED}; text-decoration:none; transition:color .18s ease; }
 .vv-link:hover { color:${BRAND_HI}; }
 
 .vv-card { background:${CARD}; border:1px solid ${LINE}; border-radius:12px; }
 .vv-studio { transition:transform .22s ease, border-color .22s ease, box-shadow .22s ease; }
-.vv-studio:hover { transform:translateY(-3px); border-color:rgba(246,217,139,.34); box-shadow:0 18px 48px rgba(0,0,0,.55),0 0 28px rgba(212,166,74,.18); }
+.vv-studio:hover { transform:translateY(-3px); border-color:var(--line-gold); box-shadow:0 18px 48px rgba(0,0,0,.18); }
 .vv-tile { transition:transform .22s ease, box-shadow .22s ease; }
 .vv-tile:hover { transform:translateY(-3px); box-shadow:${BRAND_GLOW}; }
 
 .vv-rail { display:flex; gap:18px; overflow-x:auto; scroll-snap-type:x proximity; padding:4px 2px 16px; -webkit-overflow-scrolling:touch; }
 .vv-rail > * { scroll-snap-align:start; flex:0 0 auto; }
 .vv-rail::-webkit-scrollbar { height:6px; }
-.vv-rail::-webkit-scrollbar-track { background:rgba(255,255,255,.04); border-radius:999px; }
-.vv-rail::-webkit-scrollbar-thumb { background:rgba(214,171,74,.35); border-radius:999px; }
+.vv-rail::-webkit-scrollbar-track { background:var(--line); border-radius:999px; }
+.vv-rail::-webkit-scrollbar-thumb { background:color-mix(in srgb,var(--gold) 35%,transparent); border-radius:999px; }
 
 .vv-hero { display:grid; grid-template-columns:1.02fr .98fr; gap:56px; align-items:center; }
 .vv-studios { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
@@ -476,7 +479,6 @@ h1,h2,h3,h4 { font-family:'Space Grotesk','Segoe UI',sans-serif; font-synthesis:
 }
 @media (prefers-reduced-motion: reduce) {
   .vv-reveal, .vv-reveal.vv-in { animation:none !important; opacity:1 !important; }
-  .vv-layer, .vv-bloom { animation:none !important; }
   .vv-boot { animation:none !important; opacity:1 !important; }
 }
 `;
@@ -514,64 +516,6 @@ const Reveal = ({
     </div>
   );
 };
-
-// The logo used as an ambient light rig. Each layer redraws the mark’s
-// swooping "V" filaments at page scale — a soft blurred halo beneath a thin
-// hot core, which is how the logo itself is built — and drifts on its own slow
-// cycle. Pure SVG + CSS: no animation library, no 3D.
-type FieldLayer = { d: string; w: number; blur: number; glow: number; core: number; drift: string };
-
-const FIELD_LAYERS: FieldLayer[] = [
-  { d: 'M -160 236 C 420 242, 574 352, 720 566 C 866 352, 1020 242, 1600 236', w: 2, blur: 7, glow: 0.13, core: 0.17, drift: 'vv-field-c' },
-  { d: 'M -160 292 C 404 298, 560 418, 720 648 C 880 418, 1036 298, 1600 292', w: 3, blur: 11, glow: 0.15, core: 0.2, drift: 'vv-field-a' },
-  { d: 'M -160 350 C 388 356, 548 486, 720 734 C 892 486, 1052 356, 1600 350', w: 2.2, blur: 9, glow: 0.11, core: 0.14, drift: 'vv-field-b' },
-  { d: 'M -160 410 C 372 416, 534 556, 720 822 C 906 556, 1068 416, 1600 410', w: 1.6, blur: 8, glow: 0.08, core: 0.1, drift: 'vv-field-a' },
-];
-
-const LightField = () => (
-  <div className="vv-field" aria-hidden>
-    <div className="vv-bloom" />
-    {FIELD_LAYERS.map((layer, index) => (
-      <svg
-        key={layer.d}
-        className={`vv-layer ${layer.drift}`}
-        viewBox="0 0 1440 900"
-        preserveAspectRatio="xMidYMid slice"
-        style={{ animationDelay: `${index * -7}s` }}
-      >
-        <defs>
-          <linearGradient id={`vvFieldGrad${index}`} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#B07D2A" stopOpacity="0" />
-            <stop offset="20%" stopColor="#D4A64A" stopOpacity="0.55" />
-            <stop offset="50%" stopColor="#F6D98B" stopOpacity="1" />
-            <stop offset="80%" stopColor="#FBE7AE" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#B07D2A" stopOpacity="0" />
-          </linearGradient>
-          <filter id={`vvFieldBlur${index}`} x="-10%" y="-45%" width="120%" height="190%">
-            <feGaussianBlur stdDeviation={layer.blur} />
-          </filter>
-        </defs>
-        <path
-          d={layer.d}
-          fill="none"
-          strokeLinecap="round"
-          stroke={`url(#vvFieldGrad${index})`}
-          strokeWidth={layer.w * 6}
-          opacity={layer.glow}
-          filter={`url(#vvFieldBlur${index})`}
-        />
-        <path
-          d={layer.d}
-          fill="none"
-          strokeLinecap="round"
-          stroke={`url(#vvFieldGrad${index})`}
-          strokeWidth={layer.w}
-          opacity={layer.core}
-        />
-      </svg>
-    ))}
-  </div>
-);
 
 /**
  * Viewport-gated looping video. The `src` is only attached once the element
@@ -786,7 +730,35 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
   }, []);
 
   const checkExistingSession = async () => {
-    const sessionKey = `space_session_${spaceId}`;
+    const delegation = getTenantDelegationScope();
+    if (delegation) {
+      const delegatedSessionId = String(
+        delegation.workspaceSessionId
+        || (String(delegation.sessionId || '').startsWith('wses_') ? delegation.sessionId : '')
+        || (String(sessionId || '').startsWith('wses_') ? sessionId : ''),
+      );
+      const delegatedEmail = String(
+        delegation.email
+        || (delegation.consumerWorkspaceId ? `delegation-${delegation.consumerWorkspaceId.toLowerCase()}@tenant-agent.audos` : ''),
+      ).trim().toLowerCase();
+      if (delegatedSessionId.startsWith('wses_') && delegatedEmail.endsWith('@tenant-agent.audos')) {
+        await completeSession(delegatedSessionId, delegatedEmail, {
+          verified: true,
+          authorized: true,
+          identityMode: 'strict_verified',
+          workspaceId: workspaceId || undefined,
+        });
+        return;
+      }
+      console.warn('[VidVerge auth] reason=tenant_delegation_session_not_ready', {
+        hasWorkspaceSession: Boolean(delegatedSessionId),
+        hasEmail: Boolean(delegatedEmail),
+      });
+      setStep('complete');
+      return;
+    }
+
+    const sessionKey = scopedSpaceSessionStorageKey(spaceId);
     let storedSessionId: string | null = null;
     let storedEmail: string | null = null;
     let storedEmailSession = false;
@@ -1131,7 +1103,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
       setLoading(false);
       return;
     }
-    const sessionKey = `space_session_${spaceId}`;
+    const sessionKey = scopedSpaceSessionStorageKey(spaceId);
     const normalizedEmail = sessionEmail.toLowerCase().trim();
     let verifiedMetadata: Record<string, unknown> = {};
     try {
@@ -1154,6 +1126,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
       metadata: verifiedMetadata,
     };
     localStorage.setItem(sessionKey, JSON.stringify(session));
+    persistSessionIdentity(finalSessionId, normalizedEmail, authorization.verified);
     acceptDataSession(finalSessionId);
 
     try {
@@ -1179,7 +1152,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
 
     try {
       const guestId = `guest_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-      const sessionKey = `space_session_${spaceId}`;
+      const sessionKey = scopedSpaceSessionStorageKey(spaceId);
       const guestSession = {
         id: guestId,
         workspaceSessionId: guestId,
@@ -1466,7 +1439,6 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
           height: size,
           objectFit: 'contain',
           display: 'block',
-          filter: 'drop-shadow(0 0 10px rgba(214,171,74,0.55))',
         }}
       />
     ) : (
@@ -1492,10 +1464,9 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
     return (
       <div
         className="min-h-screen flex items-center justify-center"
-        style={{ fontFamily: FONT, background: BG, color: TEXT, position: 'relative' }}
+        style={{ fontFamily: FONT, background: BG, color: TEXT, position: 'relative', isolation: 'isolate' }}
       >
         <style>{GATE_STYLES}</style>
-        <LightField />
         <div className="vv-boot" style={{ position: 'relative', zIndex: 2 }}>
           <VergeLoader size={190} caption="Warming up the studio" />
         </div>
@@ -1562,7 +1533,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
               letterSpacing: '0.18em',
               borderRadius: 12,
               background: BG_DEEP,
-              border: `1px solid ${error ? '#dc2626' : LINE}`,
+              border: `1px solid ${error ? 'var(--vg-danger)' : LINE}`,
               color: TEXT,
               outline: 'none',
               fontFamily: MONO,
@@ -1577,7 +1548,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
           >
             {loading ? 'Verifying…' : 'Verify and open Vidverge'}
           </button>
-          {error && <p style={{ margin: '10px 0 0', fontSize: 13, color: '#f87171' }} role="alert">{error}</p>}
+          {error && <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--vg-danger)' }} role="alert">{error}</p>}
           <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
             <button
               type="button"
@@ -1625,7 +1596,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
               fontSize: 16,
               borderRadius: 12,
               background: BG_DEEP,
-              border: `1px solid ${error ? '#dc2626' : LINE}`,
+              border: `1px solid ${error ? 'var(--vg-danger)' : LINE}`,
               color: TEXT,
               outline: 'none',
               fontFamily: FONT,
@@ -1658,7 +1629,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
         </div>
 
         {error && (
-          <p style={{ margin: '10px 0 0', fontSize: 13, color: '#f87171' }} data-testid={`text-error${suffix}`}>
+          <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--vg-danger)' }} data-testid={`text-error${suffix}`}>
             {error}
           </p>
         )}
@@ -1730,11 +1701,9 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
   );
 
   return (
-    <div style={{ fontFamily: FONT, background: BG, color: TEXT, minHeight: '100vh', overflowX: 'hidden', position: 'relative' }}>
+    <div style={{ fontFamily: FONT, background: BG, color: TEXT, minHeight: '100vh', overflowX: 'hidden', position: 'relative', isolation: 'isolate' }}>
+      <GlobalStyles />
       <style>{GATE_STYLES}</style>
-
-      {/* ===== LOGO LIGHT FIELD — fixed behind every section of the page ===== */}
-      <LightField />
 
       {/* ===== 1 · NAV ===== */}
       <nav
@@ -1750,7 +1719,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
           justifyContent: 'space-between',
           gap: 16,
           padding: '0 24px',
-          background: scrolled ? 'rgba(8,9,11,.88)' : 'linear-gradient(180deg, rgba(8,9,11,.9), transparent)',
+          background: scrolled ? 'var(--glass)' : 'transparent',
           borderBottom: scrolled ? `1px solid ${LINE}` : '1px solid transparent',
           backdropFilter: 'blur(14px)',
           WebkitBackdropFilter: 'blur(14px)',
@@ -1790,8 +1759,8 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                   gap: 8,
                   padding: '6px 13px',
                   borderRadius: 999,
-                  border: '1px solid rgba(214,171,74,.3)',
-                  background: 'rgba(214,171,74,.07)',
+                  border: '1px solid color-mix(in srgb,var(--gold) 30%,transparent)',
+                  background: 'color-mix(in srgb,var(--gold) 8%,transparent)',
                   marginBottom: 24,
                   fontSize: 11.5,
                   letterSpacing: '0.1em',
@@ -1835,16 +1804,6 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
           {/* Hero visual: a finished Vidverge render, not a mockup. */}
           <Reveal reduceMotion={reduceMotion} delay={0.14} style={{ position: 'relative' }}>
             <div className="vv-hero-visual" style={{ position: 'relative' }}>
-              <div
-                aria-hidden
-                style={{
-                  position: 'absolute',
-                  inset: '-14% -8%',
-                  background: 'radial-gradient(closest-side, rgba(214,171,74,.22), transparent 72%)',
-                  filter: 'blur(14px)',
-                  pointerEvents: 'none',
-                }}
-              />
               <div style={{ position: 'relative' }}>
                 <VideoFrame src={HERO_VIDEO.url} reduceMotion={reduceMotion} width="100%" aspect={HERO_VIDEO.ratio} />
                 <div
@@ -1871,9 +1830,9 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                     bottom: 16,
                     padding: '6px 12px',
                     borderRadius: 999,
-                    background: 'rgba(8,9,11,.78)',
-                    border: '1px solid rgba(214,171,74,.35)',
-                    color: BRAND_HI,
+                    background: 'var(--glass)',
+                    border: '1px solid var(--line-gold)',
+                    color: BRAND,
                     fontSize: 11,
                     fontFamily: MONO,
                     letterSpacing: '0.08em',
@@ -2000,9 +1959,9 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                       alignSelf: 'flex-start',
                       padding: '4px 10px',
                       borderRadius: 999,
-                      border: '1px solid rgba(214,171,74,.3)',
-                      background: 'rgba(214,171,74,.07)',
-                      color: BRAND_HI,
+                      border: '1px solid color-mix(in srgb,var(--gold) 30%,transparent)',
+                      background: 'var(--vg-selected-soft)',
+                      color: 'var(--vg-on-selected)',
                       fontSize: 10,
                       fontFamily: MONO,
                       letterSpacing: '0.14em',
@@ -2066,10 +2025,11 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
         <div style={{ maxWidth: CONTAINER, margin: '0 auto', padding: '0 24px' }}>
           <Reveal reduceMotion={reduceMotion}>
             {eyebrow('Pricing', { marginBottom: 16 })}
-            {sectionTitle('Start free. Scale when it ships.')}
+            {sectionTitle('Pay per use. Real engine cost + 30%.')}
             <p style={{ margin: '16px 0 44px', fontSize: 15, lineHeight: 1.65, color: MUTED, maxWidth: 620 }}>
-              1 credit = 1 second of video. Credits never expire on paid plans, and unused subscription
-              credits roll over.
+              One credit is ${CREDIT_VALUE_USD.toFixed(2)}. Every generation is priced at what the engine really costs us plus
+              {` ${Math.round((COST_PLUS_MARKUP - 1) * 100)}%`} — you see the exact credits before you press Generate, text and images are
+              free, failed renders are refunded, and there is no subscription.
             </p>
           </Reveal>
 
@@ -2085,8 +2045,8 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                     flexDirection: 'column',
                     padding: 26,
                     borderRadius: 12,
-                    background: plan.featured ? 'rgba(214,171,74,.06)' : CARD,
-                    border: plan.featured ? '1px solid rgba(214,171,74,.45)' : `1px solid ${LINE}`,
+                    background: plan.featured ? 'var(--vg-selected-soft)' : CARD,
+                    border: plan.featured ? '1px solid color-mix(in srgb,var(--vg-selected) 45%,transparent)' : `1px solid ${LINE}`,
                     boxShadow: plan.featured ? BRAND_GLOW : 'none',
                   }}
                 >
@@ -2099,8 +2059,9 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                         transform: 'translateX(-50%)',
                         padding: '4px 13px',
                         borderRadius: 999,
-                        background: BRAND,
-                        color: INK,
+                        background: 'color-mix(in srgb, var(--vg-accent) 15%, var(--vg-bg))',
+                        boxShadow: 'inset 0 0 0 1px var(--vg-accent)',
+                        color: BRAND,
                         fontSize: 10,
                         fontWeight: 800,
                         letterSpacing: '0.08em',
@@ -2118,7 +2079,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                     </span>
                     <span style={{ fontSize: 12.5, color: DIM }}>{plan.period}</span>
                   </div>
-                  <p style={{ margin: '8px 0 20px', fontSize: 12.5, fontFamily: MONO, letterSpacing: '0.08em', textTransform: 'uppercase', color: BRAND }}>
+                  <p style={{ margin: '8px 0 20px', fontSize: 12.5, fontFamily: MONO, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--vg-credit)' }}>
                     {plan.credits}
                   </p>
                   <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 22px', display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
@@ -2157,8 +2118,8 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
               style={{
                 padding: 'clamp(26px, 4vw, 44px)',
                 borderRadius: 12,
-                background: 'linear-gradient(120deg, rgba(214,171,74,.13), rgba(214,171,74,.04) 48%, rgba(17,14,7,.9))',
-                border: '1px solid rgba(214,171,74,.4)',
+                background: CARD,
+                border: '1px solid var(--line-gold)',
                 boxShadow: BRAND_GLOW,
               }}
             >
@@ -2169,7 +2130,7 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
                 <h2 style={{ margin: '12px 0 12px', fontSize: 'clamp(26px, 3.4vw, 40px)', fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1.05, color: TEXT }}>
                   🎬 We Make Your Video For You
                 </h2>
-                <p style={{ margin: 0, fontSize: 15.5, lineHeight: 1.6, color: '#E5E7EB', maxWidth: 560 }}>
+                <p style={{ margin: 0, fontSize: 15.5, lineHeight: 1.6, color: MUTED, maxWidth: 560 }}>
                   “Send us your idea. We’ll handle everything — script, characters, editing, delivery.”
                 </p>
               </div>
@@ -2228,8 +2189,10 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
             <span style={{ fontSize: 13, color: DIM }}>© 2026 {brandName} · {tagline}</span>
           </div>
           <div style={{ display: 'flex', gap: 22, flexWrap: 'wrap' }}>
-            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="vv-navlink">Privacy</a>
-            <a href="/terms" target="_blank" rel="noopener noreferrer" className="vv-navlink">Terms</a>
+            <a href="/pricing" className="vv-navlink">Pricing</a>
+            <a href="/terms-of-service" target="_blank" rel="noopener noreferrer" className="vv-navlink">Terms</a>
+            <a href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="vv-navlink">Privacy</a>
+            <a href="/refund" target="_blank" rel="noopener noreferrer" className="vv-navlink">Refund Policy</a>
             <a href="https://x.com/vidverge" target="_blank" rel="noopener noreferrer" className="vv-navlink">Twitter / X</a>
           </div>
         </div>
@@ -2264,8 +2227,8 @@ export default function EmailGate({ spaceId, branding }: EmailGateProps) {
               padding: 32,
               borderRadius: 12,
               background: CARD,
-              border: '1px solid rgba(214,171,74,.3)',
-              boxShadow: '0 30px 80px rgba(0,0,0,.65)',
+              border: '1px solid var(--line-2)',
+              boxShadow: '0 30px 80px rgba(0,0,0,.45)',
             }}
           >
             <button

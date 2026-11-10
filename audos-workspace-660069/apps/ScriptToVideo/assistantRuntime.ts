@@ -2,12 +2,13 @@ import type { AssetRow, Film, FilmScene, VideoClipSpec } from './api';
 import { capabilityFor, S2V_VIDEO_CAPABILITIES } from './v2Contracts';
 import { resolveVideoModel } from './pipeline/videoModelService';
 import { SCENE_STALL_MS, msSinceSceneUpdate } from './pipeline/orchestrator';
+import { getWorkspaceToken, workspaceFetch } from '../../lib/workspace';
 import {
   compactToolResult, compactValue,
   prepareContextBody, requestWithContextRetry,
 } from './contextBudget';
 
-export const FILM_DIRECTOR_MODEL = 'claude-opus-5';
+export const FILM_DIRECTOR_MODEL = 'claude-opus-5-5';
 export const FILM_DIRECTOR_MAX_TOKENS = 16000;
 
 export type AgentToolName =
@@ -299,7 +300,9 @@ function compactProject(film: Film, scenes: FilmScene[], assets: AssetRow[]) {
       brand: compactValue(film.brand, 3_000), product_screenshot_url: film.product_screenshot_url,
       final_video_url: film.final_video_url, duration_s: film.duration_s, error: film.error,
       finish: compactValue(film.finish, 3_000), machine_state: film.machine_state,
-      character_refs: (film.character_refs || []).map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe, approved: character.approved, url: character.url })),
+      character_refs: (film.character_refs || []).map((character) => character.kind === 'narrator'
+        ? { id: character.id, name: character.name, kind: 'narrator', voice_only: true }
+        : { id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe, approved: character.approved, url: character.url }),
       audio: compactValue(film.audio, 4_000), video_model: film.video_model, style_lock: film.style_lock,
       style_lock_description: film.style_lock_description, at_references: compactValue(film.at_references, 3_000), updated_at: film.updated_at,
     },
@@ -362,7 +365,7 @@ function measuredTimeoutMs(metrics: AgentMetrics, mode: 'text' | 'vision'): numb
 }
 
 async function callClaude(system: string, messages: any[], metrics: AgentMetrics, useTools = true) {
-  const token = String((window as any).__workspaceDb?.token || '');
+  const token = await getWorkspaceToken();
   if (!token) throw new Error('Your workspace session is still loading — try again in a moment.');
   const started = performance.now();
   const mode: 'text' | 'vision' = messages.some((message) => Array.isArray(message.content) && message.content.some((block: any) => block?.type === 'image')) ? 'vision' : 'text';
@@ -393,9 +396,9 @@ async function callClaude(system: string, messages: any[], metrics: AgentMetrics
             }),
           }),
       send: async (body: any) => {
-        const response = await fetch(mode === 'vision' ? '/proxy/openai/v1/chat/completions' : '/proxy/anthropic/v1/messages', {
+        const response = await workspaceFetch(mode === 'vision' ? '/proxy/openai/v1/chat/completions' : '/proxy/anthropic/v1/messages', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token },
+          headers: { 'Content-Type': 'application/json' },
           signal: controller?.signal,
           body: JSON.stringify(body),
         });
@@ -456,14 +459,14 @@ function sceneEvidence(film: Film, scene: FilmScene): ToolResult {
     prompt: String(scene.prompt || '').slice(0, 6_000),
     references_sent: (scene.reference_assets || []).map((reference) => ({ type: reference.type, role: reference.role, label: reference.label, url: reference.url })),
   };
-  const images = [scene.first_frame_url, scene.keyframe_url, spec.storyboard_url, ...(film.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => character.url)].filter((url): url is string => Boolean(url && /^https:\/\//.test(url)));
+  const images = [scene.first_frame_url, scene.keyframe_url, spec.storyboard_url, ...(film.character_refs || []).filter((character) => character.kind !== 'narrator' && (spec.characters || []).includes(character.id)).map((character) => character.url)].filter((url): url is string => Boolean(url && /^https:\/\//.test(url)));
   return { text: JSON.stringify(evidence), summary: scene.error ? `Stored scene error: ${scene.error}` : `Scene ${scene.idx + 1} status ${scene.status}; no stored error.`, images: Array.from(new Set(images)).slice(0, 10) };
 }
 
 function visualEvidence(film: Film, scene: FilmScene, assets: AssetRow[]): ToolResult {
   const spec = (scene.spec || {}) as VideoClipSpec;
   const characterIds = Array.isArray(spec.characters) ? spec.characters : [];
-  const characterRefs = (film.character_refs || []).filter((character) => characterIds.includes(character.id) && character.url).map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, url: character.url }));
+  const characterRefs = (film.character_refs || []).filter((character) => character.kind !== 'narrator' && characterIds.includes(character.id) && character.url).map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, url: character.url }));
   const projectAssets = assets.filter((asset) => ['character', 'storyboard', 'keyframe', 'clip', 'screenshot', 'product'].includes(asset.kind));
   const images = [spec.storyboard_url, scene.first_frame_url, scene.keyframe_url, ...characterRefs.map((character) => character.url), ...projectAssets.map((asset) => asset.url)].filter((url): url is string => Boolean(url && /^https:\/\//.test(url)));
   return {

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import type { SpaceConfig } from '@shared/schema';
+import type { SpaceConfig as SharedSpaceConfig } from '@shared/schema';
 import {
   getDelegationChatRequestExtras,
   getTenantDelegationScope,
@@ -47,7 +47,7 @@ interface SpaceRuntimeContextValue {
   visitorId?: string;
   isBootstrappingSession: boolean;
   
-  config: SpaceConfig | null;
+  config: SharedSpaceConfig.SpaceConfig | null;
   isLoading: boolean;
   error: Error | null;
   
@@ -80,7 +80,7 @@ interface SpaceRuntimeProviderProps {
   spaceId: string;
   mode?: SpaceMode;
   sessionId?: string;
-  config?: SpaceConfig | null; // Optional pre-loaded config
+  config?: SharedSpaceConfig.SpaceConfig | null; // Optional pre-loaded config
 }
 
 // Get or create persistent visitor ID from cookie (same as landing pages for cross-site tracking)
@@ -259,7 +259,7 @@ export function SpaceRuntimeProvider({
   sessionId: initialSessionId,
   config: initialConfig = null
 }: SpaceRuntimeProviderProps) {
-  const [config, setConfig] = useState<SpaceConfig | null>(initialConfig);
+  const [config, setConfig] = useState<SharedSpaceConfig.SpaceConfig | null>(initialConfig);
   const [isLoading, setIsLoading] = useState(!initialConfig);
   const [error, setError] = useState<Error | null>(null);
   const [sessionId, setSessionIdRaw] = useState<string | undefined>(() => {

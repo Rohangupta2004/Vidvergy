@@ -35,12 +35,12 @@ export function ThinkingSteps({ steps, isStreaming = false }: ThinkingStepsProps
   const open = userToggled ?? (isStreaming || !allSettled);
 
   return (
-    <div style={{ borderRadius: 12, border: '1px solid rgba(148, 163, 184, 0.18)', background: 'rgba(184, 120, 8, 0.07)', overflow: 'hidden' }}>
+    <div style={{ borderRadius: 12, border: '1px solid var(--vg-border)', background: 'color-mix(in srgb, var(--vg-accent) 7%, transparent)', overflow: 'hidden' }}>
       <style>{STEPS_CSS}</style>
       <button
         type="button"
         onClick={() => setUserToggled(!open)}
-        style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', color: '#FFD168', fontSize: 11.5, fontWeight: 700, letterSpacing: 0.3, textAlign: 'left' }}
+        style={{ display: 'flex', alignItems: 'center', gap: 7, width: '100%', padding: '8px 12px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--vg-accent)', fontSize: 11.5, fontWeight: 700, letterSpacing: 0.3, textAlign: 'left' }}
       >
         <span aria-hidden style={{ fontSize: 13 }}>{allSettled ? '💭' : '🤔'}</span>
         {allSettled ? `Thought for ${steps.length} steps` : `Thinking… (${steps.length} step${steps.length === 1 ? '' : 's'})`}
@@ -49,7 +49,7 @@ export function ThinkingSteps({ steps, isStreaming = false }: ThinkingStepsProps
       {open ? (
         <div className="vv-think-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 12px 10px' }}>
           {steps.map((step, i) => {
-            const color = step.status === 'error' ? '#f87171' : step.status === 'done' ? 'rgba(203, 213, 225, 0.55)' : step.status === 'active' ? '#e2e8f0' : 'rgba(148, 163, 184, 0.5)';
+            const color = step.status === 'error' ? 'var(--vg-danger)' : step.status === 'done' ? 'var(--vg-muted)' : step.status === 'active' ? 'var(--vg-text)' : 'color-mix(in srgb, var(--vg-muted) 60%, transparent)';
             return (
               <div key={step.id} className="vv-think-item" style={{ color, animationDelay: `${i * 80}ms` }}>
                 <span aria-hidden style={{ flexShrink: 0 }}>

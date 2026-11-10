@@ -312,7 +312,7 @@ export function buildVergeyeVideoHandoff(brief: any): ScriptToVideoHandoff {
   const decision = routeVergeyeScene({ mode: 'automatic', durationSeconds: Math.min(durationSeconds, VERGEYE_VIDEO_CAPABILITIES[style.preferredModel].duration.maxSeconds), styleId, complexity: brief?.production?.complexity, characterConsistency: ['ugc-ad', 'talking-head'].includes(styleId), productReferenceCount: brief?.brand?.logoUrl ? 1 : 0, cameraMovement: styleId === 'cinematic' ? 'complex' : 'moderate', needsAudioOrDialogue: true, aspectRatio: brief?.aspectRatio });
   return {
     schemaVersion: 'vergeye.s2v-handoff.v1', source: 'vergeye-ads-studio', campaignId: clean(brief?.campaignId), originatingAngleId: clean(brief?.angleId), creativeBrief: brief,
-    generatedScript, styleId, styleConfiguration: style, brandKit: brief?.brand || {}, campaignReferences: references,
+    generatedScript, styleId, styleConfiguration: style as unknown as Record<string, unknown>, brandKit: brief?.brand || {}, campaignReferences: references,
     routerMode: 'automatic', recommendedModel: decision.model || style.preferredModel, routingReason: decision.reason,
     aspectRatio: brief?.aspectRatio === '9:16' ? '9:16' : style.defaultAspect, durationSeconds, storyboardRequired: true,
     claimReview: brief?.claimReview === 'needs_human_review' ? 'needs_human_review' : 'clear',

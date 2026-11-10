@@ -18,7 +18,7 @@ export interface BadgeProps {
 }
 
 const TONES: Record<BadgeVariant, { fg: string; bg: string; border: string }> = {
-  brand: { fg: COLORS.accent, bg: COLORS.accentSoft, border: COLORS.accentPressed },
+  brand: { fg: COLORS.accent, bg: COLORS.goldTint, border: COLORS.accent },
   cyan: { fg: COLORS.info, bg: COLORS.infoBg, border: COLORS.info },
   green: { fg: COLORS.success, bg: COLORS.successBg, border: COLORS.success },
   red: { fg: COLORS.danger, bg: COLORS.dangerBg, border: COLORS.danger },

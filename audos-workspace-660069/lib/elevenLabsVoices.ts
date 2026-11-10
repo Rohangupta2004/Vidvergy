@@ -28,6 +28,7 @@ import {
   nextNarrationModel,
   type ElevenModelId,
 } from './elevenLabsModels';
+import { workspaceFetch } from './workspace';
 
 export interface Voice {
   id: string;
@@ -119,7 +120,7 @@ export function sortVoices(voices: Voice[]): Voice[] {
 }
 
 async function readCatalog(url: string, withToken: boolean): Promise<Voice[]> {
-  const response = await fetch(url, { headers: withToken ? { 'X-Workspace-DB-Token': token() } : undefined });
+  const response = withToken ? await workspaceFetch(url) : await fetch(url);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(describeError(data, response.status, 'The voice catalog could not be loaded.'));
   const list = Array.isArray(data?.voices) ? data.voices : [];
@@ -213,9 +214,9 @@ export async function speak(options: {
     : narrationModelForChars(script.length, requested);
   for (;;) {
     const source = options.voiceSettings || DEFAULT_VOICE_SETTINGS;
-    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId())}/audio/voiceover`, {
+    const response = await workspaceFetch(`/api/workspaces/${encodeURIComponent(workspaceId())}/audio/voiceover`, {
       method: 'POST',
-      headers: authHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         script: script.slice(0, MAX_SCRIPT_CHARS),
         voiceId: options.voiceId || FALLBACK_VOICE_ID,
@@ -263,9 +264,9 @@ export async function speakSegments(options: {
     throw new Error(`This storyboard has ${lines.length} spoken scenes; ${MAX_SEGMENTS} is the most that can be voiced in one pass.`);
   }
 
-  const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId())}/audio/voiceover/segments`, {
+  const response = await workspaceFetch(`/api/workspaces/${encodeURIComponent(workspaceId())}/audio/voiceover/segments`, {
     method: 'POST',
-    headers: authHeaders(),
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       segments: lines.map((text) => ({ text })),
       voiceId: options.voiceId || FALLBACK_VOICE_ID,

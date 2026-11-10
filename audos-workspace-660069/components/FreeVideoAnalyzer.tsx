@@ -168,8 +168,8 @@ export default function FreeVideoAnalyzer({ onFix }: { onFix: (edit: SuggestedEd
       </div>
 
       <div className="mt-5 inline-flex rounded-xl border border-[var(--space-border-default)] bg-[var(--space-surface-panel)] p-1">
-        <button type="button" onClick={() => setMode('upload')} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${mode === 'upload' ? 'bg-[var(--space-brand-primary-500)] text-[var(--space-text-on-primary)]' : 'text-[var(--space-text-secondary)]'}`}><Upload className="mr-2 inline h-4 w-4" />Upload</button>
-        <button type="button" onClick={() => setMode('url')} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${mode === 'url' ? 'bg-[var(--space-brand-primary-500)] text-[var(--space-text-on-primary)]' : 'text-[var(--space-text-secondary)]'}`}><Link2 className="mr-2 inline h-4 w-4" />Paste URL</button>
+        <button type="button" onClick={() => setMode('upload')} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${mode === 'upload' ? 'bg-[var(--vg-btn)] text-[var(--vg-on-btn)]' : 'text-[var(--space-text-secondary)]'}`}><Upload className="mr-2 inline h-4 w-4" />Upload</button>
+        <button type="button" onClick={() => setMode('url')} className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${mode === 'url' ? 'bg-[var(--vg-btn)] text-[var(--vg-on-btn)]' : 'text-[var(--space-text-secondary)]'}`}><Link2 className="mr-2 inline h-4 w-4" />Paste URL</button>
       </div>
 
       {mode === 'upload' ? (
@@ -180,10 +180,10 @@ export default function FreeVideoAnalyzer({ onFix }: { onFix: (edit: SuggestedEd
           </button>
         </div>
       ) : (
-        <input value={url} onChange={(event) => { setUrl(event.target.value); setError(''); setAnalysis(null); }} placeholder="https://youtube.com/watch?v=… or a public MP4 URL" className="mt-4 min-h-11 w-full rounded-xl border border-[var(--space-border-default)] bg-[var(--space-surface-panel)] px-4 text-sm text-[var(--space-text-primary)] outline-none focus:border-[var(--space-brand-primary-500)]" />
+        <input value={url} onChange={(event) => { setUrl(event.target.value); setError(''); setAnalysis(null); }} placeholder="https://youtube.com/watch?v=… or a public MP4 URL" className="mt-4 min-h-11 w-full rounded-xl border border-[var(--space-border-default)] bg-[var(--space-surface-panel)] px-4 text-sm text-[var(--space-text-primary)] outline-none focus:border-[var(--vg-focus)]" />
       )}
 
-      <button type="button" onClick={() => void run()} disabled={loading || limited} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--space-brand-primary-500)] px-4 text-sm font-bold text-[var(--space-text-on-primary)] disabled:cursor-not-allowed disabled:opacity-50">
+      <button type="button" onClick={() => void run()} disabled={loading || limited} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[var(--vg-btn)] px-4 text-sm font-bold text-[var(--vg-on-btn)] hover:bg-[var(--vg-btn-hover)] disabled:cursor-not-allowed disabled:opacity-50">
         {loading ? <><Loader2 className="h-4 w-4 animate-spin" />Analysing your video…</> : limited ? 'Free check used today' : 'Analyse my video'}
       </button>
 

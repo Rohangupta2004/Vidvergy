@@ -531,7 +531,7 @@ export default function ScriptToVideo() {
               {shots.map((u, i) => (
                 <span key={u} style={{ position: 'relative', display: 'inline-block' }}>
                   <img src={u} alt={`Screenshot ${i + 1}`} style={{ width: 72, height: 46, objectFit: 'cover', borderRadius: 7, border: `1px solid ${S.border}` }} />
-                  <span style={{ position: 'absolute', bottom: 3, left: 4, padding: '0 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 800, color: '#fff', background: 'rgba(26,16,0,0.72)' }}>{i + 1}</span>
+                  <span style={{ position: 'absolute', bottom: 3, left: 4, padding: '0 5px', borderRadius: 6, fontSize: 9.5, fontWeight: 800, color: '#fff', background: 'rgba(0,0,0,0.72)' }}>{i + 1}</span>
                   <button type="button" aria-label={`Remove screenshot ${i + 1}`} onClick={() => { setShots((cur) => cur.filter((x) => x !== u)); setSegments(null); }}
                     style={{ position: 'absolute', top: -6, right: -6, width: 16, height: 16, padding: 0, borderRadius: 999, border: 'none', background: S.danger, color: '#fff', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     <X size={9} />
@@ -578,14 +578,14 @@ export default function ScriptToVideo() {
           </div>
           <ErrorBanner message={ttsError} />
 
-          <div style={{ position: 'relative', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: 'linear-gradient(160deg, #05070f, #0b1020)', border: `1px solid ${S.borderStrong}`, marginTop: ttsError ? 12 : 0 }} data-testid="stage-stv">
+          <div style={{ position: 'relative', aspectRatio: '16 / 9', borderRadius: 14, overflow: 'hidden', background: 'linear-gradient(160deg, #000, var(--vg-bg))', border: `1px solid ${S.borderStrong}`, marginTop: ttsError ? 12 : 0 }} data-testid="stage-stv">
             {activeShot ? (
               <img src={activeShot} alt="Current screenshot" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
             ) : (
-              <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, var(--space-brand-primary-700), var(--space-brand-primary-500) 55%, var(--space-brand-highlight-600))', opacity: 0.35 }} />
+              <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg, color-mix(in srgb, var(--vg-accent) 30%, var(--vg-raised)), var(--vg-raised) 55%, var(--vg-surface))', opacity: 0.35 }} />
             )}
             {activeSegment ? (
-              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '34px 20px 16px', background: 'linear-gradient(180deg, transparent, rgba(3,6,14,0.82))', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '34px 20px 16px', background: 'linear-gradient(180deg, transparent, rgba(0,0,0,0.82))', display: 'flex', justifyContent: 'center' }}>
                 <span style={{ maxWidth: '88%', color: '#fff', fontSize: activeShot ? 'clamp(13px, 1.8vw, 19px)' : 'clamp(16px, 2.4vw, 26px)', fontWeight: 700, lineHeight: 1.45, textAlign: 'center', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }} data-testid="stage-stv-caption">
                   {activeSegment.text}
                 </span>

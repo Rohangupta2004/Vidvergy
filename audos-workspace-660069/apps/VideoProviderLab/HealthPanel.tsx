@@ -331,7 +331,7 @@ export default function HealthPanel({ onClose }: { onClose: () => void }) {
               alignItems: 'center',
               gap: 7,
               background: running ? 'transparent' : COLORS.primary,
-              color: running ? COLORS.textMuted : '#FFFFFF',
+              color: running ? COLORS.textMuted : 'var(--vg-on-accent)',
               border: running ? `1px solid ${COLORS.border}` : 'none',
               borderRadius: 9,
               padding: '8px 14px',

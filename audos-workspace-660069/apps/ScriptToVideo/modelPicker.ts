@@ -1,37 +1,57 @@
 import {
-  KLING_2_5_TURBO, KLING_2_6, KLING_3_0, KLING_3_0_OMNI,
-  SEEDANCE_2_5, VIDEO_MODEL, VideoModelConfig,
+  KLING_3_0, KLING_3_0_OMNI, SEEDANCE_2_5, VIDEO_MODEL, VideoModelConfig,
 } from './pipeline/videoModelService';
-import { workspaceFetch } from '../../lib/workspace';
+import { engineHealthWarning } from '../../lib/videoEngines';
 
 export interface PickerAvailability {
   ready: boolean;
   reason: string;
+  /**
+   * What the last paid sweep found wrong with this engine, when it found
+   * anything — empty for an engine with a clean record.
+   *
+   * It is deliberately NOT `ready: false`. Greying the card out would take the
+   * manual model switch away, which is the one thing a creator can act on when
+   * an engine misbehaves; and a frozen verdict outlives the outage that caused
+   * it. So the engine stays pickable and the card says what it is risking,
+   * which is also why the pipeline carries its own automatic fallback: pick a
+   * refused engine and the block still lands, on the verified one.
+   */
+  caution: string;
   checkedAt: number;
 }
 
 export type PickerAvailabilityMap = Record<string, PickerAvailability>;
 
-/** Auto and manual selection may use only models that are actually enabled. */
-export const PICKER_MODELS_BY_PRIORITY: VideoModelConfig[] = [VIDEO_MODEL];
-/** The chooser also shows disabled providers with the exact reason. */
-export const PICKER_DISPLAY_MODELS: VideoModelConfig[] = [
-  VIDEO_MODEL, SEEDANCE_2_5, KLING_3_0_OMNI, KLING_3_0, KLING_2_6, KLING_2_5_TURBO,
-];
+/** The selectable engines, recommended first: Kling 3.0 (best value), then
+ * Gemini Omni and the two retained alternates. */
+export const PICKER_MODELS_BY_PRIORITY: VideoModelConfig[] = [KLING_3_0, VIDEO_MODEL, SEEDANCE_2_5, KLING_3_0_OMNI];
+export const PICKER_DISPLAY_MODELS: VideoModelConfig[] = [...PICKER_MODELS_BY_PRIORITY];
 
-const CACHE_KEY = 's2v:model-availability:v4';
+// v6 adds `caution`. A v5 entry cached in a returning browser has no such
+// field, and reusing it would silently hide the engine-health warning.
+// v7 adds Kling 3.0; a cached v6 map has no entry for it.
+const CACHE_KEY = 's2v:model-availability:v7';
 const CACHE_MS = 10 * 60_000;
 let memoryCache: PickerAvailabilityMap | null = null;
 
 function baseAvailability(): PickerAvailabilityMap {
   const now = Date.now();
+  const entry = (model: VideoModelConfig, reason: string): PickerAvailability => ({
+    ready: true,
+    reason,
+    // Read from the shared engine-health record rather than restated here, so
+    // the picker cannot keep advertising an engine the last sweep caught
+    // failing — which is how a film ended up locked to a model whose provider
+    // key was over its spending limit.
+    caution: engineHealthWarning(model.apiModel) || '',
+    checkedAt: now,
+  });
   return {
-    [VIDEO_MODEL.id]: { ready: true, reason: 'On — 4–8 seconds with native sound.', checkedAt: now },
-    [SEEDANCE_2_5.id]: { ready: false, reason: 'Off — provider budget reached. Founder can test again from Advanced.', checkedAt: now },
-    [KLING_3_0_OMNI.id]: { ready: false, reason: 'Off — no sound on this route yet.', checkedAt: now },
-    [KLING_3_0.id]: { ready: false, reason: 'Off — no sound on this route yet.', checkedAt: now },
-    [KLING_2_6.id]: { ready: false, reason: 'Off — no sound on this route yet.', checkedAt: now },
-    [KLING_2_5_TURBO.id]: { ready: false, reason: 'Off — no sound on this route yet.', checkedAt: now },
+    [KLING_3_0.id]: entry(KLING_3_0, 'Recommended — best value: 5s or 10s clips with strong motion and one reference. Silent, so spoken lines need a model with native sound.'),
+    [VIDEO_MODEL.id]: entry(VIDEO_MODEL, 'Default — 4–8 seconds with native sound and up to 10 references.'),
+    [SEEDANCE_2_5.id]: entry(SEEDANCE_2_5, 'Selectable — 4–30 seconds with optional sound and up to 3 asset references.'),
+    [KLING_3_0_OMNI.id]: entry(KLING_3_0_OMNI, 'Selectable — 5s or 10s clips with strong motion and up to 4 references.'),
   };
 }
 
@@ -47,30 +67,6 @@ function readCache(): PickerAvailabilityMap | null {
 export async function checkPickerAvailability(force = false): Promise<PickerAvailabilityMap> {
   if (!force) { const cached = readCache(); if (cached) return cached; }
   const state = baseAvailability();
-  try {
-    const response = await workspaceFetch('/api/generate/kling/models', { method: 'GET' });
-    const data = await response.json().catch(() => null);
-    const models = Array.isArray(data?.models) ? data.models : Array.isArray(data) ? data : [];
-    for (const config of [KLING_3_0_OMNI, KLING_3_0, KLING_2_6, KLING_2_5_TURBO]) {
-      const catalog = models.find((item: any) => [item?.id, item?.model, item?.appModel].map(String).includes(config.id));
-      const durations = (Array.isArray(catalog?.supportedDurations) ? catalog.supportedDurations : Array.isArray(catalog?.durations) ? catalog.durations : []).map(Number);
-      const capabilityList = Array.isArray(catalog?.capabilities) ? catalog.capabilities.map(String) : [];
-      const nativeAudio = catalog?.nativeAudio === true || catalog?.audio === true || catalog?.capabilities?.nativeAudio === true || capabilityList.includes('native-audio');
-      const has15 = durations.includes(15) || Number(catalog?.maxDuration) >= 15;
-      if (nativeAudio && has15) {
-        const legal = durations.length ? durations.filter((value) => value >= 3 && value <= 15).sort((a, b) => a - b) : Array.from({ length: 13 }, (_, index) => index + 3);
-        config.audioSupported = true;
-        config.supportedDurations = legal;
-        config.minDuration = legal[0] || 3;
-        config.safeMaxDuration = legal[legal.length - 1] || 15;
-        config.discreteDurations = false;
-        if (!PICKER_MODELS_BY_PRIORITY.some((model) => model.id === config.id)) PICKER_MODELS_BY_PRIORITY.push(config);
-        state[config.id] = { ready: true, reason: 'On — live catalog reports native sound and durations through 15 seconds.', checkedAt: Date.now() };
-      } else state[config.id] = { ready: false, reason: nativeAudio ? 'Off — 15-second clips are not exposed on this route yet.' : 'Off — no sound on this route yet.', checkedAt: Date.now() };
-    }
-  } catch (error: any) {
-    for (const model of [KLING_3_0_OMNI, KLING_3_0, KLING_2_6, KLING_2_5_TURBO]) state[model.id] = { ready: false, reason: `Off — availability check failed: ${String(error?.message || error)}`, checkedAt: Date.now() };
-  }
   memoryCache = state;
   try { localStorage.setItem(CACHE_KEY, JSON.stringify(state)); } catch {}
   return state;

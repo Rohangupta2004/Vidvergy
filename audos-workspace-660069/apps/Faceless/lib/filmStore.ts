@@ -1,4 +1,5 @@
 import { waitForDbSession } from '../../../lib/reelioStudio';
+import { sharedUnlessDelegated } from '../../../lib/tenant-delegation-scope';
 import type {
   AssetTier,
   DepthBackground,
@@ -213,7 +214,7 @@ export async function getFilm(id: string): Promise<FacelessFilmRow | null> {
   const client = db();
   if (!client || typeof client.from !== 'function') return null;
   try {
-    const result = await client.from(FILMS_TABLE, { shared: true }).getById(id);
+    const result = await client.from(FILMS_TABLE, sharedUnlessDelegated()).getById(id);
     return result?.data?.id ? result.data as FacelessFilmRow : null;
   } catch (error) {
     console.warn('[Faceless] film read failed:', error);
@@ -225,7 +226,7 @@ export async function findRecentUnfinishedFilm(): Promise<FacelessFilmRow | null
   const client = db();
   if (!client || typeof client.from !== 'function') return null;
   try {
-    const result = await client.from(FILMS_TABLE, { shared: true })
+    const result = await client.from(FILMS_TABLE, sharedUnlessDelegated())
       .eq('status', 'running')
       .orderBy('created_at', 'desc')
       .limit(20)
@@ -333,7 +334,7 @@ function normaliseMode(value: unknown): FacelessMode | undefined {
 export async function listStoredAssets(): Promise<FacelessAssetRow[]> {
   const client = db();
   if (!client || typeof client.from !== 'function') return [];
-  const result = await client.from(ASSETS_TABLE, { shared: true })
+  const result = await client.from(ASSETS_TABLE, sharedUnlessDelegated())
     .orderBy('created_at', 'desc')
     .limit(500)
     .get();

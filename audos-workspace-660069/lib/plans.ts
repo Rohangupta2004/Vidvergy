@@ -1,12 +1,13 @@
 /**
  * VidVerge plan catalog + entitlement helpers.
  *
- * PRICING IS CREDIT-BASED (locked Sep 2026). 1 credit = 1 second of finished
- * video, on every provider, no exceptions. This file owns the CATALOG — what
- * each tier costs and includes — plus the email -> tier access list. The live
- * balance, the meter and checkout live in `lib/credits.ts` and the
- * `vv-credits` server function. The old monthly VIDEO-COUNT gate is retired;
- * see `videoLimitFor` near the bottom.
+ * PRICING IS PAY-PER-USE (5 Nov 2026): one credit is $0.15 and every
+ * generation costs its real engine price + 30% — see `lib/pricing.ts`. The
+ * Free/Creator/Pro/Pay-as-you-go plans are retired. This file now owns only
+ * the email -> tier access list (app access and the Pro badge) and the event
+ * that opens the pricing screen. The balance, the meter and checkout live in
+ * `lib/credits.ts` and the `vv-credits` server function. The old monthly
+ * VIDEO-COUNT gate is retired; see `videoLimitFor` near the bottom.
  *
  * OPEN ENROLLMENT WINDOW (self-expiring) — open until Sep 9 2026, 23:59 UTC.
  * `SUBSCRIPTION_GATE_DISABLED` (below) is no longer a hand-flipped boolean: it
@@ -35,18 +36,15 @@
  * free-trial wall and get the Pro badge everywhere the shell shows plan state.
  */
 import { useEffect, useState } from 'react';
-import { scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
+import { hasTenantDelegationAuth, scopedSpaceSessionStorageKey } from './tenant-delegation-scope';
 
 export type PlanId = 'free' | 'creator' | 'pro' | 'payg';
 
 export interface ReelioPlan {
   id: PlanId;
   name: string;
-  /** Headline price, already formatted. */
   price: string;
-  /** What the price buys — rendered next to it, e.g. "/mo". */
   cadence: string;
-  /** Credits included. On pay-as-you-go this is what one $9 block buys. */
   credits: number;
   /** The credit line people actually compare on. */
   quota: string;
@@ -62,100 +60,11 @@ export interface ReelioPlan {
   featured?: boolean;
 }
 
-/**
- * LOCKED PRICING — a founder decision, not a tuning knob. Do not restate these
- * numbers anywhere else; import the catalog.
- *
- *   Free Trial      $0       60 credits   no credit card
- *   Creator         $35/mo   250 credits  rollover
- *   Pro             $70/mo   500 credits  rollover
- *   Pay-as-you-go   $9 min   60 credits per $9, no cap
- *
- * 1 credit = 1 second of finished video, on every provider. Scripting and
- * talking to the agent cost nothing — only generation spends.
- */
-export const REELIO_PLANS: ReelioPlan[] = [
-  {
-    id: 'free',
-    name: 'Free Trial',
-    price: '$0',
-    cadence: 'no card',
-    credits: 60,
-    quota: '60 credits',
-    creditNote: '60 seconds of finished video, on the house.',
-    pitch: 'Run a real idea through the whole pipeline before you pay anything.',
-    cta: 'Start free',
-    accent: '#2dd4bf',
-    badge: 'Start here',
-    features: [
-      '60 credits — 60 seconds of finished video',
-      'No credit card, no countdown',
-      'Scripting and chat with the agent stay free',
-      'The same pipeline the paid tiers run',
-    ],
-  },
-  {
-    id: 'creator',
-    name: 'Creator',
-    price: '$35',
-    cadence: '/mo',
-    credits: 250,
-    quota: '250 credits / month',
-    creditNote: 'Unused credits roll over to next month.',
-    pitch: 'For the creator shipping something every week.',
-    cta: 'Choose Creator',
-    accent: '#3b82f6',
-    features: [
-      '250 credits every month',
-      'Credits roll over — nothing expires at month end',
-      'About four minutes of finished video a month',
-      'Every studio, every format',
-      'Top up any time in $9 blocks',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    price: '$70',
-    cadence: '/mo',
-    credits: 500,
-    quota: '500 credits / month',
-    creditNote: 'Unused credits roll over to next month.',
-    pitch: 'For the series, the campaign, the whole content calendar.',
-    cta: 'Choose Pro',
-    accent: '#f59e0b',
-    badge: 'Most popular',
-    featured: true,
-    features: [
-      '500 credits every month',
-      'Credits roll over — nothing expires at month end',
-      'About eight minutes of finished video a month',
-      'Everything in Creator',
-      'Priority spot in the render queue',
-    ],
-  },
-  {
-    id: 'payg',
-    name: 'Pay-as-you-go',
-    price: '$9',
-    cadence: 'minimum',
-    credits: 60,
-    quota: '60 credits per $9',
-    creditNote: 'Buy in $9 blocks, as many as you like. No cap.',
-    pitch: 'For the one-off drop. No subscription, no calendar.',
-    cta: 'Buy credits',
-    accent: '#22d3ee',
-    features: [
-      '60 credits for every $9 — a minute of video',
-      'Buy as many blocks as you need, no cap',
-      'No subscription, no monthly commitment',
-      'Credits sit in your account until you spend them',
-    ],
-  },
-];
+/** Retired with pay-per-use pricing; kept empty so older imports still compile. */
+export const REELIO_PLANS: ReelioPlan[] = [];
 
 /** Credits a brand-new account starts with, no card required. */
-export const FREE_TRIAL_CREDITS = 60;
+export const FREE_TRIAL_CREDITS = 30;
 
 /**
  * Retired. VidVerge used to meter a monthly VIDEO COUNT; the locked credit
@@ -371,6 +280,7 @@ export async function fetchSubscriptionAccess(
   email: string,
 ): Promise<{ tier: PlanId; videoLimit: number | null } | null> {
   if (typeof window === 'undefined') return null;
+  if (hasTenantDelegationAuth()) return null;
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
   const db = (window as any).__workspaceDb;
@@ -430,20 +340,10 @@ async function ensureOpenEnrollmentRow(email: string): Promise<void> {
   try {
     const db = (window as any).__workspaceDb;
     if (!db || typeof db.from !== 'function') return;
-    // Never touch an existing row: the window only ENROLLS, it never upgrades
-    // or downgrades anybody who already has a tier.
-    const existing = await fetchSubscriptionAccess(normalized);
-    if (!existing) {
-      await db.from(SUBSCRIPTIONS_TABLE, { shared: true }).insert({
-        email: normalized,
-        tier: 'pro',
-        video_limit: 999999,
-        created_at: new Date().toISOString(),
-      });
-      // Cache it too, so the tier survives the window even before the next
-      // full lookup runs.
-      writeCachedAccess({ email: normalized, tier: 'pro', videoLimit: 999999 });
-    }
+    // Subscription grants are server-only. The browser may read an existing
+    // row, but cannot create or upgrade access. Owner grants go through
+    // vv-admin-grant and carry granted_by: 'founder'.
+    await fetchSubscriptionAccess(normalized);
     try {
       window.localStorage.setItem(ENROLLMENT_MARKER_KEY, normalized);
     } catch {
@@ -471,7 +371,6 @@ export async function refreshUserAccess(spaceId?: string): Promise<SubscriptionA
   // real `subscriptions` row (fire-and-forget) so it outlives the window.
   if (SUBSCRIPTION_GATE_DISABLED) {
     const email = normalizeEmail(currentUserEmail(spaceId));
-    if (email) void ensureOpenEnrollmentRow(email);
     return getUserAccess(spaceId);
   }
   const email = normalizeEmail(currentUserEmail(spaceId));
@@ -595,8 +494,10 @@ export interface PricingRequest {
   required?: number;
   /** Credits the visitor had when it was blocked. */
   balance?: number;
-  /** Length of the video they were trying to make, in seconds. */
+  /** Length of the media they were trying to make, in seconds. */
   seconds?: number;
+  /** What was blocked, e.g. "Gemini Omni 1.1 Flash". */
+  label?: string;
 }
 
 export function openPricing(
@@ -695,9 +596,9 @@ export async function fetchOwnVideoCount(spaceId?: string): Promise<number | nul
 // ---------------------------------------------------------------------------
 // The retired video-count meter
 //
-// VidVerge used to cap how many VIDEOS an account could make per month. The
-// locked credit pricing replaced that: credits meter SECONDS (1 credit = 1
-// second), and `lib/credits.ts` is the only gate in the product. These three
+// VidVerge used to cap how many VIDEOS an account could make per month.
+// Pay-per-use credits replaced that, and `lib/credits.ts` is the only gate in
+// the product. These three
 // functions stay so every surface that still reads them compiles, and they all
 // answer "no video-count cap" — so no screen can raise a second, contradictory
 // wall on top of the credit one.

@@ -80,7 +80,10 @@ export function polishShotPrompt(value: string, _style = '', maxWords = 80): str
 
 function beatLine(beat: TimecodedBeat, input: PromptDirectorInput, sport: string | null): string {
   const dialogue = input.dialogue?.find((line) => line.start >= beat.start && line.start < beat.end);
-  const spoken = dialogue ? ` [${dialogue.speaker}: ${dialogue.tone}]: "${dialogue.line}"` : '';
+  const narrated = dialogue && /^(narrator|voice[ -]?over|vo)$/i.test(String(dialogue.speaker || '').trim());
+  const spoken = !dialogue ? '' : narrated
+    ? ` [off-screen voice-over, no visible narrator: ${dialogue.tone}]: "${dialogue.line}"`
+    : ` [${dialogue.speaker}: ${dialogue.tone}]: "${dialogue.line}"`;
   const style = polishShotPrompt(input.style || input.anchor, '', 14);
   const motion = sport ? `MOTION: ${sportsMotionClause(sport)}.` : '';
   const action = polishShotPrompt(`${input.anchor}. ${beat.text}`, '', sport ? 38 : 58);

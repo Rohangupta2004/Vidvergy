@@ -137,7 +137,7 @@ export interface GroupAModel {
 
 const gA = (
   m: Omit<GroupAModel, 'group' | 'supportsImageData' | 'supportsNegativePrompt' | 'maxReferenceImages'>
-    & { maxReferenceImages?: number },
+    & { maxReferenceImages?: number; supportsNegativePrompt?: boolean },
 ): GroupAModel =>
   ({ group: 'group-a', supportsImageData: true, supportsNegativePrompt: true, maxReferenceImages: 0, ...m });
 
@@ -614,14 +614,14 @@ export const RUNWAY_MODELS: RunwayModel[] = [
     id: 'gen4.5', label: 'Runway Gen 4.5', inputType: 'both', type: 'video', speed: 'standard',
     available: true, route: 'video', ratios: RW_VIDEO_RATIOS,
     minDurationS: 2, maxDurationS: 10, defaultDurationS: 5,
-    priceNote: '12 credits / second (≈ $0.12/s)',
+    priceNote: '12 provider credits / second (≈ $0.12/s)',
     blurb: 'Runway flagship. Text-to-video (1280:720 or 720:1280) or image-to-video on all six ratios; image-to-video still needs a prompt.',
   },
   {
     id: 'gen4_turbo', label: 'Runway Gen 4 Turbo', inputType: 'image', type: 'video', speed: 'fast',
     available: true, route: 'video', ratios: RW_VIDEO_RATIOS,
     minDurationS: 2, maxDurationS: 10, defaultDurationS: 5,
-    priceNote: '5 credits / second (≈ $0.05/s)',
+    priceNote: '5 provider credits / second (≈ $0.05/s)',
     blurb: 'Image-to-video only, and the cheapest way to animate a single still.',
   },
   {
@@ -765,7 +765,7 @@ export function applyRunwayCapabilities(raw: any): void {
       if (maxD !== undefined) m.maxDurationS = maxD;
       if (defD !== undefined) m.defaultDurationS = defD;
       const cps = Number(node.creditsPerSecond);
-      if (Number.isFinite(cps) && cps > 0) m.priceNote = `${cps} credits / second (≈ $${(cps * 0.01).toFixed(2)}/s)`;
+      if (Number.isFinite(cps) && cps > 0) m.priceNote = `${cps} provider credits / second (≈ $${(cps * 0.01).toFixed(2)}/s)`;
     } else {
       m.available = false;
       m.route = 'none';
@@ -1186,13 +1186,13 @@ export function capPromptText(text: string, max = 10000): string {
 /** Tier badge → color pair used by all selectors. */
 export function tierColor(tier: EngineTier): { bg: string; fg: string } {
   switch (tier) {
-    case 'Fast': return { bg: 'rgba(45,212,191,0.16)', fg: '#2DD4BF' };
-    case 'Cinematic': return { bg: 'rgba(245,158,11,0.16)', fg: '#FBBF24' };
-    case 'Character': return { bg: 'rgba(232,163,60,0.16)', fg: '#E8A33C' };
-    case 'Lite': return { bg: 'rgba(148,163,184,0.16)', fg: '#94A3B8' };
-    case 'Pro': return { bg: 'rgba(59,130,246,0.16)', fg: '#60A5FA' };
-    case 'Recipe': return { bg: 'rgba(34,197,94,0.16)', fg: '#4ADE80' };
-    default: return { bg: 'rgba(148,163,184,0.14)', fg: '#CBD5E1' };
+    case 'Fast': return { bg: 'var(--vg-gold-tint)', fg: 'var(--vg-accent)' };
+    case 'Cinematic': return { bg: 'var(--vg-gold-tint)', fg: 'var(--vg-accent)' };
+    case 'Character': return { bg: 'var(--vg-gold-tint)', fg: 'var(--vg-accent)' };
+    case 'Lite': return { bg: 'var(--vg-raised)', fg: 'var(--vg-secondary)' };
+    case 'Pro': return { bg: 'var(--vg-gold-tint)', fg: 'var(--vg-accent)' };
+    case 'Recipe': return { bg: 'var(--vg-raised)', fg: 'var(--vg-secondary)' };
+    default: return { bg: 'var(--vg-raised)', fg: 'var(--vg-secondary)' };
   }
 }
 
@@ -1308,7 +1308,7 @@ export type EngineHealth = 'working' | 'broken' | 'rejected' | 'unconfigured';
 
 /** Empty on purpose: this file records no probe date any more. The Health
  * screen timestamps its own run. */
-export const ENGINE_HEALTH_CHECKED_AT = '2026-10-28T04:09:43.452Z';
+export const ENGINE_HEALTH_CHECKED_AT = '2026-11-10T17:09:59.000Z';
 
 export const ENGINE_HEALTH: Record<string, { health: EngineHealth; note: string }> = {
   'gemini-omni-1.1-flash': { health: 'working', note: 'Paid 8s sweep passed in 32.2s and returned a durable MP4. This is the only verified generation target today.' },
@@ -1327,7 +1327,7 @@ export const ENGINE_HEALTH: Record<string, { health: EngineHealth; note: string 
   'dop-standard': { health: 'broken', note: 'The paid health execution became uncertain after dispatch. Disabled to prevent a duplicate charge.' },
   'dop-lite': { health: 'broken', note: 'The paid health execution became uncertain after dispatch. Disabled to prevent a duplicate charge.' },
   'kling-3.0-omni': { health: 'rejected', note: 'Generation returned 401 no_credentials. Prior clips do not prove today’s authenticated path; disabled until a paid sweep passes.' },
-  'kling-3.0': { health: 'rejected', note: 'Generation returned 401 no_credentials. Disabled until a paid sweep passes.' },
+  'kling-3.0': { health: 'working', note: 'Paid 5s std (720p) text-to-video check on 10 Nov 2026 passed: the signed workspace path stv-scene-generate uses accepted kling-3.0 as itself (provider kling-v3, no fallback) and returned a durable 5.04s MP4 in about 3 minutes.' },
   'kling-2.6': { health: 'rejected', note: 'Generation returned 401 no_credentials. Disabled until a paid sweep passes.' },
   'kling-2.5-turbo': { health: 'rejected', note: 'Generation returned 401 no_credentials. Disabled until a paid sweep passes.' },
 };
@@ -1387,10 +1387,10 @@ export function suggestWorkingEngines(failedId?: string | null, limit = 2): Arra
 /** Tier badge colors for the flat quality tiers (LightBeam palette). */
 export function qualityTierColor(tier: EngineQualityTier): { bg: string; fg: string } {
   switch (tier) {
-    case 'ultra': return { bg: 'rgba(245,158,11,0.18)', fg: '#fbbf24' };
-    case 'cinema': return { bg: 'rgba(245,158,11,0.12)', fg: '#f59e0b' };
-    case 'fast': return { bg: 'rgba(45,212,191,0.14)', fg: '#2DD4BF' };
-    default: return { bg: 'rgba(148,163,184,0.14)', fg: '#94A3B8' };
+    case 'ultra': return { bg: 'rgba(212,175,55,0.18)', fg: '#D4AF37' };
+    case 'cinema': return { bg: 'rgba(212,175,55,0.15)', fg: '#D4AF37' };
+    case 'fast': return { bg: 'rgba(212,175,55,0.12)', fg: '#D4AF37' };
+    default: return { bg: 'rgba(154,160,174,0.14)', fg: '#9AA0AE' };
   }
 }
 
@@ -1794,7 +1794,7 @@ export function splitSegmentForModel(
   const parts = plan.scenes.length;
 
   // Sentences first; clauses only if the beat is one long sentence.
-  let pieces = body.match(/[^.!?\u2026]+[.!?\u2026]+|[^.!?\u2026]+$/g) || [];
+  let pieces: string[] = body.match(/[^.!?\u2026]+[.!?\u2026]+|[^.!?\u2026]+$/g) || [];
   if (pieces.length < parts) {
     pieces = body.split(/(?<=[,;:—])\s+/).filter(Boolean);
   }

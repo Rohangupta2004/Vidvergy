@@ -158,7 +158,7 @@ export const ProgressBar: React.FC<{
             width: pct + '%',
             height: '100%',
             borderRadius: 999,
-            background: COLORS.info,
+            background: COLORS.accent,
             boxShadow: 'none',
             transition: 'width 180ms cubic-bezier(.2,0,0,1)',
           }}
@@ -334,8 +334,17 @@ export const UploadZone: React.FC<UploadZoneProps> = function UploadZone({
 
   return (
     <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-disabled={disabled}
       onClick={function openPicker() {
         if (!disabled && inputRef.current) inputRef.current.click();
+      }}
+      onKeyDown={function openPickerWithKeyboard(event) {
+        if (!disabled && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          inputRef.current?.click();
+        }
       }}
       onDragOver={function dragOver(e) {
         e.preventDefault();
@@ -477,6 +486,7 @@ export const EmptyState: React.FC<{
 }> = function EmptyState({ title, body, icon, action, style }) {
   return (
     <div
+      className="vg-empty-state"
       style={{
         display: 'flex',
         flexDirection: 'column',

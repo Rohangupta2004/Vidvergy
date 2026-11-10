@@ -1,19 +1,33 @@
 /**
- * 400-RESILIENCE — what to do when a video provider refuses the REQUEST.
+ * PROVIDER RESILIENCE — what to do when a video provider refuses a block.
  *
- * A 400 from a generation proxy is a statement about the wording of the
- * prompt, not about the film. The pipeline answers it in three steps, and
- * EVERY step carries the same aspect ratio, duration, references, negative
- * prompt and credit key — only the wording, and finally the provider, change:
+ * Three refusals arrive through the same catch block and need three
+ * different answers, so they are told apart here rather than guessed at the
+ * call site. EVERY recovery attempt carries the same aspect ratio, duration,
+ * references, negative prompt and credit key, so the shot never changes and
+ * the block is never billed twice:
  *
- *   1. submit the director's prompt exactly as written
- *   2. submit a REPHRASED prompt — same scenes, same actions, same characters,
- *      same visual elements, different sentence structure
- *   3. submit the rephrased prompt to the next provider in the chain
+ *   · THE REQUEST was refused (400 / 422 / moderation wording). A 400 from a
+ *     generation proxy is a statement about the wording of the prompt, not
+ *     about the film, so the answer is to say the same shot differently:
+ *       1. the director's prompt exactly as written
+ *       2. a REPHRASED prompt — same scenes, actions, characters and visual
+ *          elements, different sentence structure
+ *       3. the rephrased prompt on the next engine in the chain
  *
- * A refusal that is NOT about the request (an empty wallet, a rate limit, a
- * provider the platform has not configured) is never rephrased — rewording
- * would not help and would waste a round trip.
+ *   · THE CONNECTION was refused (429 / 5xx / dropped socket / blown client
+ *     timeout). Nothing about the request is wrong, so rewording it would
+ *     waste a round trip: the identical request is sent again, a few times,
+ *     with exponential backoff.
+ *
+ *   · THE ENGINE was refused (its provider key, its budget, its model id).
+ *     The render never started and the verified fallback engine authenticates
+ *     through a different route, so the block is handed over there.
+ *
+ * A refusal that follows the PERSON rather than the request or the engine — an
+ * empty customer wallet, an unproven sign-in, an unapproved cast sheet —
+ * leaves the ladder immediately. It would answer the same way however often
+ * it is asked and on whichever engine, so retrying it only costs time.
  */
 import { askOpus } from './opus';
 import { VIDEO_MODEL } from './videoModelService';
@@ -28,9 +42,70 @@ const WORDING_PROBLEM = /\b400\b|rejected this request|invalid request|invalid_e
 
 export function isBadRequest(error: unknown): boolean {
   const text = String((error as any)?.message || error || '');
-  if (!text) return false;
   if (NOT_A_WORDING_PROBLEM.test(text)) return false;
+  // The HTTP status is harder evidence than the prose. A submit rejected with
+  // 400/422 is a statement about the request even when the sentence the
+  // customer reads never spells the number out.
+  if ([400, 422].includes(Number((error as any)?.status || 0))) return true;
+  if (!text) return false;
   return WORDING_PROBLEM.test(text);
+}
+
+/** Refusals that follow the PERSON, not the request or the engine. Checked
+ * before everything else: no amount of retrying or engine-switching changes
+ * an empty wallet, an unproven sign-in or an unapproved cast sheet. */
+const FOLLOWS_THE_PERSON = /insufficient|not enough|wallet|balance is too low|top up|no_credentials|workspace_token_invalid|not_a_workspace_member|session (?:expired|rejected)|could not be verified|sign in|cast_approval|approve every retained|moderation|content policy|safety|likeness|blocked|cancelled|canceled/i;
+
+/** The shapes a dropped connection or an overloaded provider arrives in,
+ * including the sentences videoModelService's classifySubmitError and
+ * callGenerateHook wrap them in. */
+const TRANSIENT_REFUSAL = /\b(?:408|425|429|500|502|503|504)\b|rate.?limit|too many requests|temporarily unavailable|service unavailable|\boutage\b|upstream|bad gateway|gateway time|could not be reached|did not answer|stopped answering|failed to fetch|network ?error|load failed|econnreset|etimedout|socket hang up|timed? out|timeout/i;
+
+/** Refusals that belong to the CHOSEN ENGINE's credential, budget or model id.
+ * The render never started, and the verified fallback engine authenticates
+ * through a different route, so handing the block over is safe and free. */
+const BELONGS_TO_THE_ENGINE = /provider key|key limit exceeded|openrouter_key_limit|budget reached|spending limit|not configured|refused this workspace|workspace_service_credential|model must be one of|unsupported model|unknown model|authentication required|not available in this workspace|unavailable right now|not enabled on the/i;
+
+/** How many times one block may send the SAME request to the SAME engine. */
+export const TRANSIENT_ATTEMPTS = 3;
+
+/** How long to wait before attempt N+1, N being 1-based. */
+export function transientBackoffMs(attempt: number): number {
+  const schedule = [2_000, 8_000, 24_000];
+  return schedule[Math.max(0, Math.min(schedule.length - 1, Math.round(attempt) - 1))];
+}
+
+/** True when sending the IDENTICAL request again could plausibly work. */
+export function isTransientProviderFailure(error: unknown): boolean {
+  if ((error as any)?.transient === true) return true;
+  if ([408, 425, 429, 500, 502, 503, 504].includes(Number((error as any)?.status || 0))) return true;
+  const text = String((error as any)?.message || error || '');
+  if (!text) return false;
+  if (FOLLOWS_THE_PERSON.test(text)) return false;
+  return TRANSIENT_REFUSAL.test(text);
+}
+
+/** True when the chosen engine itself is the problem. */
+export function isEngineRefusal(error: unknown): boolean {
+  const text = String((error as any)?.message || error || '');
+  if (!text) return false;
+  if (FOLLOWS_THE_PERSON.test(text)) return false;
+  return BELONGS_TO_THE_ENGINE.test(text);
+}
+
+/**
+ * True when handing this block to a DIFFERENT engine could plausibly work.
+ *
+ * The person-following check runs FIRST and on its own, ahead of the HTTP
+ * status: a wallet, sign-in, moderation or cast-approval refusal answers the
+ * same way on every engine, so it is never re-submitted — and never re-billed
+ * — elsewhere, however the proxy happened to dress it up. Moderation in
+ * particular still earns its one rephrase through `isBadRequest`; what it does
+ * not earn is a paid second opinion from another provider.
+ */
+export function canTryAnotherModel(error: unknown): boolean {
+  if (FOLLOWS_THE_PERSON.test(String((error as any)?.message || error || ''))) return false;
+  return isTransientProviderFailure(error) || isEngineRefusal(error) || isBadRequest(error);
 }
 
 const REPHRASE_SYSTEM = [
@@ -71,13 +146,29 @@ export async function rephraseVideoPrompt(prompt: string, refusal: string): Prom
 }
 
 /**
- * The providers to try after the film's own engine refused the request, in
- * preference order. An image-to-video-only model is never offered to a scene
- * that has no seed frame — it could not render it at all.
+ * The engines to try after the film's own engine could not deliver, in
+ * preference order.
+ *
+ * Gemini Omni Flash is the ONLY engine entered automatically, and the switch
+ * is always logged and shown. It is the platform-verified default (it is the
+ * model that passed the 28 Oct 2026 paid sweep), it accepts both text-only
+ * and seeded blocks, and it authenticates through a different route from
+ * Kling, Seedance and Runway — so an engine-specific credential or
+ * availability problem does not simply repeat there.
+ *
+ * Nothing else is ever entered silently: retired Kling ids and unrelated
+ * Runway models stay off this chain, and when Omni is itself the engine that
+ * failed there is nothing left to hand to — the block stops and asks.
+ *
+ * A block Omni could not render is left alone rather than quietly altered: a
+ * length outside Omni's own floor and ceiling would have to be shortened to
+ * fit, and an image-to-video-only stand-in could not open a film at all.
  */
 export function fallbackChain(current: VideoModelConfig, opts: { hasSeedFrame: boolean; durationS: number }): VideoModelConfig[] {
-  // Required paid fallback policy: Kling fails → Gemini Omni Flash with a
-  // logged switch. If Omni fails, stop and ask before Seedance 2.5. Retired
-  // Kling ids and unrelated Runway models must never be entered silently.
-  return current.provider === 'kling' && Number(opts.durationS || 0) <= VIDEO_MODEL.safeMaxDuration ? [VIDEO_MODEL] : [];
+  if (current.id === VIDEO_MODEL.id) return [];
+  const durationS = Number(opts.durationS || 0);
+  const floor = Math.max(1, Number(VIDEO_MODEL.minDuration) || 1);
+  if (durationS < floor || durationS > VIDEO_MODEL.safeMaxDuration) return [];
+  if (VIDEO_MODEL.imageToVideoOnly && !opts.hasSeedFrame) return [];
+  return [VIDEO_MODEL];
 }

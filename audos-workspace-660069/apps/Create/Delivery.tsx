@@ -218,10 +218,10 @@ function sceneError(clip?: DbClip): string {
 
 function StatusBadge({ status }: { status: SceneStatus }) {
   const meta = {
-    queued: { color: T.muted, bg: 'rgba(122,96,48,0.12)' },
+    queued: { color: T.muted, bg: 'var(--vg-raised)' },
     generating: { color: T.accentFg, bg: T.accentSoft },
-    done: { color: T.success, bg: 'rgba(22,101,52,0.12)' },
-    failed: { color: T.danger, bg: 'rgba(153,27,27,0.1)' },
+    done: { color: T.success, bg: 'var(--vg-success-bg)' },
+    failed: { color: T.danger, bg: 'var(--vg-danger-bg)' },
   }[status];
   return (
     <span
@@ -282,8 +282,8 @@ function SceneCard({
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        borderColor: status === 'failed' ? 'rgba(153,27,27,0.36)' : T.border,
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,250,235,0.9))',
+        borderColor: status === 'failed' ? 'color-mix(in srgb, var(--vg-danger) 36%, transparent)' : T.border,
+        background: 'linear-gradient(180deg, var(--vg-surface), var(--vg-bg))',
       }}
       data-testid={`card-live-scene-${index + 1}`}
     >
@@ -293,7 +293,7 @@ function SceneCard({
           aspectRatio: aspect === '9:16' ? '9 / 12' : '16 / 9',
           minHeight: 128,
           overflow: 'hidden',
-          background: '#1A1000',
+          background: 'var(--vg-bg)',
         }}
       >
         {clip?.video_url ? (
@@ -324,7 +324,7 @@ function SceneCard({
               alignItems: 'center',
               justifyContent: 'center',
               color: status === 'failed' ? T.danger : T.muted,
-              background: status === 'failed' ? 'rgba(153,27,27,0.06)' : undefined,
+              background: status === 'failed' ? 'var(--vg-danger-bg)' : undefined,
             }}
           >
             {status === 'failed' ? <AlertTriangle size={23} /> : <Film size={22} style={{ opacity: 0.42 }} />}
@@ -337,8 +337,8 @@ function SceneCard({
             left: 9,
             padding: '4px 8px',
             borderRadius: 8,
-            color: '#fff',
-            background: 'rgba(26,16,0,0.7)',
+            color: 'var(--vg-text)',
+            background: 'rgba(0,0,0,0.7)',
             backdropFilter: 'blur(5px)',
             fontSize: 11,
             fontWeight: 700,
@@ -392,8 +392,8 @@ function SceneCard({
               marginTop: 2,
               padding: '8px 9px',
               borderRadius: 8,
-              color: '#991B1B',
-              background: 'rgba(153,27,27,0.08)',
+              color: 'var(--vg-danger)',
+              background: 'var(--vg-danger-bg)',
               fontSize: 11,
               lineHeight: 1.45,
               wordBreak: 'break-word',
@@ -441,8 +441,8 @@ function SceneCard({
               marginTop: 2,
               padding: '8px 9px',
               borderRadius: 8,
-              color: '#991B1B',
-              background: 'rgba(153,27,27,0.08)',
+              color: 'var(--vg-danger)',
+              background: 'var(--vg-danger-bg)',
               fontSize: 11,
               lineHeight: 1.45,
               wordBreak: 'break-word',
@@ -454,7 +454,7 @@ function SceneCard({
               type="button"
               className="rc-quiet rc-ring"
               onClick={onRegenerate}
-              style={{ marginLeft: 8, minHeight: 24, padding: '2px 6px', color: '#991B1B', fontWeight: 700 }}
+              style={{ marginLeft: 8, minHeight: 24, padding: '2px 6px', color: 'var(--vg-danger)', fontWeight: 700 }}
               data-testid={`button-regen-retry-scene-${index + 1}`}
             >
               Retry
@@ -880,8 +880,8 @@ export default function Delivery() {
             gap: 16,
             flexWrap: 'wrap',
             marginBottom: 20,
-            borderColor: 'rgba(153,27,27,0.32)',
-            background: 'rgba(153,27,27,0.05)',
+            borderColor: 'color-mix(in srgb, var(--vg-danger) 32%, transparent)',
+            background: 'var(--vg-danger-bg)',
           }}
           data-testid="card-job-failed"
         >

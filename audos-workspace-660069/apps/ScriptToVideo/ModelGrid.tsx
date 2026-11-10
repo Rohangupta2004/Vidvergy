@@ -26,6 +26,13 @@ export interface ModelGridOption {
   available: boolean;
   /** Shown in the tooltip and under the name when the model is disabled. */
   unavailableReason?: string;
+  /**
+   * A warning on a model that IS still selectable — what the last health
+   * sweep caught it doing. Separate from `unavailableReason` on purpose: a
+   * cautioned model can be chosen, so the card has to read as a risk rather
+   * than a closed door.
+   */
+  caution?: string;
 }
 
 export default function ModelGrid(props: {
@@ -57,7 +64,7 @@ export default function ModelGrid(props: {
             aria-checked={active}
             aria-disabled={locked || disabled || undefined}
             disabled={locked || disabled}
-            title={locked ? (option.unavailableReason || `${option.label} is not available right now.`) : (option.blurb || option.label)}
+            title={locked ? (option.unavailableReason || `${option.label} is not available right now.`) : [option.blurb || option.label, option.caution].filter(Boolean).join(' — ')}
             onClick={() => { if (clickable) onChange(option.id); }}
             className={clickable ? 's2v-lift' : undefined}
             style={{
@@ -115,6 +122,14 @@ export default function ModelGrid(props: {
                 "refused upstream" lead to different next steps. */}
             {locked && option.unavailableReason ? (
               <div style={{ color: T.fault, fontSize: 12, lineHeight: 1.45 }}>{option.unavailableReason}</div>
+            ) : null}
+            {/* Still pickable, but the last sweep caught it failing. Saying so
+                here is what stops a film being locked to a dead engine; the
+                pipeline's automatic fallback covers it if they pick it anyway. */}
+            {!locked && option.caution ? (
+              <div style={{ color: 'var(--vg-warning)', fontSize: 12, lineHeight: 1.45 }}>
+                Last checked: {option.caution} Pick it anyway and blocks fall back to the verified model automatically.
+              </div>
             ) : null}
           </button>
         );

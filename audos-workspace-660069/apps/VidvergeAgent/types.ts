@@ -22,10 +22,12 @@ export interface QueueJob {
  * registered in config.json but are deliberately absent from this launcher. */
 export const TARGET_APPS: TargetApp[] = [
   { id: 'sceneforge', name: 'SceneForge', tagline: 'Presenter, voice and script' },
-  { id: 'script-to-video', name: 'Script-to-Video', tagline: 'Your script, shot for shot' },
+  { id: 'script-to-video', name: 'Script-to-Video', tagline: 'Scripted and multi-scene films, including 30s ads' },
+  { id: 'video-provider-lab', name: 'Video Provider Lab', tagline: 'One quick clip from a selected model' },
+  { id: 'ugc-studio', name: 'UGC Studio', tagline: 'Regional creator-led product ads' },
   { id: 'faceless', name: 'Faceless', tagline: 'Narration-led film, no presenter' },
   { id: 'video-enhancer', name: 'Video Enhancer', tagline: 'Edit and enhance footage you shot' },
-  { id: 'ads-studio', name: 'Vergeye Ads Studio', tagline: 'Brand research through to an ad' },
+  { id: 'ads-studio', name: 'Vergeye Ads Studio', tagline: 'Competitor research, evidence and ad concepts' },
 ];
 
 /**

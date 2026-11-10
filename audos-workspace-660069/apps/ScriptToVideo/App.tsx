@@ -19,17 +19,21 @@ import type { ReactNode } from 'react';
 import { AlertCircle, ArrowLeft, Download } from 'lucide-react';
 import { Film, FilmCharacter, FilmScene, StoredReference, T, db, generateBackdropImage, newSceneKey, referenceSlug, uploadDataUrl } from './api';
 import {
-  AssemblyProgress, allScenesDone, assembleReadyFilm,
+  AssemblyProgress, acceptMusicCandidate, allScenesDone, assembleReadyFilm,
   autoPostProduce, autoProduce, changeMusicDirection, changeNarrationVoice,
   changeVoiceSource, continueWithoutContinuityFrame, createAndSegmentFilm, createManualScriptFilm,
-  generateAllReadyScenes, generateCharacterSheet, generateScene, prepareFilmAudioStage, prepareScene,
+  generateCharacterSheet, generateScene, prepareFilmAudioStage, prepareScene,
   readyToAutoAssemble, regenerateNarration, regenerateScenePrompt, retryFinalFrame,
   regenerateSfx, retryAudioLayer, retryScene, runAudioLayerStep,
   runFinalAssembly, setStyleLock, skipAudioLayer, skipScene, stopFinalAssembly,
 } from './pipeline/orchestrator';
-import { audioReady, generateCharacterDialogueFallback, narrationReady } from './pipeline/audio';
+import type { FinishOptions } from './pipeline/orchestrator';
+import { audioReady, generateCharacterDialogueFallback } from './pipeline/audio';
 import { SEEDANCE_2_5, VideoModelService, resolveVideoModel } from './pipeline/videoModelService';
-import { askOpusJson } from './pipeline/opus';
+import { askOpusJson, writeDetailedShotPrompt } from './pipeline/opus';
+import { characterSheetStyle, filmStyleText, withImageStyle } from './styleGuard';
+import AutoRunChecklist, { clearAutoRunCheckpoint, clearQuickStartPending, readAutoRunCheckpoint, writeAutoRunCheckpoint } from './AutoRunChecklist';
+import { S2V_POLISH_CSS } from './polishCss';
 import {
   DEFAULT_OPENAI_VOICE, elevenLabsOffered, loadOpenAiVoicePref, loadVoiceSourcePref,
   saveOpenAiVoicePref, saveVoiceSourcePref, subscribeElevenLabs,
@@ -54,7 +58,10 @@ import { consumeVidvergeHandoff } from '../../lib/vidvergeHandoff';
 import type { ScriptToVideoHandoff, VidvergeAttachment } from '../../lib/vidvergeHandoff';
 import { saveVideoSelection } from '../../lib/videoIntegrations';
 import { OMNI_MODEL_ID, OMNI_LABEL, callS2vHook as callHook, classifyError, friendlyErrorMessage } from './friendlyErrors';
-import { authorizeCredits, refundCreditsStrict } from '../../lib/credits';
+import {
+  acquireCreditAuthorization, beginCreditEmailSignIn, CREDIT_AUTH_REFRESHED_EVENT,
+  isCreditAuthorizationError, refundCreditsStrict, requireVerifiedCreditSession,
+} from '../../lib/credits';
 import AppShell from '../../components/ui/AppShell';
 import { withBrandContext } from '../../components/BrandContextLayer';
 import ProbedVideo from './ClipAudioStatus';
@@ -80,27 +87,84 @@ function friendlyAppError(value: unknown): string {
 }
 
 function requiresSignedInVideoTab(film: Film, scenes: FilmScene[]): boolean {
-  // Provider Lab proves Kling, Seedance/OpenRouter and Runway through the
-  // browser's workspace credential. Keep those models on the signed-in tab;
-  // Gemini Omni can still use the durable server runner.
-  return scenes.some((scene) => !DURABLE_VIDEO_MODEL_IDS.has(resolveVideoModel((scene.spec as any)?.engine_id || film.video_model).id));
+  // Runway, Kling 2.x and Seedance 2.0 render only while this tab stays open.
+  // The durable runner renders every block on the film's one model, so a film
+  // that mixes models stays on the tab too.
+  const filmModel = resolveVideoModel(film.video_model).id;
+  if (!DURABLE_VIDEO_MODEL_IDS.has(filmModel)) return true;
+  return scenes.some((scene) => resolveVideoModel((scene.spec as any)?.engine_id || film.video_model).id !== filmModel);
 }
 
-/** Models the server runner can drive with the tab closed (Omni, plus Kling and Seedance through the saved workspace token). */
-const DURABLE_VIDEO_MODEL_IDS = new Set(['omni-1.1-flash', 'kling-3.0-omni', 'kling-3.0', 'seedance-2.5', 'seedance-2.0']);
+/** Models the server runner (s2v-recovery-sweeper) can drive on its own. Seedance
+ * 2.5 and Kling 3.0 bill this workspace's wallet through the server function's
+ * signed identity. Keep in step with durableModels in stv-scene-generate. */
+const DURABLE_VIDEO_MODEL_IDS = new Set(['omni-1.1-flash', 'seedance-2.5', 'kling-3.0', 'kling-3.0-omni']);
 
-async function settlePendingBackgroundRefunds(film: Film): Promise<void> {
+const IN_FLIGHT_STATUSES = new Set(['queued', 'submitted', 'processing', 'generating', 'retrying']);
+const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab']);
+
+/** The durable runner renews its lease on every tick and every provider poll,
+ * so a run that should be moving but has no live lease and no tick for 90s has
+ * stalled: its dispatch never arrived or its worker died. */
+function backgroundStalled(film: Film): boolean {
+  const background = (film.plan?.background || {}) as Record<string, unknown>;
+  if (background.enabled !== true || film.status === 'ready' || film.status === 'cancelled') return false;
+  if (film.plan?.orchestration?.paused === true || background.review_gate_pending === true) return false;
+  if (RUNNER_RESTING_STAGES.has(String(background.stage || ''))) return false;
+  if (Date.parse(String(background.lease_until || '')) > Date.now()) return false;
+  const lastActivity = Math.max(...[background.last_tick_at, background.started_at, film.updated_at].map((value) => Date.parse(String(value || '')) || 0));
+  return Date.now() - lastActivity > 90_000;
+}
+
+/**
+ * Settle refunds the durable worker recorded while this tab was closed.
+ *
+ * Reopening a saved project must never be blocked by this: a refund that
+ * cannot be confirmed right now stays on the pending list and is settled on
+ * the next read, rather than becoming an error banner over a film whose clips
+ * are all safe.
+ */
+async function settlePendingBackgroundRefunds(film: Film, scenes?: FilmScene[]): Promise<void> {
   const background = film.plan?.background as any;
-  const pending = Array.isArray(background?.pending_refunds) ? background.pending_refunds : [];
-  if (!film.plan || !pending.length) return;
+  if (!film.plan) return;
+  const refundScenes = scenes || await db.listScenes(film.id).catch(() => [] as FilmScene[]);
+  const pending = Array.isArray(background?.pending_refunds) ? [...background.pending_refunds] : [];
+  for (const scene of refundScenes) {
+    const billing = ((scene.spec as any)?.background || {}) as Record<string, unknown>;
+    const key = String(billing.terminal_refund_pending_key || '');
+    if (key && !pending.some((item: any) => String(item?.entryKey || '') === key)) {
+      pending.push({ entryKey: key, reason: billing.terminal_refund_error || 'The foreground retry ladder ended before delivery.' });
+    }
+  }
+  if (!pending.length) return;
   const settled: string[] = [];
   for (const item of pending) {
     const key = String(item?.entryKey || '').trim();
     if (!key) continue;
-    await refundCreditsStrict(key, String(item?.reason || 'The background provider failed'));
-    settled.push(key);
+    try {
+      await refundCreditsStrict(key, String(item?.reason || 'The background provider failed'));
+      settled.push(key);
+    } catch (error) {
+      if (!isCreditAuthorizationError(error)) throw error;
+      // Keep the entry queued; the next reopen or poll settles it.
+    }
   }
   if (!settled.length) return;
+  for (const scene of refundScenes) {
+    const spec = { ...(scene.spec as any) };
+    const billing = { ...(spec.background || {}) };
+    const key = String(billing.active_credit_key || billing.idempotency_key || '');
+    if (!settled.includes(key)) continue;
+    spec.background = {
+      ...billing,
+      terminal_refunded_key: key,
+      terminal_refunded_at: new Date().toISOString(),
+      terminal_refund_pending_key: undefined,
+      terminal_refund_error: undefined,
+    };
+    await db.updateScene(scene.id, { spec });
+    scene.spec = spec;
+  }
   const plan = {
     ...film.plan,
     background: {
@@ -113,26 +177,77 @@ async function settlePendingBackgroundRefunds(film: Film): Promise<void> {
   film.plan = plan;
 }
 
-async function preauthorizeBackgroundScenes(film: Film, scenes: FilmScene[]): Promise<string[]> {
-  const newlyCharged: string[] = [];
-  try {
-    for (const scene of scenes) {
-      if (scene.status === 'completed' || scene.status === 'skipped') continue;
-      const key = `stv:film:${film.id}:scene:${scene.id}:${scene.scene_key || ''}`;
-      const charge = await authorizeCredits({
-        seconds: Math.max(1, Math.ceil(Number(scene.duration_s) || 0)),
-        entryKey: key,
-        source: 'script-to-video',
-        note: `${resolveVideoModel((scene.spec as any)?.engine_id || film.video_model).label} durable scene authorization`,
-      });
-      if (charge.charged > 0) newlyCharged.push(key);
+/**
+ * A worker can fail after marking a scene generating but before persisting a
+ * provider operation id. That state cannot be polled or resumed: leaving it as
+ * generating creates an endless spinner. Convert only those operation-less,
+ * terminal worker rows into an explicit retryable failure. Completed scenes,
+ * stable credit keys and every saved provider operation remain untouched.
+ */
+async function reconcileStoppedBackground(film: Film, scenes: FilmScene[]): Promise<void> {
+  const background = film.plan?.background as any;
+  if (!film.plan) return;
+  const workerFailed = background?.stage === 'failed';
+  const now = Date.now();
+  const stalled = scenes.filter((scene) => {
+    if (scene.status !== 'generating' || scene.asset_url) return false;
+    const state = (scene.spec as any)?.background || {};
+    const hasOperation = Boolean(state.operation_id || state.provider_job_id || scene.veo_operation_id);
+    const updatedAt = Date.parse(String(scene.updated_at || ''));
+    const foregroundAbandoned = background?.enabled !== true && !hasOperation;
+    const staleWithoutOperation = !hasOperation && Number.isFinite(updatedAt) && now - updatedAt > 20 * 60 * 1000;
+    return !hasOperation && (workerFailed || foregroundAbandoned || staleWithoutOperation);
+  });
+  if (!stalled.length) return;
+  const message = 'Production stopped before saving a provider operation id. The active scene charge was reconciled at this terminal checkpoint; completed scenes are preserved.';
+  let refundPending = false;
+  for (const scene of stalled) {
+    const currentSpec = { ...(scene.spec as any) };
+    const billing = { ...(currentSpec.background || {}) };
+    const key = String(billing.active_credit_key || billing.idempotency_key || `stv:film:${film.id}:scene:${scene.id}`);
+    try {
+      await refundCreditsStrict(key, 'Script-to-Video stopped mid-retry before a provider operation was saved');
+      billing.terminal_refunded_key = key;
+      billing.terminal_refunded_at = new Date().toISOString();
+      billing.terminal_refund_pending_key = undefined;
+      billing.terminal_refund_error = undefined;
+    } catch (refundError: any) {
+      refundPending = true;
+      billing.terminal_refund_pending_key = key;
+      billing.terminal_refund_error = String(refundError?.message || refundError);
     }
-    return newlyCharged;
-  } catch (error: any) {
-    await Promise.all(newlyCharged.map((key) => refundCreditsStrict(key, 'Script-to-Video Start authorization rolled back before any render submit')));
-    if (error?.code === 'insufficient_credits') throw new Error(`insufficient_credits: ${String(error?.message || error)}`);
-    throw error;
+    const spec = {
+      ...currentSpec,
+      background: {
+        ...billing,
+        status: 'failed',
+        provider_status: 'failed',
+        failed_at: new Date().toISOString(),
+        last_error: message,
+      },
+    };
+    await db.updateScene(scene.id, { status: 'failed', error: message, spec });
+    Object.assign(scene, { status: 'failed' as const, error: message, spec });
   }
+  const plan = background
+    ? {
+        ...film.plan,
+        background: {
+          ...background,
+          stage: 'failed' as const,
+          active_scene_id: null,
+          lease_owner: null,
+          lease_until: null,
+          last_error: message,
+        },
+      }
+    : film.plan;
+  const terminalNote = refundPending
+    ? `${message} The refund is pending and Retry will confirm it before opening a new paid attempt.`
+    : `${message} Retry will use a fresh attempt receipt.`;
+  const patch: Partial<Film> = { plan, status: 'error', machine_state: 'PROMPT_READY', stage_note: terminalNote, error: message };
+  await db.updateFilm(film.id, patch);
+  Object.assign(film, patch);
 }
 
 /** Auto-generate is remembered per film. The pipeline prepares one prompt at a
@@ -224,6 +339,11 @@ function ScriptToVideoApp() {
   const [auto, setAuto] = useState(false);
   const [autoPost, setAutoPost] = useState(true);
   const [captions, setCaptions] = useState(false);
+  // Finish mix choices (caption style, levels, transition). Every assembly
+  // path — Finish, the assembly bar, auto-assembly and resume — reads these.
+  const [finishPrefs, setFinishPrefs] = useState<FinishOptions>({ captionStyle: 'clean', transition: 'cut', voiceLevel: 1 });
+  const finishPrefsRef = useRef<FinishOptions>(finishPrefs);
+  finishPrefsRef.current = finishPrefs;
   // VOICE SOURCE — narration is optional, and the choice is remembered for the
   // whole browser session so it is picked once rather than per film. With no
   // pick yet it is NO voiceover: the one setting that cannot wait on a voice
@@ -240,17 +360,28 @@ function ScriptToVideoApp() {
   const [redoingId, setRedoingId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [dialogueAudioSceneId, setDialogueAudioSceneId] = useState<number | null>(null);
+  const [sceneInFlightId, setSceneInFlightId] = useState<number | null>(null);
+  const [generateAllInFlight, setGenerateAllInFlight] = useState(false);
+  const [runnerStalled, setRunnerStalled] = useState(false);
+  const [runnerIssue, setRunnerIssue] = useState('');
+  const [blockStartError, setBlockStartError] = useState<{ id: number; message: string } | null>(null);
+  const runnerKickAt = useRef(0);
+  const lastRunError = useRef('');
   const [jobsOpen, setJobsOpen] = useState(false);
   const [adminDiagnoses, setAdminDiagnoses] = useState<any[]>([]);
   const [manualMode, setManualMode] = useState(false);
   const bridgeBus = useRef(createControllerBus()).current;
   const bridgeValues = useRef<Record<string, unknown>>({ length: 30, shape: '16:9', model: 'auto' });
+  const bridgeScreen = useRef<Screen>(screen);
+  const bridgeBusy = useRef(false);
 
   // The orchestrator works on MUTABLE engine objects (the state machine folds
   // continuity from clip to clip); React state mirrors them through the hooks.
   const engineFilm = useRef<Film | null>(null);
   const engineScenes = useRef<FilmScene[]>([]);
   const running = useRef(false);
+  bridgeScreen.current = screen;
+  bridgeBusy.current = running.current || busy;
   const planQueue = useRef<Promise<void>>(Promise.resolve());
   const autoRef = useRef(false);
   const autoPostRef = useRef(true);
@@ -270,6 +401,10 @@ function ScriptToVideoApp() {
   // so every newly prepared clip re-arms the trigger while a scene already
   // handed to the engine never fires twice.
   const autoFiredFor = useRef('');
+  // One authenticated restart per newly-appended pending set. A completed
+  // background run is otherwise invisible to the sweeper because terminal
+  // films are intentionally excluded from recovery scans.
+  const autoResumeFor = useRef('');
   // One-shot guard for the stalled frame-extraction recovery, per film.
   const frameRecoveryFor = useRef<number | null>(null);
   // When the film entered its current machine_state, so a stall is measured
@@ -281,6 +416,15 @@ function ScriptToVideoApp() {
   // Keep the exact last brief submission so an error-state Retry is honest:
   // it replays the same request rather than merely hiding the message.
   const lastCreateAttempt = useRef<Parameters<typeof handleCreate>[0] | null>(null);
+  // The global error banner must retry the operation that actually failed. In
+  // particular, a failed Start must re-run session refresh + credit preflight;
+  // merely reloading the film row leaves the user at the same dead end.
+  const failedActionRetry = useRef<(() => Promise<unknown>) | null>(null);
+  // Verger Autopilot bookkeeping: the outcome of the latest plan build, and the
+  // one saved plan per Autopilot run that a repeated makePlan or fill reuses.
+  const planOutcome = useRef<{ seq: number; filmId?: number; error?: string }>({ seq: 0 });
+  const autopilotPlan = useRef<{ runId: string; filmId: number } | null>(null);
+  const autopilotPlanInFlight = useRef<{ runId: string; promise: Promise<{ ok: boolean; result?: unknown; error?: string }> } | null>(null);
 
   const hooks = useRef({
     onFilm: (patch: Partial<Film>) => setFilm((f) => (f ? { ...f, ...patch } : f)),
@@ -328,6 +472,12 @@ function ScriptToVideoApp() {
   }, []);
 
   useEffect(() => { loadLibrary(); }, [loadLibrary]);
+  // The wallet needs BOTH the runtime's injected workspace token and an
+  // adopted `wses_` session, and neither exists at first paint. Warming them
+  // while the library loads is what stops a Start pressed moments later — or
+  // a saved project reopened in a fresh tab — from failing with a missing
+  // credit authorization.
+  useEffect(() => { void acquireCreditAuthorization(); }, []);
   // Warm only the next likely screen after the library paints. This keeps the
   // large planning UI out of the critical bundle without making New Film wait
   // on a cold download.
@@ -470,6 +620,82 @@ function ScriptToVideoApp() {
 
   // Frame extraction recovery is server-owned. No browser watchdog advances it.
 
+  /**
+   * Narration, music and SFX for a durably-produced film.
+   *
+   * It starts only once every video block has landed — clips first, audio
+   * after — fires at most once per film, and never blocks the board. A layer
+   * that cannot be made is recorded as a warning on the plan so the Finish
+   * screen's own Retry and Continue-without controls can take it from there.
+   */
+  function kickPostVideoAudio(target: Film, list: FilmScene[]) {
+    const plan = target.plan;
+    if (postKickedFor.current === target.id || running.current) return;
+    if (!plan?.background?.enabled || !allScenesDone(list)) return;
+    if (plan.audio_policy === 'fully-silent' || plan.audio_enabled === false) return;
+    if (audioReady(target.audio)) return;
+    postKickedFor.current = target.id;
+    // Held under the single-flight guard so a Final Assembly click cannot
+    // record the same narration a second time while this is running.
+    running.current = true;
+    setBusy(true);
+    void prepareFilmAudioStage(target, list, hooks, { voiceSource, openaiVoice }).catch(async (audioError: any) => {
+      const plan = { ...(target.plan || {}), audio_warning: String(audioError?.message || audioError), audio_optional_retry: true } as any;
+      try {
+        await db.updateFilm(target.id, { plan });
+        Object.assign(target, { plan });
+      } catch { /* the next read reconciles */ }
+    }).finally(async () => {
+      running.current = false;
+      setBusy(false);
+      // The server may have handed the film back while the audio ran. Re-read
+      // it so assembly reuses the narration just saved instead of re-recording.
+      if (engineFilm.current?.id !== target.id) return;
+      try {
+        const [fresh, freshScenes] = await Promise.all([db.getFilm(target.id), db.listScenes(target.id)]);
+        if (!fresh || engineFilm.current?.id !== target.id) return;
+        if (fresh.plan?.background?.enabled === true || fresh.final_video_url || fresh.error || !allScenesDone(freshScenes)) return;
+        adopt(fresh, freshScenes);
+        setScreen('final');
+        void run(() => maybeAdvancePost(), { block: true });
+      } catch { /* the Finish screen's own Run Final Assembly remains available */ }
+    });
+  }
+
+  // One-press runs continue on their own: once the last character sheet
+  // exists, the cast is approved and production starts with no extra click.
+  const autoContinuedFor = useRef('');
+  useEffect(() => {
+    if (screen !== 'board' || !film?.plan || film.plan.execution_mode !== 'automatic' || film.plan.background?.enabled || busy) return;
+    if (film.plan.cast_reviewed === true && film.plan.orchestration?.checkpoint !== 'character_reference_required') return;
+    const cast = (film.character_refs || []).filter((character) => character.sheet_required !== false && character.kind !== 'narrator');
+    if (cast.some((character) => !character.url)) return;
+    if (scenes.some((scene) => !['waiting', 'ready'].includes(String(scene.status)))) return;
+    const signature = `${film.id}:${cast.map((character) => character.id).join(',')}`;
+    if (autoContinuedFor.current === signature || running.current) return;
+    autoContinuedFor.current = signature;
+    void handleAutoApproveAndStart();
+  }, [screen, film, scenes, busy]);
+
+  // A one-press run reopens itself after a reload: the film and every finished
+  // step are already saved, so opening it resumes from the last checkpoint.
+  const screenNow = useRef(screen);
+  screenNow.current = screen;
+  useEffect(() => {
+    const filmId = readAutoRunCheckpoint();
+    if (!filmId) return;
+    let alive = true;
+    void db.getFilm(filmId).then((row) => {
+      if (!alive) return;
+      if (!row || row.status === 'cancelled' || (row.status === 'ready' && row.final_video_url)) { clearAutoRunCheckpoint(); return; }
+      if (screenNow.current === 'library') void openFilm(row);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+  useEffect(() => {
+    if (film?.status === 'ready' && film.final_video_url && readAutoRunCheckpoint() === film.id) clearAutoRunCheckpoint();
+  }, [film?.id, film?.status, film?.final_video_url]);
+
   // Background progress is READ from WorkspaceDB; this interval never submits,
   // polls a provider or advances a stage. Closing the tab therefore has no
   // effect on production, and reopening simply adopts the durable checkpoint.
@@ -481,9 +707,34 @@ function ScriptToVideoApp() {
       try {
         const [fresh, freshScenes] = await Promise.all([db.getFilm(filmId), db.listScenes(filmId)]);
         if (!live || !fresh) return;
-        try { await settlePendingBackgroundRefunds(fresh); }
-        catch (refundError: any) { setError(String(refundError?.message || refundError)); }
+        try {
+          await reconcileStoppedBackground(fresh, freshScenes);
+          await settlePendingBackgroundRefunds(fresh, freshScenes);
+        } catch (recoveryError: any) { setError(String(recoveryError?.message || recoveryError)); }
+        const landedUrl = fresh.final_video_url && !recordedVideoUrls.current.has(String(fresh.final_video_url)) ? String(fresh.final_video_url) : '';
         adopt(fresh, freshScenes);
+        if (landedUrl) {
+          void saveVideoToHistory({
+            appId: 'script-to-video',
+            title: fresh.title || 'Script-to-Video film',
+            videoUrl: landedUrl,
+            thumbnailUrl: fresh.final_thumb_url || null,
+            durationSec: Number(fresh.duration_s) || null,
+          });
+        }
+        // The server runner only stitches; a film with sound to mix is handed
+        // back to this tab. Assemble it here from the saved clips.
+        if (fresh.plan?.background?.enabled !== true && allScenesDone(freshScenes) && !fresh.final_video_url) {
+          setScreen('final');
+          if (!running.current && !fresh.error) void run(() => maybeAdvancePost(), { block: true });
+          return;
+        }
+        const stalled = backgroundStalled(fresh);
+        setRunnerStalled(stalled);
+        // On Finish the runner is only nudged once every clip exists, so a
+        // kick there can never submit a scene render.
+        if (stalled && (screen === 'board' || allScenesDone(freshScenes)) && Date.now() - runnerKickAt.current > 120_000) kickRunner(fresh, 'creator-stall-kick');
+        kickPostVideoAudio(fresh, freshScenes);
         if (fresh.status === 'ready' && fresh.final_video_url) setScreen('final');
       } catch { /* the next read reconciles; the server keeps running */ }
     };
@@ -508,9 +759,9 @@ function ScriptToVideoApp() {
       title: film?.title || 'Script-to-Video film',
       videoUrl: url,
       thumbnailUrl: film?.final_thumb_url || null,
-      durationSec: scenes.reduce((total, scene) => total + (Number(scene.duration_s) || 0), 0) || null,
+      durationSec: Number(film?.duration_s) || scenes.reduce((total, scene) => total + (Number(scene.duration_s) || 0), 0) || null,
     });
-  }, [film?.final_video_url, film?.final_thumb_url, film?.title, scenes]);
+  }, [film?.final_video_url, film?.final_thumb_url, film?.title, film?.duration_s, scenes]);
 
   function adopt(f: Film, list: FilmScene[]) {
     // A film opened with its master already rendered was recorded when it
@@ -532,15 +783,21 @@ function ScriptToVideoApp() {
   }
 
   /** Run one engine operation with the shared guards (single flight, error banner). */
-  async function run(work: () => Promise<void>, opts: { block?: boolean } = {}) {
-    if (running.current) return;
+  async function run(work: () => Promise<void>, opts: { block?: boolean; retry?: () => Promise<unknown> } = {}): Promise<boolean> {
+    if (running.current) return false;
     running.current = true;
     if (opts.block) setBusy(true);
     setError('');
+    lastRunError.current = '';
     try {
       await work();
+      failedActionRetry.current = null;
+      return true;
     } catch (e: any) {
+      failedActionRetry.current = opts.retry || null;
+      lastRunError.current = String(e?.message || e);
       setError(String(e?.message || e));
+      return false;
     } finally {
       running.current = false;
       if (opts.block) setBusy(false);
@@ -590,15 +847,26 @@ function ScriptToVideoApp() {
     if (!readyToAutoAssemble(f, engineScenes.current)) return;
     assembleKickedFor.current = f.id;
     setNote('Everything is ready — assembling your final video…');
-    await runFinalAssembly(f, engineScenes.current, hooks, { captions: captionsRef.current });
+    await runFinalAssembly(f, engineScenes.current, hooks, { ...finishPrefsRef.current, captions: captionsRef.current, voiceSource, openaiVoice });
   }
 
   // ------- flow handlers -------
 
-  async function startUnattendedProduction(targetFilm: Film, targetScenes: FilmScene[], reviewBeforeAssembly: boolean, includeCaptions: boolean) {
+  /**
+   * Hand a planned film to the durable server runner.
+   *
+   * ORDER MATTERS. Prompts, then the credit hold, then the video blocks — and
+   * nothing else in between. The audio layers are post-production: the server
+   * runner assembles the delivered film by stitching the rendered clips and
+   * mixes no voice, music or effects into it, so making them here only kept
+   * every scene on "Waiting" while the wallet paid for narration the video
+   * run never used. They are made once the last clip has landed instead
+   * (see kickPostVideoAudio).
+   */
+  async function startUnattendedProduction(targetFilm: Film, targetScenes: FilmScene[], reviewBeforeAssembly: boolean, includeCaptions: boolean, runUntilSceneId: number | null = null) {
     const access = await callHook<{ approved?: boolean; workspacePays?: boolean; founderExempt?: boolean; error?: string }>('stv-scene-generate', { op: 'access-check' });
     if (!access?.approved) throw new Error(access?.error || 'This account is not approved for founder-funded video generation.');
-    const styleLock = String(targetFilm.plan?.custom_visual_direction || targetFilm.plan?.visual_style || targetFilm.plan?.style_direction || 'cinematic');
+    const styleLock = filmStyleText(targetFilm.plan);
     const preparePrompt = async (scene: FilmScene) => {
       if (String(scene.prompt || '').trim()) return;
       const spec = { ...(scene.spec as any) };
@@ -609,10 +877,20 @@ function ScriptToVideoApp() {
       const skeleton = beats.map((beat: any, index: number) => `${beat.start_s}-${beat.end_s}s: ${beat.action || spec.visual_goal || spec.summary || scene.script_segment}${beat.camera ? ` Camera: ${beat.camera}.` : ''}${dialogue && index === dialogueBeat ? ` Exact speech: "${dialogue}"` : ''}`).join('\n');
       let creative = '';
       let promptSource: 'opus' | 'plan' = 'opus';
+      let shotNegative = '';
       try {
+        const prevScene = [...targetScenes].sort((a, b) => a.idx - b.idx).filter((item) => item.idx < scene.idx).pop() || null;
+        const detailed = await writeDetailedShotPrompt({ film: targetFilm, scene, prevScene, reservedChars: skeleton.length + (dialogue ? dialogue.length + 60 : 0) + (scene.idx > 0 ? styleLock.length + 16 : 0) + 40 });
+        creative = detailed.text;
+        shotNegative = detailed.negative;
+        if (detailed.source === 'plan') promptSource = 'plan';
+      } catch {
+        creative = '';
+      }
+      if (!creative) try {
         const written = await askOpusJson<{ prompt: string }>({
-          system: `You are Claude Opus 5 writing one saved video-block prompt. Reply only with {"prompt":string}. Add concrete visual and camera detail without repeating timecodes or dialogue. Do not add a Dialogue/Narration block.`,
-          user: `BLOCK ${scene.idx + 1}, ${duration}s, ${spec.cut_type || (scene.idx ? 'continuous' : 'new_shot')}\nSTYLE LOCK: ${styleLock}\nSCRIPT: ${scene.script_segment}\nBEATS: ${JSON.stringify(beats)}\nCAST: ${JSON.stringify((targetFilm.character_refs || []).filter((character) => (spec.characters || []).includes(character.id)).map((character) => ({ name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+          system: `You are Claude Opus 5.5 writing one saved video-block prompt. Reply only with {"prompt":string}. Add concrete visual and camera detail without repeating timecodes or dialogue. Do not add a Dialogue/Narration block.`,
+          user: `BLOCK ${scene.idx + 1}, ${duration}s, ${spec.cut_type || (scene.idx ? 'continuous' : 'new_shot')}\nSTYLE LOCK: ${styleLock}\nSCRIPT: ${scene.script_segment}\nBEATS: ${JSON.stringify(beats)}\nCAST: ${JSON.stringify((targetFilm.character_refs || []).filter((character) => character.kind !== 'narrator' && (spec.characters || []).includes(character.id)).map((character) => ({ name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
           maxTokens: 6000, effort: 'medium',
         });
         creative = String(written?.prompt || '').trim();
@@ -625,50 +903,42 @@ function ScriptToVideoApp() {
       let prompt = `${skeleton}\nCREATIVE DIRECTION: ${creative}`.trim();
       if (exactBlock) prompt += `\n${exactBlock}`;
       if (scene.idx > 0) prompt = `STYLE LOCK: ${styleLock}\n${prompt}`;
-      const nextSpec = { ...spec, prompt_source: promptSource, prompt_version: Number(spec.prompt_version || 0) + 1 };
+      const nextSpec = { ...spec, prompt_source: promptSource, prompt_version: Number(spec.prompt_version || 0) + 1, ...(shotNegative && !spec.negative ? { negative: shotNegative } : {}) };
       await db.updateScene(scene.id, { prompt, spec: nextSpec });
       scene.prompt = prompt; scene.spec = nextSpec;
     };
-    const promptScenes = [...targetScenes].sort((a, b) => a.idx - b.idx);
-    for (let index = 0; index < promptScenes.length; index += 3) await Promise.all(promptScenes.slice(index, index + 3).map(preparePrompt));
-    if (!audioReady(targetFilm.audio)) {
-      setNote('Preparing narration and optional sound before Start…');
-      try {
-        await prepareFilmAudioStage(targetFilm, targetScenes, hooks, { voiceSource, openaiVoice });
-        const audioPrepared = { status: 'plan_ready' as const, machine_state: 'PREPARING_SCENE' as const, error: null, stage_note: 'Prompts and required audio are ready. Starting video production…' };
-        await db.updateFilm(targetFilm.id, audioPrepared);
-        Object.assign(targetFilm, audioPrepared);
-      } catch (audioError: any) {
-        if (targetFilm.plan?.narration_enabled === true && !narrationReady(targetFilm.audio)) throw audioError;
-        const plan = { ...targetFilm.plan!, audio_warning: String(audioError?.message || audioError), audio_optional_retry: true } as any;
-        const recovery = { plan, status: 'plan_ready' as const, machine_state: 'PREPARING_SCENE' as const, error: null, stage_note: 'Optional music or sound effects need Retry, but video production can start.' };
-        await db.updateFilm(targetFilm.id, recovery);
-        Object.assign(targetFilm, recovery);
-      }
+    const orderedScenes = [...targetScenes].sort((a, b) => a.idx - b.idx);
+    const limitIdx = runUntilSceneId != null ? (orderedScenes.find((scene) => scene.id === runUntilSceneId)?.idx ?? null) : null;
+    const unwritten = orderedScenes.filter((scene) => !['completed', 'skipped'].includes(String(scene.status)) && (limitIdx == null || scene.idx <= limitIdx) && !String(scene.prompt || '').trim());
+    for (let index = 0; index < unwritten.length; index += 3) {
+      setNote(`Writing the shot prompts — ${Math.min(index + 3, unwritten.length)} of ${unwritten.length}…`);
+      await Promise.all(unwritten.slice(index, index + 3).map(preparePrompt));
     }
-    const newlyCharged = access?.workspacePays === true ? [] : await preauthorizeBackgroundScenes(targetFilm, targetScenes);
-    try {
-      const result = await callHook<{ success?: boolean; status?: string; error?: string }>('stv-scene-generate', {
-        op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: targetFilm.plan?.execution_mode !== 'automatic',
-      });
-      if (!result?.success) {
-        await Promise.all(newlyCharged.map((key) => refundCreditsStrict(key, 'Script-to-Video Start was rejected before any render submit')));
-        throw new Error(result?.error || 'The background runner did not accept this film.');
-      }
-      return result;
-    } catch (error: any) {
-      const status = Math.round(Number(error?.status) || 0);
-      if (status >= 400 && status < 500) {
-        await Promise.all(newlyCharged.map((key) => refundCreditsStrict(key, 'Script-to-Video Start was rejected before any render submit')));
-      }
-      throw error;
-    }
+    // A run that is already rendering owns the film's status; Start only widens it.
+    const runLive = targetFilm.plan?.background?.enabled === true && targetScenes.some((scene) => IN_FLIGHT_STATUSES.has(String(scene.status)));
+    const promptsReady: Partial<Film> = runLive
+      ? { error: null }
+      : { status: 'plan_ready', machine_state: 'PREPARING_SCENE', error: null, stage_note: 'Every shot prompt is saved. Authorizing credits, then starting the video blocks…' };
+    await db.updateFilm(targetFilm.id, promptsReady);
+    Object.assign(targetFilm, promptsReady);
+    // Start owns the wallet transaction on the server. It has the platform-
+    // validated session email plus the private vv-credits server key, and it
+    // stores the same canonical scene receipt keys the background worker and
+    // Retry use. No browser-only workspace token is needed after this call.
+    setNote('Authorizing credits for this run — nothing has been submitted to a provider yet…');
+    const result = await callHook<{ success?: boolean; status?: string; error?: string; runUntilIdx?: number | null }>('stv-scene-generate', {
+      op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: targetFilm.plan?.execution_mode !== 'automatic',
+      ...(runUntilSceneId != null ? { runUntilSceneId } : {}),
+    });
+    if (!result?.success) throw new Error(result?.error || 'The background runner did not accept this film.');
+    return result;
   }
 
   async function handleCreate(params: { mode?: CreateMode; script: string; aspect: any; targetDuration?: number; screenshotUrl: string | null; characterRefUrl?: string | null; note: string; videoModel?: string; styleLock?: boolean; audioEnabled?: boolean; narrationEnabled?: boolean; charactersSpeak?: boolean; entryType?: 'idea' | 'script'; controlMode?: ControlMode; executionMode?: ExecutionMode; motionEngine?: CodeMotionEngine; videoStyle?: VideoStyleId; customVisualDirection?: string; audioPolicy?: AudioPolicy; maxAuthorizedCredits?: number; storyboardRequested?: boolean }) {
     lastCreateAttempt.current = params;
     if (running.current) return;
     running.current = true;
+    planOutcome.current = { seq: planOutcome.current.seq + 1 };
     setBusy(true); setError('');
     let foregroundAutomatic = false;
     let foregroundAutomaticFilmId: number | null = null;
@@ -686,10 +956,20 @@ function ScriptToVideoApp() {
         const orderedStoryboards = [...res.scenes].sort((a, b) => a.idx - b.idx);
         if (orderedStoryboards[0]) await generateStoryboardFrame(createdFilm, orderedStoryboards[0]);
         for (let index = 1; index < orderedStoryboards.length; index += 3) await Promise.all(orderedStoryboards.slice(index, index + 3).map((scene) => generateStoryboardFrame(createdFilm, scene)));
+        if (params.executionMode === 'automatic') {
+          // One-press runs retry a failed frame twice on a short backoff before
+          // production starts; a frame that still fails is left to the checklist.
+          for (const waitMs of [4000, 12000]) {
+            const failedBoards = orderedStoryboards.filter((scene) => (scene.spec as any)?.storyboard_status === 'error');
+            if (!failedBoards.length) break;
+            await new Promise((resolve) => window.setTimeout(resolve, waitMs));
+            for (const scene of failedBoards) await generateStoryboardFrame(createdFilm, scene);
+          }
+        }
       }
       if (params.executionMode === 'automatic' && createdFilm.plan) {
-        const cast = (createdFilm.character_refs || []).map((character) => ({ ...character, approved: character.sheet_required === false || Boolean(character.url) }));
-        const missing = cast.filter((character) => character.sheet_required !== false && !character.url);
+        const cast = (createdFilm.character_refs || []).map((character) => ({ ...character, approved: character.sheet_required === false || character.kind === 'narrator' || Boolean(character.url) }));
+        const missing = cast.filter((character) => character.sheet_required !== false && character.kind !== 'narrator' && !character.url);
         const plan = {
           ...createdFilm.plan,
           cast_reviewed: missing.length === 0,
@@ -699,7 +979,7 @@ function ScriptToVideoApp() {
         createdFilm = { ...createdFilm, character_refs: cast, plan };
         if (!missing.length) {
           foregroundAutomatic = (params.motionEngine === 'hyperframes' && res.scenes.some((scene) => (scene.spec as any)?.workflow_kind === 'code' || ['web_graphic', 'product_mockup', 'asset_overlay'].includes(scene.type)))
-            || res.scenes.some((scene) => !DURABLE_VIDEO_MODEL_IDS.has(resolveVideoModel((scene.spec as any)?.engine_id || createdFilm.video_model).id));
+            || requiresSignedInVideoTab(createdFilm, res.scenes);
           if (!foregroundAutomatic) {
             await startUnattendedProduction(createdFilm, res.scenes, false, false);
             createdFilm = (await db.getFilm(createdFilm.id)) || createdFilm;
@@ -717,8 +997,11 @@ function ScriptToVideoApp() {
       writeAutoPref(res.film.id, foregroundAutomatic);
       reviewRef.current = false;
       setScreen('board');
+      planOutcome.current = { ...planOutcome.current, filmId: res.film.id };
+      if (params.executionMode === 'automatic') writeAutoRunCheckpoint(res.film.id);
+      clearQuickStartPending();
       if (foregroundAutomatic) foregroundAutomaticFilmId = res.film.id;
-    } catch (e: any) { foregroundAutomaticFilmId = null; setError(String(e?.message || e)); }
+    } catch (e: any) { foregroundAutomaticFilmId = null; planOutcome.current = { ...planOutcome.current, error: String(e?.message || e) }; setError(String(e?.message || e)); }
     finally { running.current = false; setBusy(false); }
     if (foregroundAutomaticFilmId != null) {
       window.setTimeout(() => {
@@ -733,9 +1016,11 @@ function ScriptToVideoApp() {
     }
   }
 
-  async function persistCast(next: FilmCharacter[], reviewed = next.length > 0 && next.every((character) => character.sheet_required === false || (character.approved && character.url))) {
+  async function persistCast(next: FilmCharacter[], requestedReview = next.length > 0 && next.every((character) => character.sheet_required === false || character.kind === 'narrator' || (character.approved && character.url))) {
     const f = engineFilm.current;
     if (!f?.plan) return;
+    // A voice-only (narrator) cast has no sheet to approve, so it can never wait on review.
+    const reviewed = requestedReview || (next.length > 0 && next.every((character) => character.sheet_required === false || character.kind === 'narrator'));
     const characters = next.map(({ url: _url, approved: _approved, source: _source, source_reference_id: _sourceReferenceId, image_error: _imageError, image_model: _imageModel, ...profile }) => profile);
     const plan = { ...f.plan, characters, cast_reviewed: reviewed };
     await db.updateFilm(f.id, { character_refs: next, plan });
@@ -744,7 +1029,7 @@ function ScriptToVideoApp() {
     if (reviewed) {
       const stored = await db.listReferences().catch(() => [] as StoredReference[]);
       for (const character of next) {
-        if (!character.url) continue;
+        if (!character.url || character.kind === 'narrator') continue;
         const name = referenceSlug(character.name || character.id);
         if (!name || stored.some((ref) => ref.name === name)) continue;
         await db.addReference({
@@ -760,7 +1045,13 @@ function ScriptToVideoApp() {
 
   async function handleUpdateCharacter(id: string, patch: Partial<FilmCharacter>) {
     const current = Array.isArray(engineFilm.current?.character_refs) ? engineFilm.current!.character_refs! : [];
-    const next = current.map((character) => character.id === id ? { ...character, ...patch } : character);
+    const next = current.map((character) => {
+      if (character.id !== id) return character;
+      const merged = { ...character, ...patch };
+      if (merged.kind === 'narrator') return { ...merged, url: null, approved: true, sheet_required: false, image_error: undefined, image_review_by_eye: undefined };
+      if (character.kind === 'narrator') return { ...merged, approved: false, sheet_required: true };
+      return merged;
+    });
     await run(() => persistCast(next), { block: true });
   }
 
@@ -783,10 +1074,10 @@ function ScriptToVideoApp() {
   async function handleRegenerateCharacter(id: string, quality: 'draft' | 'premium' = 'draft') {
     const f = engineFilm.current;
     const character = f?.character_refs?.find((item) => item.id === id);
-    if (!f || !character) return;
+    if (!f || !character || character.kind === 'narrator') return;
     await run(async () => {
       try {
-        const generated = await generateCharacterSheet(character, String(f.plan?.visual_style || f.plan?.style_direction || ''));
+        const generated = await generateCharacterSheet(character, characterSheetStyle(f.plan));
         const url = generated.url;
         const next = (f.character_refs || []).map((item) => item.id === id ? { ...item, url, approved: false, source: 'generated' as const, image_error: generated.issues.join('; ') || undefined, image_review_by_eye: generated.reviewByEye, image_model: generated.imageModel } : item);
         await db.addAsset({ film_id: f.id, kind: 'character', name: `${character.name} character sheet`, description: character.appearance.slice(0, 200), url, tags: [quality, 'cast-sheet'] });
@@ -800,16 +1091,54 @@ function ScriptToVideoApp() {
     }, { block: true });
   }
 
+  /** One-press runs: redraw only the storyboard frames that failed, before
+   * paid production starts. */
+  async function handleRetryFailedStoryboards() {
+    const f = engineFilm.current;
+    if (!f?.plan || f.plan.background?.enabled) return;
+    const failed = engineScenes.current.filter((scene) => (scene.spec as any)?.storyboard_status === 'error');
+    if (!failed.length) return;
+    await run(async () => {
+      for (const scene of failed) await generateStoryboardFrame(f, scene);
+      setScenes([...engineScenes.current]); setFilm({ ...f });
+    }, { block: true });
+  }
+
+  /** One-press runs: once every character sheet exists, approve the cast the
+   * same way automatic mode does at create time, then hand the film to Start. */
+  async function handleAutoApproveAndStart() {
+    const f = engineFilm.current;
+    if (!f?.plan || running.current || f.plan.execution_mode !== 'automatic') return;
+    const cast = (f.character_refs || []).map((character) => ({ ...character, approved: character.sheet_required === false || character.kind === 'narrator' || Boolean(character.url) }));
+    if (cast.some((character) => character.sheet_required !== false && character.kind !== 'narrator' && !character.url)) return;
+    if (f.plan.cast_reviewed !== true || cast.some((character, index) => character.approved !== (f.character_refs || [])[index]?.approved)) {
+      const plan = {
+        ...f.plan,
+        cast_reviewed: true,
+        orchestration: f.plan.orchestration ? { ...f.plan.orchestration, state: 'auto_authorized' as const, checkpoint: 'auto_authorized', updated_at: new Date().toISOString() } : f.plan.orchestration,
+      };
+      try {
+        await db.updateFilm(f.id, { character_refs: cast, plan });
+      } catch (caught: any) {
+        setError(String(caught?.message || caught));
+        return;
+      }
+      Object.assign(f, { character_refs: cast, plan });
+      setFilm({ ...f });
+    }
+    await handleStartBackground();
+  }
+
   async function handleGenerateMissingCast() {
     const f = engineFilm.current;
-    const missing = (f?.character_refs || []).filter((character) => character.sheet_required !== false && !character.url);
+    const missing = (f?.character_refs || []).filter((character) => character.sheet_required !== false && character.kind !== 'narrator' && !character.url);
     if (!f || !missing.length) return;
     await run(async () => {
       let current = [...(f.character_refs || [])];
       const failures: string[] = [];
       for (const character of missing) {
         try {
-          const generated = await generateCharacterSheet(character, String(f.plan?.visual_style || f.plan?.style_direction || ''));
+          const generated = await generateCharacterSheet(character, characterSheetStyle(f.plan));
           const url = generated.url;
           current = current.map((item) => item.id === character.id ? { ...item, url, approved: false, source: 'generated' as const, image_error: generated.issues.join('; ') || undefined, image_review_by_eye: generated.reviewByEye, image_model: generated.imageModel } : item);
           await db.addAsset({ film_id: f.id, kind: 'character', name: `${character.name} character sheet`, description: character.appearance.slice(0, 200), url, tags: ['draft', 'cast-sheet'] });
@@ -826,7 +1155,7 @@ function ScriptToVideoApp() {
 
   async function handleUploadCharacter(id: string, file: File) {
     const f = engineFilm.current;
-    if (!f) return;
+    if (!f || f.character_refs?.find((item) => item.id === id)?.kind === 'narrator') return;
     await run(async () => {
       const url = await VideoModelService.uploadReference(file, file.name);
       const next = (f.character_refs || []).map((item) => item.id === id ? { ...item, url, approved: false, source: 'uploaded' as const, image_error: undefined, image_model: 'uploaded' } : item);
@@ -836,7 +1165,7 @@ function ScriptToVideoApp() {
 
   async function handleReuseCharacter(id: string, reference: StoredReference) {
     const f = engineFilm.current;
-    if (!f) return;
+    if (!f || f.character_refs?.find((item) => item.id === id)?.kind === 'narrator') return;
     await run(() => persistCast((f.character_refs || []).map((item) => item.id === id ? {
       ...item, url: reference.url, approved: false, source: 'library' as const, source_reference_id: reference.id, image_error: undefined, image_model: 'library',
     } : item), false), { block: true });
@@ -933,13 +1262,13 @@ function ScriptToVideoApp() {
     await db.updateScene(target.id, { spec });
     Object.assign(target, { spec });
     try {
-      const visibleSheets = (f.character_refs || []).filter((character) => (spec.characters || []).includes(character.id) && character.url);
-      const fallbackPrompt = `${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}; ${spec.visual_goal || spec.summary || target.script_segment}; exact ${f.aspect_ratio || '16:9'} composition; no text, captions, logos, interfaces, watermarks or extra people.`;
+      const visibleSheets = (f.character_refs || []).filter((character) => character.kind !== 'narrator' && (spec.characters || []).includes(character.id) && character.url);
+      const fallbackPrompt = `${filmStyleText(f.plan)}; ${spec.visual_goal || spec.summary || target.script_segment}; exact ${f.aspect_ratio || '16:9'} composition; no text, captions, logos, interfaces, watermarks or extra people.`;
       let written: { caption: string; prompt: string };
       try {
         written = await askOpusJson<{ caption: string; prompt: string }>({
-          system: `You write one production keyframe prompt. Reply only with JSON: {"caption":string,"prompt":string}. State every visible character's locked identity and frame position, one physical action, camera/lens, motivated light, setting and end pose. Preserve the approved visual style. No text, captions, logos, interfaces, watermarks or extra people.`,
-          user: `FILM: ${f.title || 'Untitled film'}\nSTYLE: ${f.plan.custom_visual_direction || f.plan.visual_style || f.plan.style_direction || 'cinematic'}\nBLOCK ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify(visibleSheets.map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
+          system: `You write one production keyframe prompt. Reply only with JSON: {"caption":string,"prompt":string}. State every visible character's locked identity and frame position, one physical action, camera/lens, motivated light, setting and end pose. Open the prompt with the approved visual style and keep every person, prop and background in it. No text, captions, logos, interfaces, watermarks or extra people.`,
+          user: `FILM: ${f.title || 'Untitled film'}\nSTYLE (mandatory — the image must be in this style): ${filmStyleText(f.plan)}\nBLOCK ${target.idx + 1}: ${spec.visual_goal || spec.summary || target.script_segment}\nCAST: ${JSON.stringify(visibleSheets.map((character) => ({ id: character.id, name: character.name, appearance: character.appearance, wardrobe: character.wardrobe })))}`,
           maxTokens: 6000, effort: 'medium',
         });
       } catch (promptError: any) {
@@ -951,16 +1280,16 @@ function ScriptToVideoApp() {
         try {
           const response = await workspaceFetch('/api/generate/image-to-image', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'gpt-image-1.5', prompt: written.prompt, images: visibleSheets.slice(0, 10).map((character) => ({ data: character.url, label: `PERSON IDENTITY: ${character.name}; face, hair and wardrobe likeness only` })), referenceLimit: Math.min(10, visibleSheets.length), inputFidelity: 'high', quality: 'medium', size: f.aspect_ratio === '9:16' ? '1024x1536' : f.aspect_ratio === '1:1' ? '1024x1024' : '1536x1024', fallbackPolicy: 'none', returnBase64: true }),
+            body: JSON.stringify({ model: 'gpt-image-1.5', prompt: withImageStyle(written.prompt || fallbackPrompt, f.plan), images: visibleSheets.slice(0, 10).map((character) => ({ data: character.url, label: `PERSON IDENTITY: ${character.name}; face, hair and wardrobe likeness only` })), referenceLimit: Math.min(10, visibleSheets.length), inputFidelity: 'high', quality: 'medium', size: f.aspect_ratio === '9:16' ? '1024x1536' : f.aspect_ratio === '1:1' ? '1024x1024' : '1536x1024', fallbackPolicy: 'none', returnBase64: true }),
           });
           const data = await response.json().catch(() => null);
           if (!response.ok || !data?.imageBase64) throw new Error(String(data?.error?.message || data?.error || `Storyboard image edit failed (HTTP ${response.status}).`));
           storyboardUrl = await cropStoryboardToAspect(String(data.imageBase64), String(data.mimeType || 'image/jpeg'), String(f.aspect_ratio || '16:9'), `s2v-storyboard-${f.id}-${target.idx + 1}.jpg`);
           storyboardSource = 'cast-sheets';
         } catch {
-          storyboardUrl = await generateBackdropImage(fallbackPrompt, (f.aspect_ratio || '16:9') as any, 'draft');
+          storyboardUrl = await generateBackdropImage(withImageStyle(fallbackPrompt, f.plan), (f.aspect_ratio || '16:9') as any, 'draft');
         }
-      } else storyboardUrl = await generateBackdropImage(written.prompt || fallbackPrompt, (f.aspect_ratio || '16:9') as any, 'draft');
+      } else storyboardUrl = await generateBackdropImage(withImageStyle(written.prompt || fallbackPrompt, f.plan), (f.aspect_ratio || '16:9') as any, 'draft');
       const nextSpec = { ...spec, storyboard_url: storyboardUrl, storyboard_caption: written.caption, storyboard_only: false, storyboard_source: storyboardSource, storyboard_status: 'ready', storyboard_error: storyboardSource === 'platform-fallback' && visibleSheets.length ? 'Cast-sheet edit failed; this frame used the platform image fallback. Review identity before approval.' : null, storyboard_approved: false };
       await Promise.all([
         db.updateScene(target.id, { spec: nextSpec }),
@@ -1057,7 +1386,7 @@ function ScriptToVideoApp() {
       await db.updateFilm(f.id, { plan, stage_note: stageNote });
       Object.assign(f, { plan, stage_note: stageNote });
       setFilm({ ...f });
-      if (!paused) await callHook('s2v-recovery-sweeper', { op: 'tick', film_id: f.id, chain_id: f.plan?.background?.chain_id, source: 'creator-resume' });
+      if (!paused) kickRunner(f, 'creator-resume');
     }, { block: true });
   }
 
@@ -1070,6 +1399,7 @@ function ScriptToVideoApp() {
       await db.updateFilm(f.id, { plan, status: 'cancelled', stage_note: 'Future jobs stopped. Completed clips remain saved; an already-submitted provider job may still settle.' });
       Object.assign(f, { plan, status: 'cancelled' as const, stage_note: 'Future jobs stopped. Completed clips remain saved; an already-submitted provider job may still settle.' });
       setFilm({ ...f });
+      kickRunner(f, 'creator-stop');
     }, { block: true });
   }
 
@@ -1141,7 +1471,7 @@ function ScriptToVideoApp() {
         reuseCharacterRefs: original.character_refs || [],
       }, hooks);
       const omniTitle = `${original.title || result.film.title || 'Untitled film'} — Omni version`;
-      const castReviewed = (result.film.character_refs || []).every((character) => character.sheet_required === false || (character.approved && character.url));
+      const castReviewed = (result.film.character_refs || []).every((character) => character.sheet_required === false || character.kind === 'narrator' || (character.approved && character.url));
       const omniPlan = { ...result.film.plan!, title: omniTitle, cast_reviewed: castReviewed };
       await db.updateFilm(result.film.id, { title: omniTitle, plan: omniPlan, status: 'plan_ready', stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' });
       const omniFilm = { ...result.film, title: omniTitle, plan: omniPlan, status: 'plan_ready' as const, stage_note: 'Separate Omni version planned with the same script, words and cast sheets. Review its 4–8s blocks and Start when ready.' };
@@ -1155,62 +1485,213 @@ function ScriptToVideoApp() {
     }, { block: true });
   }
 
-  async function handleStartBackground() {
+  /** Nudge the durable runner without waiting on it: a tick keeps running
+   * server-side after the request is abandoned, can last minutes, and is
+   * refused while another tick holds the lease. Only a quick refusal is an
+   * error worth showing. */
+  function kickRunner(target: Film, source: string) {
+    runnerKickAt.current = Date.now();
+    const controller = new AbortController();
+    const stopWaiting = window.setTimeout(() => controller.abort(), 20_000);
+    void callHook<{ success?: boolean; error?: string }>('s2v-recovery-sweeper', { op: 'tick', film_id: target.id, chain_id: target.plan?.background?.chain_id, source }, { signal: controller.signal })
+      .then((result) => { if (result && result.success === false) setRunnerIssue(friendlyAppError(result.error || 'The background runner stopped before this block finished.')); })
+      .catch((caught: any) => { if (!controller.signal.aborted) setRunnerIssue(friendlyAppError(caught?.message || caught)); })
+      .finally(() => window.clearTimeout(stopWaiting));
+  }
+
+  /** Start durable production. `runUntilSceneId` limits this run to every
+   * unfinished block up to and including that one (they render in order for
+   * continuity); without it every remaining block is queued. */
+  async function handleStartBackground(options?: { runUntilSceneId?: number | null }): Promise<boolean> {
     const f = engineFilm.current;
-    if (!f || running.current) return;
-    await run(async () => {
+    if (!f) return false;
+    if (running.current) { setNote('Another step is still finishing — press Start again in a moment.'); return false; }
+    const runUntilSceneId = typeof options?.runUntilSceneId === 'number' ? options.runUntilSceneId : null;
+    return run(async () => {
       const cast = Array.isArray(f.character_refs) ? f.character_refs : [];
-      if (f.plan?.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && (!character.approved || !character.url))) {
+      if (f.plan?.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && character.kind !== 'narrator' && (!character.approved || !character.url))) {
         throw new Error(cast.length
           ? 'Approve every retained character sheet before Start. Regenerate or upload any missing sheet first.'
           : 'Confirm that this script needs no cast, or add a character, before Start.');
       }
       const signedInTabRequired = requiresSignedInVideoTab(f, engineScenes.current);
       if (signedInTabRequired) {
-        // Video Provider Lab proves these routes with the current signed-in
-        // workspace token. The stable vv-credits key still deducts exactly once;
-        // the provider proxy separately bills the workspace wallet.
+        // Re-prove the signed-in credit session now (and once internally on a
+        // 401) before either credits or a provider request can move.
+        await requireVerifiedCreditSession();
+        // A previous server attempt may have failed before saving a provider
+        // operation. Stop its read-only background adoption before the browser
+        // owns this retry, but keep every prompt, clip and checkpoint.
+        if (f.plan?.background?.enabled) {
+          const plan = {
+            ...f.plan,
+            background: { ...f.plan.background, enabled: false, stage: 'failed' as const, lease_owner: null, lease_until: null },
+            orchestration: f.plan.orchestration ? { ...f.plan.orchestration, paused: false, state: 'resumable' as const, checkpoint: 'signed_in_browser_retry', updated_at: new Date().toISOString() } : f.plan.orchestration,
+          };
+          await db.updateFilm(f.id, { plan });
+          Object.assign(f, { plan });
+          setFilm({ ...f });
+        }
         setNote('Starting signed-in production — keep this tab open while the selected provider submits and polls…');
         armAuto(f.id, true);
         writeAutoPref(f.id, true);
+        const failed = [...engineScenes.current].sort((a, b) => a.idx - b.idx).find((scene) => scene.status === 'failed');
+        if (failed) await retryScene(f, engineScenes.current, failed, hooks);
         await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
         await maybeAdvancePost();
         setNote(allScenesDone(engineScenes.current) ? 'All signed-in video scenes are complete.' : 'Signed-in production paused at the next action. Your completed scenes and credit receipts are saved.');
         return;
       }
-      setNote('Starting unattended production…');
-      await startUnattendedProduction(f, engineScenes.current, reviewRef.current, captionsRef.current);
+      const target = runUntilSceneId != null ? engineScenes.current.find((scene) => scene.id === runUntilSceneId) : null;
+      setNote(target ? `Starting Block ${target.idx + 1}…` : 'Starting every remaining block…');
+      const started = await startUnattendedProduction(f, engineScenes.current, reviewRef.current, captionsRef.current, runUntilSceneId);
       armAuto(f.id, false);
       writeAutoPref(f.id, false);
+      runnerKickAt.current = Date.now();
+      setRunnerIssue('');
+      setRunnerStalled(false);
       const [fresh, freshScenes] = await Promise.all([db.getFilm(f.id), db.listScenes(f.id)]);
       if (fresh) adopt(fresh, freshScenes);
-      setNote('Production is running in the background. You can close this tab.');
-    }, { block: true });
+      const until = typeof started?.runUntilIdx === 'number' ? started.runUntilIdx : null;
+      const first = [...freshScenes].sort((a, b) => a.idx - b.idx).find((scene) => !['completed', 'skipped'].includes(String(scene.status)));
+      setNote(!first ? 'Every block is done.'
+        : started?.status === 'extended' ? (until == null ? 'Every remaining block was added to the running production.' : `Block ${until + 1} will render after the block that is running now.`)
+          : until != null && until > first.idx ? `Block ${first.idx + 1} is starting. Blocks ${first.idx + 1}–${until + 1} render in order — you can close this tab.`
+            : until == null && freshScenes.some((scene) => scene.idx > first.idx && !['completed', 'skipped'].includes(String(scene.status))) ? `Block ${first.idx + 1} is starting. Every remaining block follows in order — you can close this tab.`
+              : `Block ${first.idx + 1} is starting — you can close this tab.`);
+    }, { block: true, retry: () => handleStartBackground(options) });
   }
+
+  // A successful background epoch is terminal and is intentionally omitted
+  // from recovery sweeps. If editing/re-splitting appends unfinished rows to
+  // that film, reopen one authenticated epoch for exactly that pending set.
+  useEffect(() => {
+    // Scene board only: Finish assembles existing clips and must never restart production.
+    if (!film || screen !== 'board') return;
+    const background = film.plan?.background;
+    if (!background?.enabled || film.plan?.orchestration?.paused) return;
+    if (String(background.stage) !== 'ready' && film.status !== 'ready') return;
+    if (scenes.some((scene) => ['queued', 'submitted', 'processing', 'generating', 'retrying'].includes(String(scene.status)))) return;
+    const pending = scenes.filter((scene) => ['idle', 'pending', 'waiting', 'ready'].includes(String(scene.status)));
+    if (!pending.length) return;
+    const signature = `${film.id}:${pending.map((scene) => `${scene.id}:${scene.status}`).join(',')}`;
+    if (autoResumeFor.current === signature || running.current) return;
+    autoResumeFor.current = signature;
+    setGenerateAllInFlight(true);
+    void handleStartBackground()
+      .then((started) => { if (!started) autoResumeFor.current = ''; })
+      .finally(() => setGenerateAllInFlight(false));
+  }, [film?.id, film?.status, film?.plan?.background?.enabled, film?.plan?.background?.stage, film?.plan?.orchestration?.paused, screen, scenes]);
 
   const withEngine = (fn: (f: Film, list: FilmScene[], scene: FilmScene) => Promise<void>) => (scene: FilmScene) => {
     const f = engineFilm.current;
     const engineScene = engineScenes.current.find((s) => s.id === scene.id);
     if (!f || !engineScene) return;
+    setSceneInFlightId(engineScene.id);
     void run(async () => {
       await fn(f, engineScenes.current, engineScene);
       if (autoRef.current) await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
       await maybeAdvancePost();
-    });
+    }).finally(() => setSceneInFlightId((current) => current === engineScene.id ? null : current));
   };
 
   const handleGenerate = withEngine((f, list, s) => generateScene(f, list, s, hooks));
   const handlePrepare = withEngine((f, list, s) => prepareScene(f, list, s, hooks));
-  const handleRetry = withEngine((f, list, s) => retryScene(f, list, s, hooks));
+  const retryEngineScene = async (f: Film, list: FilmScene[], s: FilmScene) => {
+    // A saved failed scene may be retried in a newer tab/session than the one
+    // that created it. Re-acquire current auth first; retryScene preserves the
+    // saved prompt, plan, completed clips and stable idempotency key.
+    await requireVerifiedCreditSession();
+    await settlePendingBackgroundRefunds(f, list);
+    const retryBilling = ((s.spec as any)?.background || {}) as Record<string, unknown>;
+    const retryKey = String(retryBilling.active_credit_key || retryBilling.idempotency_key || '');
+    const unresolvedRefund = Array.isArray((f.plan?.background as any)?.pending_refunds)
+      && ((f.plan?.background as any).pending_refunds as any[]).some((item) => String(item?.entryKey || '') === retryKey);
+    if (unresolvedRefund) throw new Error('The previous terminal refund is still being reconciled. Retry again after the wallet refresh completes; no new provider request was submitted.');
+    if (f.plan?.background?.enabled) {
+      const plan = {
+        ...f.plan,
+        background: { ...f.plan.background, enabled: false, stage: 'failed' as const, lease_owner: null, lease_until: null },
+        orchestration: f.plan.orchestration ? { ...f.plan.orchestration, paused: false, state: 'resumable' as const, checkpoint: `scene_${s.idx + 1}_signed_in_retry`, updated_at: new Date().toISOString() } : f.plan.orchestration,
+      };
+      await db.updateFilm(f.id, { plan });
+      Object.assign(f, { plan });
+      setFilm({ ...f });
+    }
+    // retryScene keeps the active receipt throughout one automatic ladder. If
+    // that ladder already ended in a confirmed refund, it mints exactly one
+    // attempt-scoped key so this explicit Retry is charged once again.
+    await retryScene(f, list, s, hooks);
+  };
+  const handleRetry = withEngine(retryEngineScene);
+  const handleStartForegroundScene = withEngine(async (f, list, s) => {
+    const status = String(s.status || 'waiting');
+    if (status === 'failed') { await retryEngineScene(f, list, s); return; }
+    await requireVerifiedCreditSession();
+    if (status === 'waiting' || status === 'idle' || status === 'pending' || !String(s.prompt || '').trim()) {
+      await prepareScene(f, list, s, hooks);
+    }
+    if (String(s.status) === 'ready') await generateScene(f, list, s, hooks);
+  });
+  /** [Start] / [Retry] on one block. Durable films run every unfinished block
+   * up to this one in order and then stop; a failed block restarts on its held
+   * credits (or is re-authorized once if they were returned). Signed-in-tab
+   * models keep their foreground path. */
+  function handleStartScene(scene: FilmScene) {
+    const f = engineFilm.current;
+    const target = engineScenes.current.find((item) => item.id === scene.id);
+    if (!f || !target) return;
+    if (running.current) { setNote('Another step is still finishing — press Start again in a moment.'); return; }
+    const durable = !requiresSignedInVideoTab(f, engineScenes.current);
+    setBlockStartError(null);
+    if (!durable && String(target.status) === 'failed') {
+      handleStartForegroundScene(target);
+      return;
+    }
+    setSceneInFlightId(target.id);
+    void handleStartBackground(durable ? { runUntilSceneId: target.id } : undefined)
+      .then((started) => { if (!started && lastRunError.current) setBlockStartError({ id: target.id, message: lastRunError.current }); })
+      .finally(() => setSceneInFlightId((current) => current === target.id ? null : current));
+  }
+
+  function handleRestartRunner() {
+    const f = engineFilm.current;
+    if (!f) return;
+    const rawUntil = (f.plan?.background as Record<string, unknown> | undefined)?.run_until_idx;
+    const until = rawUntil == null || rawUntil === '' ? NaN : Number(rawUntil);
+    const limit = Number.isFinite(until) ? engineScenes.current.find((scene) => scene.idx === until) : null;
+    void handleStartBackground({ runUntilSceneId: limit ? limit.id : null });
+  }
+
+  // A successful click on the global “Refresh session” notice resumes the
+  // exact failed checkpoint. Scene Retry already re-proves the wallet and
+  // reuses its saved idempotency key, so this cannot repeat completed work or
+  // create a second charge receipt.
+  const finishOpenRef = useRef(false);
+  useEffect(() => { finishOpenRef.current = screen === 'final'; }, [screen]);
+  useEffect(() => {
+    const resumeAfterCreditRefresh = () => {
+      setError('');
+      const failed = [...engineScenes.current].sort((a, b) => a.idx - b.idx).find((scene) => scene.status === 'failed');
+      if (failed && !finishOpenRef.current) {
+        handleStartScene(failed);
+        return;
+      }
+      const retry = failedActionRetry.current;
+      failedActionRetry.current = null;
+      if (retry) void retry();
+    };
+    window.addEventListener(CREDIT_AUTH_REFRESHED_EVENT, resumeAfterCreditRefresh);
+    return () => window.removeEventListener(CREDIT_AUTH_REFRESHED_EVENT, resumeAfterCreditRefresh);
+  }, []);
+
   const handleRetryFrame = (scene: FilmScene) => {
     const f = engineFilm.current;
     const target = engineScenes.current.find((item) => item.id === scene.id);
     if (!f || !target) return;
     void run(async () => {
       await retryFinalFrame(f, engineScenes.current, target, hooks);
-      if (f.plan?.background?.enabled && target.status === 'completed') {
-        await callHook('s2v-recovery-sweeper', { op: 'tick', film_id: f.id, chain_id: f.plan.background.chain_id, source: 'creator-retried-frame' });
-      }
+      if (f.plan?.background?.enabled && target.status === 'completed') kickRunner(f, 'creator-retried-frame');
       await maybeAdvancePost();
     });
   };
@@ -1221,7 +1702,7 @@ function ScriptToVideoApp() {
     void run(async () => {
       await continueWithoutContinuityFrame(f, engineScenes.current, target, hooks);
       if (f.plan?.background?.enabled) {
-        await callHook('s2v-recovery-sweeper', { op: 'tick', film_id: f.id, chain_id: f.plan.background.chain_id, source: 'creator-continued-without-frame' });
+        kickRunner(f, 'creator-continued-without-frame');
       } else if (autoRef.current) {
         await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
       }
@@ -1244,7 +1725,7 @@ function ScriptToVideoApp() {
       return;
     }
     const extraSeconds = Math.max(1, Math.round(Number(engineScene.duration_s) || 0));
-    if (!window.confirm(`Regenerate only scene ${engineScene.idx + 1}?\n\nAffected scenes: ${engineScene.idx + 1} only. Approved scenes stay unchanged. Extra authorization: up to ${extraSeconds} video credit${extraSeconds === 1 ? '' : 's'} plus any provider cost shown by the selected model.`)) return;
+    if (!window.confirm(`Regenerate only scene ${engineScene.idx + 1}?\n\nAffected scenes: ${engineScene.idx + 1} only. Approved scenes stay unchanged. Extra authorization: credits for ${extraSeconds}s on the selected model, priced at real engine cost + 30% ($0.15 per credit). Refunded automatically if the render fails.`)) return;
     setRedoingId(scene.id);
     void run(async () => {
       try {
@@ -1366,19 +1847,19 @@ function ScriptToVideoApp() {
     }, { block: true });
   }
 
-  /** [Generate All Ready] — render prepared scenes sequentially so each
-   * downstream request consumes the newly validated prior frame. */
-  function handleGenerateAll() {
-    const f = engineFilm.current;
-    if (!f) return;
-    void run(async () => {
-      await generateAllReadyScenes(f, engineScenes.current, hooks);
-      // The batch prepares nothing, so scenes that were still waiting are
-      // picked back up by the sequential loop when auto-generate is on.
+  /** [Generate all remaining] — run the same authenticated Start path used by
+   * the initial approval. It prepares waiting blocks, retries a confirmed
+   * refunded failure, and submits every remaining block sequentially. */
+  async function handleGenerateAll() {
+    if (!engineFilm.current || running.current) return;
+    setGenerateAllInFlight(true);
+    try {
       autoFiredFor.current = '';
-      if (autoRef.current) await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
-      await maybeAdvancePost();
-    }, { block: true });
+      setBlockStartError(null);
+      await handleStartBackground({ runUntilSceneId: null });
+    } finally {
+      setGenerateAllInFlight(false);
+    }
   }
 
   /** [Style Lock] — toggled from the board mid-production. */
@@ -1450,10 +1931,18 @@ function ScriptToVideoApp() {
 
   /** One-click FINAL ASSEMBLY — existing clips + narration + music + SFX →
    * FFmpeg. Never regenerates video. */
-  async function handleFinalAssembly(o: { captions: boolean }) {
+  async function handleFinalAssembly(o: FinishOptions) {
     const f = engineFilm.current;
-    if (!f || f.plan?.background?.enabled) return;
-    await run(() => runFinalAssembly(f, engineScenes.current, hooks, { captions: o.captions }), { block: true });
+    if (!f) return;
+    if (f.plan?.background?.enabled) {
+      if (!allScenesDone(engineScenes.current)) { setNote('Final Assembly unlocks when every scene is finished or skipped.'); return; }
+      const touchedAt = Date.parse(String(f.updated_at || ''));
+      if (f.status === 'assembling' && Number.isFinite(touchedAt) && Date.now() - touchedAt < 10 * 60_000) {
+        setNote('This film is being assembled on the server — it will appear here when it lands.');
+        return;
+      }
+    }
+    await run(() => runFinalAssembly(f, engineScenes.current, hooks, { ...finishPrefsRef.current, voiceSource, openaiVoice, ...o }), { block: true });
   }
 
   function handleStopFinish() {
@@ -1485,6 +1974,12 @@ function ScriptToVideoApp() {
     const f = engineFilm.current;
     if (!f) return;
     void run(() => changeMusicDirection(f, engineScenes.current, hooks, preset), { block: true });
+  };
+
+  const handleAcceptMusic = () => {
+    const f = engineFilm.current;
+    if (!f) return;
+    void run(() => acceptMusicCandidate(f, hooks), { block: true });
   };
 
   /** [Voice Source] — No Voiceover / ElevenLabs / built-in AI voice. The pick
@@ -1613,7 +2108,7 @@ function ScriptToVideoApp() {
 
       if (proposal.tool === 'start_render') {
         const cast = Array.isArray(f.character_refs) ? f.character_refs : [];
-        if (f.plan.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && (!character.approved || !character.url))) throw new Error(cast.length ? 'Approve every retained character sheet before Start.' : 'Confirm that this script needs no cast before Start.');
+        if (f.plan.cast_reviewed !== true || cast.some((character) => character.sheet_required !== false && character.kind !== 'narrator' && (!character.approved || !character.url))) throw new Error(cast.length ? 'Approve every retained character sheet before Start.' : 'Confirm that this script needs no cast before Start.');
         if (requiresSignedInVideoTab(f, list)) {
           setNote('Starting signed-in production — keep this tab open while the selected provider submits and polls…');
           armAuto(f.id, true); writeAutoPref(f.id, true);
@@ -1697,6 +2192,11 @@ function ScriptToVideoApp() {
   }
   async function openFilm(f: Film) {
     setError(''); setNote(''); setAssembly(null);
+    setRunnerStalled(false); setRunnerIssue(''); setBlockStartError(null);
+    // A project reopened in a new tab may need to terminally refund a foreground
+    // attempt that vanished before saving an operation id. Resolve the wallet
+    // first so that reconciliation runs now, not only after the next Retry.
+    await acquireCreditAuthorization();
     advancedFor.current = null; postKickedFor.current = null;
     assembleKickedFor.current = null;
     stallRetriedScenes.current = new Set();
@@ -1728,21 +2228,27 @@ function ScriptToVideoApp() {
         await db.updateFilm(f.id, recovery);
         Object.assign(f, recovery);
       }
-      try { await settlePendingBackgroundRefunds(f); }
-      catch (refundError: any) { setError(String(refundError?.message || refundError)); }
+      try {
+        await reconcileStoppedBackground(f, list);
+        await settlePendingBackgroundRefunds(f, list);
+      } catch (recoveryError: any) { setError(String(recoveryError?.message || recoveryError)); }
       adopt(f, list);
+      if (f.plan?.background?.enabled && f.plan.background.stage !== 'failed' && f.status !== 'ready' && f.status !== 'cancelled') {
+        void callHook('s2v-recovery-sweeper', { op: 'tick', film_id: f.id, chain_id: f.plan.background.chain_id, source: 'creator-reopen' }).catch(() => undefined);
+      }
       const scenesDone = allScenesDone(list);
-      if (f.status === 'ready' && f.final_video_url) { setScreen('final'); advancedFor.current = f.id; }
+      if (f.status === 'ready' && f.final_video_url && scenesDone) { setScreen('final'); advancedFor.current = f.id; }
       else if (scenesDone) {
         // Scenes are complete — land directly in post-production, and resume
         // an interrupted final assembly or the audio pipeline automatically.
         setScreen('final');
         advancedFor.current = f.id;
         if (!f.plan?.background?.enabled && interruptedAssembly && audioReady(f.audio) && !running.current) {
-          void run(() => runFinalAssembly(engineFilm.current!, engineScenes.current, hooks, { captions }), { block: true });
-        } else if (!f.plan?.background?.enabled && autoPostRef.current && !audioReady(f.audio) && !f.error && !running.current) {
-          postKickedFor.current = f.id;
-          void run(() => autoPostProduce(engineFilm.current!, engineScenes.current, hooks));
+          void run(() => runFinalAssembly(engineFilm.current!, engineScenes.current, hooks, { ...finishPrefsRef.current, captions }), { block: true });
+        } else if (!f.plan?.background?.enabled && f.status !== 'ready' && !f.final_video_url && !f.error && !running.current) {
+          // Audio for the chosen mode (narration only when chosen), then
+          // assembly of the saved clips. No scene is prepared or rendered.
+          void run(() => maybeAdvancePost(), { block: true });
         }
       } else setScreen('board');
       // In-flight work is resumed by the server sweeper. Reopening this screen
@@ -1773,6 +2279,74 @@ function ScriptToVideoApp() {
     }
   }
 
+  /** One creation-screen bridge request, bounded so an unmounted screen cannot hold a step. */
+  function askCreateScreen<T = any>(operation: string, timeoutMs = 20_000): Promise<T> {
+    return Promise.race([
+      bridgeRequest<T>('script-to-video', operation),
+      new Promise<T>((_, reject) => window.setTimeout(() => reject(new Error('The creation screen did not answer in time.')), timeoutMs)),
+    ]);
+  }
+
+  /** Autopilot is hands-off: a plan whose cast needs no character sheet is
+   * confirmed as character-free instead of waiting for a click. */
+  async function confirmCharacterFreePlan(): Promise<boolean> {
+    const f = engineFilm.current;
+    if (!f?.plan || f.plan.cast_reviewed === true) return false;
+    const cast = Array.isArray(f.character_refs) ? f.character_refs : [];
+    if (cast.some((character) => character.kind !== 'narrator' && character.sheet_required !== false)) return false;
+    await persistCast(cast, true);
+    return true;
+  }
+
+  /** makePlan for one Autopilot run. Reuses that run's saved plan, accepts the
+   * script before asking for a plan so the readiness guard cannot fire, and
+   * answers only once the plan is really saved (or really failed). */
+  async function autopilotMakePlan(runId: string): Promise<{ ok: boolean; result?: unknown; error?: string }> {
+    const saved = autopilotPlan.current;
+    const current = engineFilm.current;
+    if (saved?.runId === runId && current?.id === saved.filmId && current.plan) {
+      if (bridgeScreen.current === 'create') setScreen('board');
+      const castConfirmed = await confirmCharacterFreePlan();
+      return { ok: true, result: { reused: true, filmId: current.id, castConfirmed } };
+    }
+    if (autopilotPlanInFlight.current?.runId === runId) return autopilotPlanInFlight.current.promise;
+    const promise = (async (): Promise<{ ok: boolean; result?: unknown; error?: string }> => {
+      if (bridgeScreen.current !== 'create') return { ok: false, error: 'Fill in the brief before making the plan.' };
+      let ready = false;
+      let reason = '';
+      for (let attempt = 0; attempt < 3 && !ready; attempt += 1) {
+        const state = await askCreateScreen<any>('state');
+        ready = state?.can?.makePlan?.ok === true;
+        reason = String(state?.can?.makePlan?.reason || '');
+        if (ready) break;
+        if (!/production script and accept|at least three words to the script/i.test(reason)) break;
+        await askCreateScreen(state?.values?.mode === 'ai' ? 'writeScript' : 'useScript', 240_000);
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+      }
+      if (!ready) return { ok: false, error: reason || 'The plan is not ready.' };
+      const seqBefore = planOutcome.current.seq;
+      await askCreateScreen('makePlan');
+      if (planOutcome.current.seq === seqBefore) return { ok: false, error: 'Another studio step is still finishing. Try making the plan again in a moment.' };
+      const mySeq = planOutcome.current.seq;
+      const deadline = Date.now() + 15 * 60_000;
+      while (Date.now() < deadline) {
+        const outcome = planOutcome.current;
+        if (outcome.seq !== mySeq) return { ok: false, error: 'A different plan was started while this one was being built.' };
+        if (outcome.error) return { ok: false, error: outcome.error };
+        if (outcome.filmId) {
+          autopilotPlan.current = { runId, filmId: outcome.filmId };
+          const castConfirmed = await confirmCharacterFreePlan();
+          return { ok: true, result: { filmId: outcome.filmId, castConfirmed } };
+        }
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
+      }
+      return { ok: false, error: 'The production plan is still being built. Check again in a moment.' };
+    })();
+    autopilotPlanInFlight.current = { runId, promise };
+    try { return await promise; } finally { if (autopilotPlanInFlight.current?.promise === promise) autopilotPlanInFlight.current = null; }
+  }
+
   const bridgeController = useMemo<AppController>(() => {
     const fields: FieldSpec[] = [
       { key: 'mode', label: 'Start', type: 'choice', required: true, options: async () => [{ value: 'idea', label: 'I have an idea' }, { value: 'script', label: 'I have my script' }] },
@@ -1783,7 +2357,7 @@ function ScriptToVideoApp() {
       { key: 'length', label: 'Length', type: 'number', required: true, defaultFrom: 'request' },
       { key: 'shape', label: 'Shape', type: 'choice', required: true, options: async () => [{ value: '9:16', label: '9:16' }, { value: '16:9', label: '16:9' }, { value: '1:1', label: '1:1' }] },
       { key: 'sound', label: 'Sound', type: 'choice', required: true },
-      { key: 'look', label: 'Look', type: 'text', required: false, defaultFrom: 'brandKit' },
+      { key: 'look', label: 'Look', type: 'text', required: false, defaultFrom: 'request' },
       { key: 'model', label: 'Model', type: 'model', required: true, options: async () => { const availability = await checkPickerAvailability(); return pickerDisplayModels().filter((model) => availability[model.id]?.ready === true).map((model) => ({ value: model.id, label: model.label })); } },
       { key: 'cast', label: 'Cast', type: 'actor', required: false },
       { key: 'voices', label: 'Voices', type: 'voice', required: false },
@@ -1799,10 +2373,19 @@ function ScriptToVideoApp() {
     return {
       appId: 'script-to-video',
       schema: () => ({ fields, actions }),
-      getState: () => ({ values: { ...bridgeValues.current, length: engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30, shape: engineFilm.current?.aspect_ratio || bridgeValues.current.shape || '16:9', model: engineFilm.current?.video_model || bridgeValues.current.model || 'auto' }, screen, busy: running.current || busy, can: { makePlan: { ok: screen === 'create' }, approveCast: { ok: screen === 'board' }, start: { ok: screen === 'board' && Boolean(engineFilm.current) }, rerenderShot: { ok: Boolean(engineScenes.current.some((scene) => scene.status === 'failed' || scene.status === 'completed')) } } }),
+      getState: () => { const currentScreen = bridgeScreen.current; return { values: { ...bridgeValues.current, length: engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30, shape: engineFilm.current?.aspect_ratio || bridgeValues.current.shape || '16:9', model: engineFilm.current?.video_model || bridgeValues.current.model || 'auto' }, screen: currentScreen, busy: bridgeBusy.current, can: { makePlan: { ok: currentScreen === 'create' }, approveCast: { ok: currentScreen === 'board' }, start: { ok: currentScreen === 'board' && Boolean(engineFilm.current) }, rerenderShot: { ok: Boolean(engineScenes.current.some((scene) => scene.status === 'failed' || scene.status === 'completed')) } } }; },
       fill: async (values, opts) => {
-        bridgeValues.current = { ...bridgeValues.current, ...values };
-        if (screen !== 'create') {
+        const plannedRun = autopilotPlan.current;
+        if (opts?.autopilotRunId && plannedRun?.runId === opts.autopilotRunId && engineFilm.current?.id === plannedRun.filmId && engineFilm.current?.plan) {
+          return { applied: [], rejected: [], planReused: true, note: 'This run already has a saved production plan, so the brief was kept as planned.' };
+        }
+        await checkPickerAvailability(true);
+        const normalizedValues = {
+          ...values,
+          ...(values.model ? { model: resolveVideoModel(String(values.model)).id } : {}),
+        };
+        bridgeValues.current = { ...bridgeValues.current, ...normalizedValues };
+        if (bridgeScreen.current !== 'create') {
           await new Promise<void>((resolve, reject) => {
             const timer = window.setTimeout(() => { window.removeEventListener('verger:s2v-create-ready', ready); reject(new Error('The creation screen did not become ready.')); }, 15_000);
             const ready = () => { window.clearTimeout(timer); window.removeEventListener('verger:s2v-create-ready', ready); resolve(); };
@@ -1810,13 +2393,14 @@ function ScriptToVideoApp() {
             setScreen('create');
           });
         }
-        return bridgeRequest('script-to-video', 'fill', { values, animate: opts?.animate !== false });
+        return bridgeRequest('script-to-video', 'fill', { values: normalizedValues, animate: opts?.animate !== false });
       },
       run: async (action, opts) => {
         try {
-          if (action === 'makePlan' || action === 'writeScript' || action === 'pickApproach' || action === 'useScript') { const result = await bridgeRequest('script-to-video', action === 'makePlan' ? 'makePlan' : 'state'); return { ok: true, result }; }
-          if (action === 'approveCast') { const f = engineFilm.current; if (!f) throw new Error('Make the plan first.'); const cast = Array.isArray(f.character_refs) ? f.character_refs : []; if (!cast.length) await handleConfirmEmptyCast(); else for (const character of cast) { if (character.url && !character.image_error) await handleUpdateCharacter(character.id, { approved: true }); } return { ok: true }; }
-          if (action === 'start') { const estimate = Math.max(1, Math.round(Number(engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30))); if (opts?.approvedCredits !== estimate) return { ok: false, error: `Start requires approval for exactly ${estimate} credits.` }; await handleStartBackground(); return { ok: true }; }
+          if (action === 'makePlan' && opts?.autopilotRunId) return await autopilotMakePlan(opts.autopilotRunId);
+          if (action === 'makePlan' || action === 'writeScript' || action === 'pickApproach' || action === 'useScript') { const result = await bridgeRequest('script-to-video', action); await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve())); return { ok: true, result }; }
+          if (action === 'approveCast') { const f = engineFilm.current; if (!f) throw new Error('Make the plan first.'); const cast = Array.isArray(f.character_refs) ? f.character_refs : []; if (!cast.length) await handleConfirmEmptyCast(); else if (cast.every((character) => character.kind === 'narrator' || character.sheet_required === false)) await run(() => persistCast(cast), { block: true }); else for (const character of cast) { if (character.kind !== 'narrator' && character.url && !character.image_error) await handleUpdateCharacter(character.id, { approved: true }); } return { ok: true }; }
+          if (action === 'start') { const estimate = Math.max(1, Math.round(Number(engineFilm.current?.duration_s || engineFilm.current?.plan?.target_duration_sec || bridgeValues.current.length || 30))); if (opts?.approvedCredits !== estimate) return { ok: false, error: `Start requires approval for exactly ${estimate} credits.` }; if (opts?.autopilotRunId) await confirmCharacterFreePlan(); const started = await handleStartBackground(); return started ? { ok: true } : { ok: false, error: 'Production did not start. The project is saved; retry Start once.' }; }
           if (action === 'rerenderShot') { const target = engineScenes.current.find((scene) => scene.status === 'failed' || scene.status === 'completed'); if (!target) throw new Error('No shot is available to re-render.'); const estimate = Math.max(1, Math.round(Number(target.duration_s || 8))); if (opts?.approvedCredits !== estimate) return { ok: false, error: `Re-render requires approval for exactly ${estimate} credits.` }; await handleRedo(target); return { ok: true }; }
           if (action === 'pauseAfterShot') { await handlePauseBackground(true); return { ok: true }; }
           if (action === 'continueAfterLookCheck') { await handlePauseBackground(false); return { ok: true }; }
@@ -1858,9 +2442,17 @@ function ScriptToVideoApp() {
 
   function retryCurrentScreen() {
     setError('');
+    const retry = failedActionRetry.current;
+    failedActionRetry.current = null;
+    if (retry) { void retry(); return; }
     if (screen === 'library') { void loadLibrary(); return; }
     if (screen === 'create' && lastCreateAttempt.current) { void handleCreate(lastCreateAttempt.current); return; }
-    if (film && (screen === 'board' || screen === 'final')) { void openFilm(film); }
+    if (film && screen === 'final') { void handleFinalAssembly({ captions: captionsRef.current }); return; }
+    if (film && screen === 'board') {
+      const failed = [...engineScenes.current].sort((a, b) => a.idx - b.idx).find((scene) => scene.status === 'failed');
+      if (failed) { handleStartScene(failed); return; }
+      void openFilm(film);
+    }
   }
 
   return (
@@ -1874,7 +2466,7 @@ function ScriptToVideoApp() {
       style={{ background: CANVAS_GRADIENT }}
     >
     <div className="s2v-app" style={{ position: 'relative', width: '100%', height: '100%', minHeight: 480, display: 'flex', flexDirection: 'column', background: 'transparent', fontFamily: T.sans, overflow: 'hidden' }}>
-      <style>{APP_CSS}</style>
+      <style>{APP_CSS + S2V_POLISH_CSS}</style>
       <div className="s2v-topbar" style={{ padding: '12px 20px', borderBottom: `1px solid ${T.raised}`, flexShrink: 0 }}>
         <ProductSuiteHeader
           name="Script-to-Video"
@@ -1883,7 +2475,7 @@ function ScriptToVideoApp() {
           showIcon={false}
           actions={(
             <>
-              <div role="group" aria-label="Script-to-Video detail level" style={{ display: 'inline-flex', padding: 3, borderRadius: 999, border: `1px solid ${T.dim}`, background: T.canvas }}><button type="button" aria-pressed={!manualMode} onClick={() => setManualMode(false)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: !manualMode ? T.live : 'transparent', color: !manualMode ? 'var(--space-text-on-primary)' : T.muted, fontSize: 12, fontWeight: 800 }}>Simple</button><button type="button" aria-pressed={manualMode} onClick={() => setManualMode(true)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: manualMode ? T.live : 'transparent', color: manualMode ? 'var(--space-text-on-primary)' : T.muted, fontSize: 12, fontWeight: 800 }}>More detail</button></div>
+              <div role="group" aria-label="Script-to-Video detail level" style={{ display: 'inline-flex', padding: 3, borderRadius: 999, border: `1px solid ${T.dim}`, background: T.canvas }}><button type="button" aria-pressed={!manualMode} onClick={() => setManualMode(false)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: !manualMode ? T.live : 'transparent', color: !manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>Simple</button><button type="button" aria-pressed={manualMode} onClick={() => setManualMode(true)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: manualMode ? T.live : 'transparent', color: manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>More detail</button></div>
               {scenes.length ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Blocks · {scenes.length}</button> : null}
               {showBack ? (
                 <button className="s2v-ghost" onClick={() => { setScreen('library'); setLegacyOpen(null); setAuto(false); autoRef.current = false; setJobsOpen(false); loadLibrary(); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${T.dim}`, color: T.muted, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', padding: '7px 11px', borderRadius: 9 }}>
@@ -1897,6 +2489,21 @@ function ScriptToVideoApp() {
 
       <StudioStepper screen={screen} film={film} scenes={scenes} />
 
+      {(screen === 'board' || screen === 'final') && film && film.plan?.execution_mode === 'automatic' ? (
+        <AutoRunChecklist
+          film={film}
+          scenes={scenes}
+          busy={busy}
+          assemblyActive={film.status === 'assembling'}
+          appError={error}
+          onRetryCast={handleGenerateMissingCast}
+          onRetryStoryboards={handleRetryFailedStoryboards}
+          onStartProduction={handleAutoApproveAndStart}
+          onRetryClip={async (scene) => { handleStartScene(scene); }}
+          onRetryJoin={async () => { setScreen('final'); await handleFinalAssembly({ captions }); }}
+        />
+      ) : null}
+
       {jobsOpen && scenes.length ? <section aria-label="Film jobs" style={{ flexShrink: 0, maxHeight: 320, overflowY: 'auto', background: T.raised, borderBottom: `1px solid ${T.line}`, padding: '10px 20px' }}><div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 6 }}>{[...scenes].sort((a, b) => a.idx - b.idx).map((scene) => <div key={scene.id} style={{ minHeight: 44, display: 'grid', gridTemplateColumns: '72px 110px minmax(0,1fr)', gap: 8, alignItems: 'center', color: T.muted, fontSize: 12 }}><span style={{ color: T.bone, fontFamily: T.mono }}>Scene {scene.idx + 1}</span><span style={{ color: scene.status === 'failed' ? T.fault : scene.status === 'completed' ? T.done : T.live, textTransform: 'capitalize' }}>{String(scene.status || 'waiting').replace(/_/g, ' ')}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{scene.error ? friendlyAppError(scene.error) : scene.asset_url ? 'Clip saved.' : scene.prompt ? 'Prompt ready.' : 'Waiting for its turn.'}</span></div>)}{adminDiagnoses.length ? <details style={{ marginTop: 6, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', color: T.live, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>Founder diagnostics across users · {adminDiagnoses.length}</summary><div style={{ display: 'grid', gap: 7 }}>{adminDiagnoses.map((item) => <div key={item.id} style={{ background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 8, padding: 9, color: T.muted, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}><b style={{ color: T.bone }}>{item.diagnosis?.category || 'unknown'} · {item.provider_model || 'unknown model'}</b><br />User/job: {item.user_session_id || 'unknown'} / {item.operation_id || item.id}<br />Raw provider error: {item.diagnosis?.raw_provider_error || 'not recorded'}<br />Next debug step: {item.diagnosis?.next_debug_step || 'Inspect provider request evidence.'}</div>)}</div></details> : null}</div></section> : null}
 
       {error ? (
@@ -1904,7 +2511,8 @@ function ScriptToVideoApp() {
           <AlertCircle size={16} color={T.fault} style={{ flexShrink: 0, marginTop: 1 }} />
           <span><b>We couldn’t finish that step.</b><br />{friendlyAppError(error)}</span>
           {classifyError(error).canSwitchToOmni && film && scenes.length ? <button type="button" onClick={() => void handleSwitchToOmni()}>Switch to Omni</button> : null}
-          <button type="button" onClick={retryCurrentScreen}>Retry</button>
+          {classifyError(error).kind === 'auth' ? <button type="button" onClick={() => beginCreditEmailSignIn()}>Sign in again</button> : null}
+          {classifyError(error).canRetry ? <button type="button" onClick={retryCurrentScreen}>Retry</button> : null}
           <button type="button" aria-label="Dismiss error" onClick={() => setError('')}>Dismiss</button>
         </div>
       ) : null}
@@ -1954,6 +2562,9 @@ function ScriptToVideoApp() {
           onSkip={handleSkip}
           onGenerateCharacterDialogue={handleCharacterDialogueFallback}
           dialogueAudioSceneId={dialogueAudioSceneId}
+          sceneInFlightId={sceneInFlightId}
+          generateAllInFlight={generateAllInFlight}
+          onStartScene={handleStartScene}
           onGenerateAll={handleGenerateAll}
           onToggleStyleLock={handleToggleStyleLock}
           onUpdateCharacter={handleUpdateCharacter}
@@ -1972,6 +2583,10 @@ function ScriptToVideoApp() {
           onDeletePlanScene={handleDeletePlanScene}
           onAudioProbe={handleAudioProbe}
           manualMode={manualMode}
+          runnerStalled={runnerStalled}
+          runnerIssue={runnerIssue}
+          onRestartRunner={handleRestartRunner}
+          blockStartError={blockStartError}
         /></Suspense>
       ) : null}
 
@@ -1993,11 +2608,15 @@ function ScriptToVideoApp() {
           onSkipLayer={handleSkipLayer}
           onChangeVoice={handleChangeVoice}
           onChangeMusic={handleChangeMusic}
+          onAcceptMusic={handleAcceptMusic}
           onNativeCut={handleNativeCut}
           voiceSource={voiceSource}
           openaiVoice={openaiVoice}
           elevenLabsOffered={elevenOffered}
           onChangeVoiceSource={handleChangeVoiceSource}
+          finishPrefs={finishPrefs}
+          onFinishPrefs={setFinishPrefs}
+          onStopAssembly={handleStopFinish}
         /></Suspense>
       ) : null}
 
@@ -2007,7 +2626,7 @@ function ScriptToVideoApp() {
 
       {/* Persistent Final Assembly bar — in normal document flow BELOW the
           chat input, so neither can ever cover the other on any viewport. */}
-      {(screen === 'board' || screen === 'final') && film && scenes.length ? (
+      {screen === 'board' && film && scenes.length ? (
         <Suspense fallback={null}><AssemblyBar
           film={film}
           scenes={scenes}

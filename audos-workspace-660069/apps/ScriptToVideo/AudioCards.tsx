@@ -29,6 +29,7 @@ import VergeLoader from '../../components/VergeLoader';
 import { useVoiceCatalog } from '../../components/shared/VoicePicker';
 import VoiceChooser from './VoiceChooser';
 import { SelectField } from './audioUi';
+import { MUSIC_NOTES, PICKER_HELP } from './optionPreviews';
 
 type LayerState = 'done' | 'active' | 'failed' | 'todo' | 'skipped';
 type LayerKey = 'narration' | 'music' | 'sfx';
@@ -101,6 +102,7 @@ function VoiceSourcePicker(props: {
 }) {
   return (
     <div id="s2v-voice-source" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <p className="s2v-au-help">{PICKER_HELP.voiceSource}</p>
       <div className="s2v-au-label">Voice source</div>
       <div role="radiogroup" aria-label="Voice source" className="s2v-au-sources">
         {VOICE_SOURCES.map((option) => {
@@ -179,6 +181,7 @@ export default function AudioCards(props: {
   onRegenSfx: () => void;
   onChangeVoice: (voiceId: string, voiceName?: string) => void;
   onChangeMusic: (preset: string) => void;
+  onAcceptMusic: () => void;
   onRetryLayer: (layer: LayerKey) => void;
   onSkipLayer: (layer: LayerKey) => void;
 }) {
@@ -216,9 +219,11 @@ export default function AudioCards(props: {
 
   // —— Music ——
   const music = audio?.music || null;
+  const musicCandidate = (audio as any)?.music_candidate || null;
   const mReady = !!audio && musicReady(audio);
   const mState: LayerState = music?.status === 'skipped' ? 'skipped' : music?.status === 'failed' ? 'failed' : mReady ? 'done' : generating && nReady && !mReady ? 'active' : 'todo';
   const musicProvider = music?.provider === 'gemini' ? 'Google Gemini (Lyria)' : music?.provider === 'elevenlabs' ? 'ElevenLabs' : '';
+  const selectedMusicPreset = (MUSIC_PRESETS as readonly string[]).includes(String(music?.preset)) ? String(music?.preset) : 'cinematic';
 
   // —— SFX ——
   const sfxItems = audio?.sfx || [];
@@ -390,6 +395,9 @@ export default function AudioCards(props: {
             </div>
           </div>
 
+          {musicCandidate?.audioUrl ? <div className="s2v-au-item" style={{ borderColor: T.live }}><div className="s2v-au-item-main"><PlayButton playing={isPlaying('music')} enabled label="replacement music preview" onClick={() => toggle('music', [String(musicCandidate.audioUrl)])} /><div className="s2v-au-item-text"><div className="s2v-au-item-title">Replacement ready</div><div className="s2v-au-item-sub">The accepted track and previous final video are still unchanged.</div></div></div><div className="s2v-au-actions"><button type="button" className="s2v-au-btn is-primary" disabled={locked} onClick={props.onAcceptMusic}><Check size={16} /> Approve replacement</button></div></div> : null}
+          {musicCandidate?.status === 'failed' ? <p className="s2v-au-msg" style={{ color: T.fault }}>{musicCandidate.error || 'Replacement music failed. The accepted track is unchanged.'}</p> : null}
+
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span className="s2v-au-label">Music style</span>
             <SelectField
@@ -401,6 +409,7 @@ export default function AudioCards(props: {
               {MUSIC_PRESETS.map((p) => <option key={p} value={p}>{capitalize(p)}</option>)}
             </SelectField>
           </label>
+          {MUSIC_NOTES[selectedMusicPreset] ? <p className="s2v-au-help">{MUSIC_NOTES[selectedMusicPreset]}</p> : null}
           <p className="s2v-au-help">Changing the style re-composes the music bed only. It ducks under narration automatically, and the video clips are never regenerated.</p>
         </div>
       ) : null}

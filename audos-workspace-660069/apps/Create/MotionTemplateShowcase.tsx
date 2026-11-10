@@ -118,7 +118,7 @@ function ScreenWindow({ template }: { template: MotionTemplate }) {
         width: '100%',
         borderRadius: 14,
         overflow: 'hidden',
-        background: '#0b1220',
+        background: '#0B0D12',
         border: '1px solid rgba(255,255,255,0.14)',
         boxShadow: `0 30px 70px -30px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,255,255,0.03), 0 20px 60px -30px ${template.accentColor}`,
       }}
@@ -176,7 +176,7 @@ function fieldStyle(): CSSProperties {
     padding: '9px 11px',
     borderRadius: 9,
     border: `1px solid ${T.border}`,
-    background: '#FFFFFF',
+    background: 'var(--vg-raised)',
     color: T.text,
     fontSize: 13,
     fontFamily: FONT,
@@ -336,7 +336,7 @@ export default function MotionTemplateShowcase() {
                 border: `1px solid ${sel ? 'transparent' : T.border}`,
                 background: sel
                   ? `color-mix(in srgb, ${t.accentColor} 22%, transparent)`
-                  : 'rgba(180,120,0,0.05)',
+                  : 'var(--vg-surface)',
                 boxShadow: sel ? `inset 0 0 0 1px ${t.accentColor}` : 'none',
                 transition: 'all 0.2s ease',
               }}
@@ -355,7 +355,7 @@ export default function MotionTemplateShowcase() {
           padding: 16,
           borderRadius: 14,
           border: `1px solid ${T.border}`,
-          background: 'rgba(180,120,0,0.05)',
+          background: 'var(--vg-surface)',
         }}
         onFocusCapture={() => setEditing(true)}
         onBlurCapture={() => setEditing(false)}

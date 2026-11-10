@@ -11,7 +11,7 @@ function initials(name: string): string {
 function status(job: QueueJob) {
   if (job.state === 'completed') return { label: 'Ready', fg: 'var(--vg-success)', bg: 'var(--vg-success-bg)', icon: CheckCircle2 };
   if (job.state === 'failed') return { label: 'Failed', fg: 'var(--vg-danger)', bg: 'var(--vg-danger-bg)', icon: AlertCircle };
-  if (job.state === 'active') return { label: 'Generating', fg: 'var(--vg-info)', bg: 'var(--vg-info-bg)', icon: Loader2 };
+  if (job.state === 'active') return { label: 'Generating', fg: 'var(--vg-accent)', bg: 'var(--vg-gold-tint)', icon: Loader2 };
   return { label: 'Queued', fg: 'var(--vg-info)', bg: 'var(--vg-info-bg)', icon: Clock3 };
 }
 

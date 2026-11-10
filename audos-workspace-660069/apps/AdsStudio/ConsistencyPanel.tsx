@@ -60,7 +60,7 @@ const input: CSSProperties = {
 
 const pill = (active: boolean): CSSProperties => ({
   background: active ? T.accent : 'transparent',
-  color: active ? '#FFFFFF' : T.soft,
+  color: active ? 'var(--vg-on-accent)' : T.soft,
   border: `1px solid ${active ? T.accent : T.line}`,
   borderRadius: 999,
   padding: '5px 13px',
@@ -133,8 +133,8 @@ export function SeedBadge(props: {
         <span
           title="This ad inherited the seed your Script-to-Video film was generated on, so the character and style should match it."
           style={{
-            fontSize: 11, fontWeight: 700, color: T.good,
-            border: `1px solid ${T.good}`, borderRadius: 999, padding: '3px 10px', cursor: 'help',
+            fontSize: 11, fontWeight: 700, color: T.accent,
+            border: `1px solid ${T.accent}`, borderRadius: 999, padding: '3px 10px', cursor: 'help',
           }}
         >
           Using seed from Script-to-Video

@@ -26,6 +26,7 @@ import {
   type WordToken,
 } from './studioModel';
 import { validateEditorOperations, type EditorOperation, type EditorProject } from './modernEditorModel';
+import { workspaceFetch } from '../../lib/workspace';
 
 const MODEL = 'gpt-6.1-sol';
 
@@ -35,7 +36,7 @@ function aiHeaders(): Record<string, string> {
   return { 'Content-Type': 'application/json', 'X-Workspace-DB-Token': token };
 }
 
-async function askModel(
+export async function askModel(
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
 ): Promise<string> {
   const base = {
@@ -45,8 +46,8 @@ async function askModel(
     max_completion_tokens: 6000,
     stream: false,
   };
-  const send = (body: Record<string, unknown>) => fetch('/proxy/openai/v1/chat/completions', {
-    method: 'POST', headers: aiHeaders(), body: JSON.stringify(body),
+  const send = (body: Record<string, unknown>) => workspaceFetch('/proxy/openai/v1/chat/completions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   let res = await send({ ...base, response_format: { type: 'json_object' } });
   let data = await res.json().catch(() => null);
@@ -548,7 +549,7 @@ function deterministicNaturalEdit(instruction: string, project: EditorProject): 
 
   if (/\b(caption|captions|subtitle|subtitles)\b/i.test(text)) {
     if (!project.items.some((item) => item.track === 'caption')) operations.push({ type: 'add_captions' });
-    const style = /karaoke/i.test(text) ? 'karaoke' : /neon/i.test(text) ? 'neon' : /minimal|clean/i.test(text) ? 'minimal' : /boxed/i.test(text) ? 'bold' : /retro|typewriter/i.test(text) ? 'newsroom' : /bold|pop/i.test(text) ? 'tiktok' : '';
+    const style = /karaoke/i.test(text) ? 'k' : /neon/i.test(text) ? 'ne' : /minimal|clean/i.test(text) ? 'mn' : /boxed|news/i.test(text) ? 'nb' : /retro|typewriter/i.test(text) ? 'tw' : /serif/i.test(text) ? 'mx' : /behind/i.test(text) ? 'bhc' : /bold|pop/i.test(text) ? 'pop' : '';
     if (style) { operations.push({ type: 'set_style', styleId: style }); notes.push(`used ${style} captions`); }
     if (/\b(bigger|larger|increase.*size)\b/i.test(text)) { operations.push({ type: 'set_caption_size', size: Math.min(120, (project.caption.size || 62) + 18) }); notes.push('made captions larger'); }
     if (/\b(smaller|decrease.*size)\b/i.test(text)) { operations.push({ type: 'set_caption_size', size: Math.max(24, (project.caption.size || 62) - 14) }); notes.push('made captions smaller'); }
@@ -591,7 +592,7 @@ export async function planNaturalLanguageEdit(instruction: string, project: Edit
   if (deterministic) return deterministic;
   const clips = project.items.filter((item) => item.track === 'video').sort((a, b) => a.start - b.start).map((item, index) => ({ index: index + 1, id: item.id, start: item.start, end: item.start + item.duration, speed: item.speed || 1 }));
   const raw = await askModel([
-    { role: 'system', content: 'You are Verger, a precise non-linear video editor. Return one JSON object only. Map the request to safe operations. If one fact is missing, return one short question and no operations. Unsupported requests get a plain reply and no operations. Allowed operations: cut(start,end), trim(start,end), split(start), add_captions, set_style(styleId), set_caption_position(position,x?,y?), set_caption_size(size), set_caption_animation(animation), add_effect(effectId,intensity,scope,itemId?), set_speed(itemId,clipIndex,speed), add_music(musicId). Caption styles: tiktok,karaoke,minimal,neon,bold,newsroom. Positions: top,upper-third,middle,lower-third,bottom. Effects: filmGrain,vhs,vignette,lightLeak,glitch,chromaticAberration,bloom,halation,dustScratches,gradeWarmRetro,gradeTealOrange,gradeBw,gradeFaded,shake,zoomPunch,blur,speedRamp,fadeDissolve. Shape: {"summary":"short","question":null|string,"operations":[]}.' },
+    { role: 'system', content: 'You are Verger, a precise non-linear video editor. Return one JSON object only. Map the request to safe operations. If one fact is missing, return one short question and no operations. Unsupported requests get a plain reply and no operations. Allowed operations: cut(start,end), trim(start,end), split(start), add_captions, set_style(styleId), set_caption_position(position,x?,y?), set_caption_size(size), set_caption_animation(animation), set_word_role(wordId,role), set_caption_behind(on,size,which), add_transition(atItemId,kind), add_sfx(t,id), add_voiceover(t,text), add_effect(effectId,intensity,scope,itemId?), set_speed(itemId,clipIndex,speed), add_music(musicId). Caption styles: pop,hz,bk,ol,mn,k,gl,nb,mx,st,hw,ed,bh,bhc,ne,tw,stk. Positions: top,upper-third,middle,lower-third,bottom. Effects: filmGrain,vhs,vignette,lightLeak,glitch,chromaticAberration,bloom,halation,dustScratches,gradeWarmRetro,gradeTealOrange,gradeBw,gradeFaded,shake,zoomPunch,blur,speedRamp,fadeDissolve. Shape: {"summary":"short","question":null|string,"operations":[]}.' },
     { role: 'user', content: JSON.stringify({ instruction, duration: Math.max(0, ...project.items.map((item) => item.start + item.duration)), clips, caption: project.caption, transcriptWords: project.words.slice(0, 1600) }) },
   ]);
   const parsed = parseJson(raw);

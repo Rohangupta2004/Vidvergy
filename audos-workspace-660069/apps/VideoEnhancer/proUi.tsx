@@ -34,7 +34,7 @@ export const PRO = {
     audio: '#4ade80',
     text: '#D4920A',
     fx: '#fbbf24',
-    caption: '#BE185D',
+    caption: '#FFC23D',
   },
   font: "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
   mono: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",

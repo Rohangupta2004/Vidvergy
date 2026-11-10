@@ -119,17 +119,17 @@ function Pill({
     tone === 'good' ? T.success : tone === 'bad' ? T.danger : tone === 'busy' ? T.accentFg : T.muted;
   const border =
     tone === 'good'
-      ? 'rgba(22,101,52,0.32)'
+      ? 'color-mix(in srgb, var(--vg-success) 32%, transparent)'
       : tone === 'bad'
-        ? 'rgba(153,27,27,0.3)'
+        ? 'color-mix(in srgb, var(--vg-danger) 30%, transparent)'
         : tone === 'busy'
           ? T.accentBorder
           : T.border;
   const background =
     tone === 'good'
-      ? 'rgba(22,101,52,0.08)'
+      ? 'var(--vg-success-bg)'
       : tone === 'bad'
-        ? 'rgba(153,27,27,0.07)'
+        ? 'var(--vg-danger-bg)'
         : tone === 'busy'
           ? T.accentSoft
           : 'transparent';
@@ -225,7 +225,7 @@ function ClipDots({ ep }: { ep: EpisodeState }) {
                     ? T.danger
                     : busy
                       ? T.accentFg
-                      : 'rgba(180,120,0,0.25)',
+                      : 'var(--vg-control-border)',
             }}
           />
         );
@@ -348,11 +348,11 @@ function EpisodeCard({
             borderRadius: 8,
             fontSize: 12,
             fontWeight: 700,
-            color: ep.status === 'done' ? '#fff' : T.sub,
+            color: ep.status === 'done' ? 'var(--vg-on-btn)' : T.sub,
             background:
               ep.status === 'done'
-                ? 'linear-gradient(135deg, #E8B737, #C8920A)'
-                : 'rgba(180,120,0,0.1)',
+                ? 'var(--vg-btn)'
+                : 'var(--vg-raised)',
           }}
         >
           {ep.index}
@@ -643,7 +643,7 @@ function BriefScreen({
                 padding: '8px 10px',
                 borderRadius: 999,
                 border: `1px solid ${T.border}`,
-                background: 'rgba(180,120,0,0.05)',
+                background: 'var(--vg-raised)',
                 color: T.text,
                 fontSize: 13,
                 fontFamily: 'inherit',
@@ -726,7 +726,7 @@ function BriefScreen({
                   width: 44,
                   height: 44,
                   borderRadius: 10,
-                  background: 'rgba(180,120,0,0.1)',
+                  background: 'var(--vg-raised)',
                 }}
               >
                 <Users size={17} color={T.muted} />

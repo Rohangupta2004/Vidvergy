@@ -83,9 +83,9 @@ export function usePersistentEngine(storageKey: string, defaultId: string): [str
 
 export function EngineBadge({ tier, label, style }: { tier: EngineTier | 'Coming Soon' | 'Gated' | 'Unavailable'; label?: string; style?: CSSProperties }) {
   const c = tier === 'Coming Soon' || tier === 'Unavailable'
-    ? { bg: 'rgba(148,163,184,0.18)', fg: '#94A3B8' }
+    ? { bg: 'var(--vg-raised)', fg: 'var(--vg-muted)' }
     : tier === 'Gated'
-      ? { bg: 'rgba(240,180,41,0.16)', fg: '#F0B429' }
+      ? { bg: 'var(--vg-gold-tint)', fg: 'var(--vg-accent)' }
       : tierColor(tier);
   return (
     <span style={{ display: 'inline-block', background: c.bg, color: c.fg, borderRadius: 6, padding: '2px 7px', fontSize: 10, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', whiteSpace: 'nowrap', ...style }}>
@@ -172,7 +172,7 @@ export function EnginePicker(props: EnginePickerProps) {
   return (
     <div style={props.style}>
       {props.label ? (
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--space-text-muted, #94A3B8)', marginBottom: 6 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--vg-muted)', marginBottom: 6 }}>
           {props.label}
         </div>
       ) : null}
@@ -182,8 +182,8 @@ export function EnginePicker(props: EnginePickerProps) {
           disabled={props.disabled}
           onChange={(e) => props.onChange(e.target.value)}
           style={{
-            background: 'var(--space-surface-muted, #18150A)', color: 'var(--space-text-primary, #F5E9C8)',
-            border: '1px solid var(--space-border-default, rgba(255,255,255,0.1))', borderRadius: 8,
+            background: 'var(--vg-bg)', color: 'var(--vg-text)',
+            border: '1px solid var(--vg-control-border)', borderRadius: 8,
             padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: props.disabled ? 'default' : 'pointer',
             maxWidth: '100%', minWidth: 0,
           }}
@@ -232,15 +232,15 @@ export function EnginePicker(props: EnginePickerProps) {
       {/* The health warning goes ABOVE the capability line: what a model can
           accept does not matter if the proxy will refuse it. */}
       {selectedWarning ? (
-        <div style={{ fontSize: 11, color: 'var(--space-semantic-danger, #f87171)', marginTop: 5, lineHeight: 1.45 }}>
+        <div style={{ fontSize: 11, color: 'var(--vg-danger)', marginTop: 5, lineHeight: 1.45 }}>
           {selectedWarning}
         </div>
       ) : null}
       {capabilityNote ? (
-        <div style={{ fontSize: 11, color: 'var(--space-text-muted, #9E8B55)', marginTop: 5, lineHeight: 1.45 }}>{capabilityNote}</div>
+        <div style={{ fontSize: 11, color: 'var(--vg-muted)', marginTop: 5, lineHeight: 1.45 }}>{capabilityNote}</div>
       ) : null}
       {props.note ? (
-        <div style={{ fontSize: 11, color: 'var(--space-text-muted, #94A3B8)', marginTop: 3, lineHeight: 1.45 }}>{props.note}</div>
+        <div style={{ fontSize: 11, color: 'var(--vg-muted)', marginTop: 3, lineHeight: 1.45 }}>{props.note}</div>
       ) : null}
     </div>
   );
@@ -296,7 +296,7 @@ export function ImageEnginePicker(props: ImageEnginePickerProps) {
   return (
     <div style={props.style}>
       {props.label ? (
-        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--space-text-muted, #94A3B8)', marginBottom: 6 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--vg-muted)', marginBottom: 6 }}>
           {props.label}
         </div>
       ) : null}
@@ -311,8 +311,8 @@ export function ImageEnginePicker(props: ImageEnginePickerProps) {
             props.onChange(id);
           }}
           style={{
-            background: 'var(--space-surface-muted, #18150A)', color: 'var(--space-text-primary, #F5E9C8)',
-            border: '1px solid var(--space-border-default, rgba(255,255,255,0.1))', borderRadius: 8,
+            background: 'var(--vg-bg)', color: 'var(--vg-text)',
+            border: '1px solid var(--vg-control-border)', borderRadius: 8,
             padding: '8px 10px', fontSize: 12.5, fontWeight: 600, cursor: props.disabled ? 'default' : 'pointer',
             maxWidth: '100%', minWidth: 0,
           }}
@@ -334,10 +334,10 @@ export function ImageEnginePicker(props: ImageEnginePickerProps) {
         {selectedRunway && !selectedRunway.available ? <EngineBadge tier="Unavailable" /> : null}
       </div>
       {note ? (
-        <div style={{ fontSize: 11, color: 'var(--space-text-muted, #94A3B8)', marginTop: 5, lineHeight: 1.45 }}>{note}</div>
+        <div style={{ fontSize: 11, color: 'var(--vg-muted)', marginTop: 5, lineHeight: 1.45 }}>{note}</div>
       ) : null}
       {props.note ? (
-        <div style={{ fontSize: 11, color: 'var(--space-text-muted, #94A3B8)', marginTop: 3, lineHeight: 1.45 }}>{props.note}</div>
+        <div style={{ fontSize: 11, color: 'var(--vg-muted)', marginTop: 3, lineHeight: 1.45 }}>{props.note}</div>
       ) : null}
     </div>
   );

@@ -102,7 +102,7 @@ export default function BrandConfirmCard({ capture, busy, onConfirm, onCancel }:
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Confirm your brand" style={{ position: 'fixed', inset: 0, zIndex: 95, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(26,16,0,0.35)' }}>
+    <div role="dialog" aria-modal="true" aria-label="Confirm your brand" style={{ position: 'fixed', inset: 0, zIndex: 95, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,0.6)' }}>
       <div className="ps-fade-up" style={{ width: 'min(560px, 94vw)', maxHeight: '92vh', overflowY: 'auto', borderRadius: 18, border: `1px solid ${S.borderStrong}`, background: S.panelStrong, padding: 'clamp(16px, 3vw, 24px)', boxSizing: 'border-box' }} data-testid="brand-confirm-card">
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 4 }}>
           <span aria-hidden="true" style={{ display: 'inline-flex', width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', color: S.brand, background: 'var(--space-surface-accent-soft)', flexShrink: 0 }}>

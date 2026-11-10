@@ -23,11 +23,11 @@ import VergeLoader from '../../components/VergeLoader';
 
 const DONE = new Set(['completed', 'skipped']);
 
-const ON_ACCENT = 'var(--vg-on-accent, #1B1308)';
+const ON_ACCENT = 'var(--vg-on-btn)';
 
 const barBtn = (kind: 'accent' | 'disabled' | 'ghost' | 'fault') => ({
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-  background: kind === 'accent' ? 'var(--vg-gradient-action, var(--vg-accent, #D9A441))' : kind === 'fault' ? `color-mix(in srgb, ${T.fault} 14%, transparent)` : T.raised,
+  background: kind === 'accent' ? 'var(--vg-gradient-action, var(--vg-btn))' : kind === 'fault' ? `color-mix(in srgb, ${T.fault} 14%, transparent)` : T.raised,
   color: kind === 'accent' ? ON_ACCENT : kind === 'fault' ? T.fault : kind === 'ghost' ? T.bone : T.dim,
   border: kind === 'fault' ? `1px solid color-mix(in srgb, ${T.fault} 45%, transparent)` : kind === 'accent' ? 'none' : `1px solid ${T.line}`,
   borderRadius: 10, padding: '11px 20px', minHeight: 44, maxWidth: '100%', fontSize: 13, fontWeight: 800, letterSpacing: 0.4,
@@ -91,7 +91,7 @@ export default function AssemblyBar(props: {
       : !allDone ? `Producing scenes ${completedN}/${total}`
         : anyAudioFail ? 'Audio needs attention'
           : audioRunning || busy ? 'Preparing narration, music and effects'
-            : canAssemble ? 'Everything is ready — final assembly is starting'
+            : canAssemble ? 'Every clip and audio layer is ready for final assembly'
               : 'Preparing post-production';
 
   return (
@@ -132,9 +132,9 @@ export default function AssemblyBar(props: {
             className="s2v-lift"
             style={barBtn('accent')}
             onClick={props.onFinalAssembly}
-            title="Assembly starts automatically. Existing scene videos and ready audio layers are reused; no scene is regenerated."
+            title="Joins the finished clips with your audio choices. Existing scene videos and ready audio layers are reused; no scene is regenerated."
           >
-            <Layers size={15} /> FINAL ASSEMBLY — STARTING…
+            <Layers size={15} /> FINAL ASSEMBLY
           </button>
         ) : anyAudioFail ? (
           <button style={barBtn('fault')} onClick={props.onOpenFinal} title="An audio layer failed — retry it, or continue without it: every layer, the voiceover included, is optional. Completed scenes are untouched.">

@@ -72,7 +72,7 @@ const CSS = `
 .svp-search svg { position:absolute; left:13px; top:50%; width:16px; height:16px; transform:translateY(-50%); color:var(--space-text-muted); pointer-events:none; }
 .svp-search input, .svp-filter { width:100%; min-height:44px; border-radius:12px; border:1px solid var(--space-border-default); background:var(--space-surface-panel); color:var(--space-text-primary); font:inherit; outline:none; }
 .svp-search input { padding:10px 14px 10px 40px; }
-.svp-search input:focus, .svp-filter:focus { border-color:var(--space-brand-primary-500); box-shadow:0 0 0 3px color-mix(in srgb,var(--space-brand-primary-500) 18%,transparent); }
+.svp-search input:focus, .svp-filter:focus { border-color:var(--vg-focus); box-shadow:0 0 0 3px color-mix(in srgb,var(--vg-focus) 18%,transparent); }
 .svp-filters { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
 .svp-filter-wrap { position:relative; }
 .svp-filter { appearance:none; padding:9px 32px 9px 11px; font-size:12px; }
@@ -87,7 +87,9 @@ const CSS = `
 .svp-chip.is-own { border-color:color-mix(in srgb,var(--space-brand-primary-500) 40%,transparent); color:var(--space-text-brand); }
 .svp-button { display:inline-flex; min-height:44px; align-items:center; justify-content:center; gap:6px; border:1px solid var(--space-border-strong); border-radius:11px; padding:8px 11px; background:var(--space-surface-panel); color:var(--space-text-primary); font:inherit; font-size:12px; font-weight:700; cursor:pointer; }
 .svp-button:hover { border-color:var(--space-brand-primary-500); }
-.svp-button.primary { border-color:var(--space-brand-primary-600); background:var(--space-brand-primary-600); color:white; }
+.svp-button.primary { border-color:var(--vg-btn); background:var(--vg-btn); color:var(--vg-on-btn); }
+.svp-button.primary:hover:not(:disabled) { border-color:var(--vg-btn-hover); background:var(--vg-btn-hover); }
+.svp-button.primary:active:not(:disabled) { border-color:var(--vg-btn-pressed); background:var(--vg-btn-pressed); }
 .svp-button:disabled { cursor:not-allowed; opacity:.55; }
 .svp-empty { padding:24px 14px; text-align:center; color:var(--space-text-secondary); font-size:13px; line-height:1.5; }
 .svp-note { margin:0; color:var(--space-text-muted); font-size:11px; line-height:1.5; }

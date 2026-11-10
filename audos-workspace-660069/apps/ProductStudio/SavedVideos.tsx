@@ -216,13 +216,13 @@ export default function SavedVideos({ onAddSound }: {
                 ) : v.video_url ? (
                   <video src={v.video_url} preload="metadata" muted playsInline style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }} data-testid={`saved-video-${v.id}`} />
                 ) : (
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, var(--space-brand-primary-700), var(--space-brand-primary-500))' }} />
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, color-mix(in srgb, var(--vg-accent) 22%, var(--vg-raised)), var(--vg-surface))' }} />
                 )}
-                <span style={{ position: 'absolute', top: 10, left: 10, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#fff', background: 'rgba(26,16,0,0.72)', border: `1px solid ${S.borderStrong}` }} data-testid={`saved-style-${v.id}`}>
+                <span style={{ position: 'absolute', top: 10, left: 10, padding: '3px 10px', borderRadius: 999, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase', color: '#fff', background: 'rgba(0,0,0,0.72)', border: `1px solid ${S.borderStrong}` }} data-testid={`saved-style-${v.id}`}>
                   {v.style_label || 'Product video'}
                 </span>
                 {runtimeLabel(v) ? (
-                  <span style={{ position: 'absolute', bottom: 10, right: 10, padding: '2px 8px', borderRadius: 7, fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'rgba(26,16,0,0.72)', fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ position: 'absolute', bottom: 10, right: 10, padding: '2px 8px', borderRadius: 7, fontSize: 10.5, fontWeight: 800, color: '#fff', background: 'rgba(0,0,0,0.72)', fontVariantNumeric: 'tabular-nums' }}>
                     {runtimeLabel(v)}
                   </span>
                 ) : null}

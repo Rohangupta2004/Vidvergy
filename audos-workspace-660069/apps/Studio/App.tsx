@@ -41,7 +41,7 @@ const inputStyle: React.CSSProperties = {
   padding: '11px 13px',
   borderRadius: 11,
   border: '1px solid var(--space-border-default)',
-  background: 'rgba(180,120,0,0.06)',
+  background: 'var(--vg-raised)',
   color: 'var(--space-text-primary)',
   fontSize: 13.5,
   outline: 'none',
@@ -154,8 +154,8 @@ export default function App() {
         {/* Header */}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 22 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 12, background: 'linear-gradient(135deg, var(--space-brand-primary-600), var(--space-brand-primary-700))', boxShadow: '0 8px 24px rgba(200,146,10,0.4)' }}>
-              <Clapperboard size={19} color="#fff" />
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 12, background: 'var(--vg-btn)', boxShadow: '0 8px 24px rgba(212,175,55,0.3)' }}>
+              <Clapperboard size={19} color="var(--vg-on-btn)" />
             </span>
             <div>
               <h1 style={{ margin: 0, fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Reelio</h1>
@@ -477,12 +477,12 @@ export default function App() {
                     borderRadius: 13,
                     fontSize: 15,
                     fontWeight: 700,
-                    color: 'var(--space-text-on-primary)',
+                    color: 'var(--vg-on-btn)',
                     border: 'none',
                     cursor: canGenerate ? 'pointer' : 'not-allowed',
                     opacity: canGenerate ? 1 : 0.45,
-                    background: 'linear-gradient(90deg, var(--space-brand-primary-600), var(--space-brand-primary-500))',
-                    boxShadow: canGenerate ? '0 10px 30px rgba(200,146,10,0.4)' : 'none',
+                    background: 'var(--vg-btn)',
+                    boxShadow: canGenerate ? '0 10px 30px rgba(212,175,55,0.3)' : 'none',
                   }}
                   data-testid="button-generate"
                 >
