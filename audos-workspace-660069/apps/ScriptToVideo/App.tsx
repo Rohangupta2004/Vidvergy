@@ -323,7 +323,7 @@ const CTA_GRADIENT = 'var(--vg-gradient-action)';
 const ON_ACCENT = 'var(--vg-on-accent, var(--space-text-on-primary))';
 
 function ScriptToVideoApp() {
-  const [screen, setScreen] = useState<Screen>('library');
+  const [screen, setScreen] = useState<Screen>('create');
   const [films, setFilms] = useState<Film[]>([]);
   const [legacy, setLegacy] = useState<LegacyFilm[]>([]);
   const [libLoading, setLibLoading] = useState(true);
@@ -2489,13 +2489,10 @@ function ScriptToVideoApp() {
     >
     <div className="s2v-app" style={{ position: 'relative', width: '100%', height: '100%', minHeight: 480, display: 'flex', flexDirection: 'column', background: 'transparent', fontFamily: T.sans, overflow: 'hidden' }}>
       <style>{APP_CSS + S2V_POLISH_CSS}</style>
-      <div className="s2v-topbar" style={{ padding: '12px 20px', borderBottom: `1px solid ${T.raised}`, flexShrink: 0 }}>
-        <ProductSuiteHeader
-          name="Script-to-Video"
-          voice="I read your whole script, protect continuity, and direct the film one verified clip at a time."
-          working={busy || Boolean(note)}
-          showIcon={false}
-          actions={(
+      <div className="s2v-topbar vx" style={{ padding: '10px 16px', flexShrink: 0 }}>
+        <div className="row between wrap" style={{ gap: 10 }}>
+          <span className="eyebrow">{busy ? 'Working…' : screen === 'library' ? 'Your films' : screen === 'create' ? 'New film' : screen === 'final' ? 'Finish' : screen === 'board' ? 'Production' : 'Film'}</span>
+          <div className="row wrap" style={{ gap: 8 }}>
             <>
               <div role="group" aria-label="Script-to-Video detail level" style={{ display: 'inline-flex', padding: 3, borderRadius: 999, border: `1px solid ${T.dim}`, background: T.canvas }}><button type="button" aria-pressed={!manualMode} onClick={() => setManualMode(false)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: !manualMode ? T.live : 'transparent', color: !manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>Simple</button><button type="button" aria-pressed={manualMode} onClick={() => setManualMode(true)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: manualMode ? T.live : 'transparent', color: manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>More detail</button></div>
               {scenes.length ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Blocks · {scenes.length}</button> : null}
@@ -2505,8 +2502,8 @@ function ScriptToVideoApp() {
                 </button>
               ) : null}
             </>
-          )}
-        />
+          </div>
+        </div>
       </div>
 
       <StudioStepper screen={screen} film={film} scenes={scenes} />
@@ -2644,8 +2641,6 @@ function ScriptToVideoApp() {
       ) : null}
 
       {screen === 'legacy' && legacyOpen ? <LegacyViewer legacy={legacyOpen} /> : null}
-
-      {showDirector && film ? <Suspense fallback={null}><AgentPanel film={film} scenes={scenes} busy={busy} onExecute={handleAgentProposal} onUndo={handleAgentUndo} onPersist={handlePersistAssistant} /></Suspense> : null}
 
       {/* Persistent Final Assembly bar — in normal document flow BELOW the
           chat input, so neither can ever cover the other on any viewport. */}
