@@ -19,11 +19,15 @@
  * reads the live provider catalogs and reports ok/error plus latency per
  * endpoint, and it generates nothing — it is the live answer that replaced the
  * hand-written availability verdicts in lib/videoEngines.ts.
+ *
+ * The 3D Scene Builder tab (./scene3d) is a second mode beside the
+ * conversation. It is lazy-loaded, and a render it produces comes back here
+ * as ordinary image attachments on the normal send path.
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
-  Activity, AlertCircle, ChevronDown, ChevronUp, Download, FileText, Film, Music, Paperclip, Send, X,
+  Activity, AlertCircle, ChevronDown, ChevronUp, Download, FileText, Film, Hexagon, MessageCircle, Music, Paperclip, Send, X,
 } from 'lucide-react';
 
 import {
@@ -54,6 +58,8 @@ import {
 import type { LabRun, RunContext, RunResult } from './labClient';
 import HealthPanel from './HealthPanel';
 import { MODEL_NOTES, MODEL_PICKER_HELP } from './modelNotes';
+import Scene3DMode from './scene3d/Scene3DMode';
+import type { SceneHandoff } from './scene3d/Scene3DMode';
 import { useSpaceRuntime } from '../../SpaceRuntimeContext';
 import AppShell from '../../components/ui/AppShell';
 import { COLORS, FONT as THEME_FONT, alpha } from '../../components/theme';
@@ -476,6 +482,8 @@ function VideoProviderLab() {
   const [showHealth, setShowHealth] = useState(false);
   // Bumped whenever a run lands so the shared Your videos list reloads.
   const [historyKey, setHistoryKey] = useState(0);
+  // Generate (the conversation) stays the default mode.
+  const [labMode, setLabMode] = useState<'generate' | 'scene3d'>('generate');
 
   const mounted = useRef(true);
   const knownJobs = useRef<Set<number>>(new Set());
@@ -912,6 +920,54 @@ function VideoProviderLab() {
     launch(model, runInput, (ctx) => runLabModel(model, runInput, ctx));
   }, [active, busy, input, launch, pending, prompt, pushMessage, tool, runBlock]);
 
+  // A 3D Scene Builder render arrives as ordinary attachments on the normal
+  // send path, so model choice, the cost line, credit authorisation, the run
+  // ledger and Your videos behave exactly as they do for an uploaded image.
+  const receiveSceneHandoff = useCallback((handoff: SceneHandoff) => {
+    const ratioOf = (value: string) => {
+      const [w, h] = String(value).split(':').map((part) => Number(part) || 0);
+      return w > 0 && h > 0 ? w / h : 0;
+    };
+    const fits = (model: LabModel) => {
+      if (!model.available || isKlingTool(model) || model.image === 'none') return false;
+      if (!supportedImageRoles(model).some((role) => role.id === handoff.role)) return false;
+      if (handoff.role === 'reference') return handoff.images.length >= model.params.minRefs;
+      return true;
+    };
+    const fallback = labModel(DEFAULT_LAB_MODEL_KEY);
+    const model = fits(active) ? active : fallback && fits(fallback) ? fallback : active;
+    const limit = handoff.role === 'frames' ? 2 : handoff.role === 'reference' ? model.params.maxRefs : 1;
+    const images = handoff.images.slice(0, Math.max(1, Math.min(MAX_ATTACHED_IMAGES, limit)));
+    const aspect = model.params.aspectRatios.find((ratio) => Math.abs(ratioOf(ratio) - ratioOf(handoff.aspectRatio)) < 0.01) || '';
+    setActiveKey(model.key);
+    setInput((prev) => {
+      const next = retargetRunInput(prev, model);
+      return {
+        ...next,
+        imageRole: handoff.role,
+        aspectRatio: aspect || next.aspectRatio,
+        mode: handoff.role === 'frames' && model.params.endFrameMode ? model.params.endFrameMode : next.mode,
+      };
+    });
+    setPending(images.map((dataUrl, index) => ({
+      id: messageId('att'),
+      name: `3d-scene-${index + 1}.jpg`,
+      mime: 'image/jpeg',
+      kind: 'image' as AttachmentKind,
+      dataUrl,
+    })));
+    setPrompt(handoff.prompt);
+    const placement = handoff.role === 'frames' ? 'as the first and last frame' : handoff.role === 'reference' ? 'as reference images' : 'as the start frame';
+    setAttachNotice([
+      `Your 3D scene render${images.length === 1 ? ' is' : 's are'} attached ${placement} for ${model.name}.`,
+      model.key === active.key ? '' : `Switched from ${active.name}, which does not take this kind of image input.`,
+      aspect || !model.params.aspectRatios.length ? '' : `${model.name} renders ${model.params.aspectRatios.join(' / ')}, so the ${handoff.aspectRatio} frame will be fitted.`,
+      'Check the model and the cost line, then press send.',
+    ].filter(Boolean).join(' '));
+    setShowHealth(false);
+    setLabMode('generate');
+  }, [active]);
+
   // -------------------------------------------------------------------------
   // Surface
   // -------------------------------------------------------------------------
@@ -1049,6 +1105,46 @@ function VideoProviderLab() {
           >
             Video Provider Lab
           </span>
+          <div role="tablist" aria-label="Lab mode" style={{ display: 'inline-flex', gap: 4, padding: 3, borderRadius: 10, background: C.bg, border: `1px solid ${C.line}` }}>
+            {([
+              { id: 'generate', label: 'Generate', Icon: MessageCircle, hint: 'Describe a shot and run it on a video model.' },
+              { id: 'scene3d', label: '3D Scene Builder', Icon: Hexagon, hint: 'Compose a 3D scene, then render a still, record a clip, stylise it or animate it with AI.' },
+            ] as const).map((tab) => {
+              const selected = labMode === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className="vpl-btn"
+                  title={tab.hint}
+                  onClick={() => setLabMode(tab.id)}
+                  style={{
+                    minHeight: 38,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '0 11px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: selected ? C.accentSurface : 'transparent',
+                    color: selected ? C.accent : C.soft,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    fontFamily: FONT,
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <tab.Icon size={13} /> {tab.label}
+                  {tab.id === 'generate' && labMode !== 'generate' && runningCount ? (
+                    <span style={{ fontSize: 10, color: C.accent }}>{` · ${runningCount} running`}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
           {credentialWarning ? (
             <span style={{ fontSize: 10.5, color: C.warn, fontFamily: MONO, lineHeight: 1.4 }}>
               {credentialWarning}
@@ -1057,7 +1153,14 @@ function VideoProviderLab() {
           <button
             type="button"
             className="vpl-btn"
-            onClick={() => setShowHealth((value) => !value)}
+            onClick={() => {
+              if (labMode !== 'generate') {
+                setLabMode('generate');
+                setShowHealth(true);
+                return;
+              }
+              setShowHealth((value) => !value);
+            }}
             title="Owner-only diagnostics: read the live provider catalogs and report ok/error plus latency. Generates nothing and charges nothing."
             style={{
               marginLeft: 'auto',
@@ -1129,6 +1232,10 @@ function VideoProviderLab() {
           </select>
         </div>
 
+        {labMode === 'scene3d' ? (
+          <Scene3DMode onSendToLab={receiveSceneHandoff} activeModelName={active.name} />
+        ) : (
+        <>
         <div className="vpl-featured-models" style={{ flexShrink: 0, display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 8, padding: '10px 16px', borderBottom: `1px solid ${C.line}`, background: C.card }}>
           {featuredModels.map((item) => {
             const model = item.model!;
@@ -1809,6 +1916,8 @@ function VideoProviderLab() {
             </button>
           </div>
         </div>
+        </>
+        )}
       </div>
     </AppShell>
   );
