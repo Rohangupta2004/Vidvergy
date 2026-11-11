@@ -51,8 +51,7 @@ export default function App() {
   const shell: CSSProperties = { background: COLORS.bg, color: COLORS.text, fontFamily: FONT.body, minHeight: '100%', padding: '18px clamp(12px, 3vw, 28px) 48px' };
   return <div style={shell}>
     <header style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
-      <span style={{ alignItems: 'center', background: GRADIENT.action, borderRadius: 11, color: COLORS.onAccent, display: 'flex', height: 40, justifyContent: 'center', width: 40 }}><UserRound size={20} /></span>
-      <div><h1 style={{ fontFamily: FONT.heading, fontSize: 21, margin: 0 }}>Avatar App</h1><p style={{ color: COLORS.muted, fontSize: 12.5, margin: '2px 0 0' }}>HeyGen v3 production · HyperFrames finishing · one secure workspace connection</p></div>
+      <span style={{ color: COLORS.muted, fontSize: 12.5, fontWeight: 600 }}>HeyGen v3 production · HyperFrames finishing · one secure workspace connection</span>
       <div style={{ alignItems: 'center', display: 'flex', gap: 8, marginLeft: 'auto' }}>{connection !== 'error' ? <ConnectionPill state={connection} /> : null}<CreditBalance variant="chrome" /></div>
     </header>
 
@@ -67,7 +66,7 @@ export default function App() {
     </nav>
 
     {globalError && connection === 'ready' ? <div role="alert" style={{ background: COLORS.dangerBg, border: `1px solid ${COLORS.danger}`, borderRadius: RADIUS.sm, color: COLORS.danger, fontSize: 13, marginBottom: 14, padding: 10 }}>{globalError}</div> : null}
-    {tab === 'create' ? <CreateStudio connection={connection} busy={busy} setBusy={setBusy} setError={setGlobalError} setResult={setLastResult} picked={picked} /> : null}
+    {tab === 'create' ? <CreateStudio connection={connection} busy={busy} setBusy={setBusy} setError={setGlobalError} setResult={setLastResult} picked={picked} result={lastResult} /> : null}
     {tab === 'compose' ? <Composer connection={connection} busy={busy} setBusy={setBusy} setError={setGlobalError} setResult={setLastResult} /> : null}
     {tab === 'director' ? <Director /> : null}
     {tab === 'library' ? <AvatarLibrary connection={connection} onUse={(look) => { setPicked({ ...look, nonce: Date.now() }); setTab('create'); }} /> : null}
@@ -85,7 +84,42 @@ function ConnectionPill({ state }: { state: Connection }) {
   return <span style={{ alignItems: 'center', background: okay ? COLORS.successBg : COLORS.raised, border: `1px solid ${okay ? COLORS.success : COLORS.border}`, borderRadius: 999, color: okay ? COLORS.success : COLORS.muted, display: 'flex', fontSize: 11.5, gap: 6, minHeight: 30, padding: '0 9px' }}>{okay ? <CheckCircle2 size={13} /> : state === 'checking' ? <Loader2 size={13} className="animate-spin" /> : <AlertTriangle size={13} />}{okay ? 'HeyGen connected' : 'Checking HeyGen…'}</span>;
 }
 
-function CreateStudio({ connection, busy, setBusy, setError, setResult, picked }: any) {
+const AV2_CSS = `
+.av2{--av-hue:var(--hue,#d08a4a);--av-line:color-mix(in srgb,var(--vg-border) 80%,transparent)}
+.av2-ws{display:grid;grid-template-columns:minmax(320px,400px) minmax(0,1fr) minmax(240px,290px);gap:12px;align-items:start}
+.av2-panel{background:linear-gradient(180deg,var(--vg-raised),var(--vg-surface));border:1px solid var(--av-line);border-radius:22px;padding:16px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.av2-stage{position:relative;min-height:460px;border-radius:22px;border:1px solid var(--av-line);background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:20px;overflow:hidden}
+.av2-stage::before{content:"";position:absolute;inset:0;background:radial-gradient(60% 50% at 100% 0%,color-mix(in srgb,var(--av-hue) 16%,transparent),transparent 70%);pointer-events:none}
+.av2-stage>*{position:relative}
+.av2-frame{max-height:62vh;border-radius:14px;border:1px solid rgba(255,225,160,.18);background:radial-gradient(80% 60% at 50% 30%,rgba(255,232,180,.08),transparent 70%),#0a0805;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;box-shadow:0 30px 80px rgba(0,0,0,.7)}
+.av2-frame.has-img{align-items:flex-end}
+.av2-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.av2-frame-copy{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;padding:18px 16px;color:#fbf4e2;width:100%;box-sizing:border-box}
+.av2-frame.has-img .av2-frame-copy{background:linear-gradient(180deg,transparent,rgba(0,0,0,.82))}
+.av2-frame-copy b{font-family:var(--display);font-size:18px;letter-spacing:-.02em}
+.av2-frame-copy span{font-size:12.5px;line-height:1.5;color:rgba(251,244,226,.74);max-width:340px}
+.av2-video{max-height:62vh;border-radius:14px;background:#000;box-shadow:0 30px 80px rgba(0,0,0,.7)}
+.av2-meta{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.av2-meta span{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;color:rgba(251,244,226,.75);padding:4px 9px;border-radius:999px;border:1px solid rgba(255,225,160,.18);background:rgba(255,232,180,.06)}
+.av2-eyebrow{font-size:12.5px;font-weight:600;color:var(--vg-muted)}
+.av2-big{display:flex;align-items:baseline;gap:8px}
+.av2-big b{font-family:var(--display);font-size:40px;letter-spacing:-.03em;line-height:1;color:var(--vg-text)}
+.av2-big span{color:var(--vg-muted);font-size:13px}
+.av2-kv{display:flex;flex-direction:column}
+.av2-kv div{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:7px 0;border-bottom:1px solid var(--av-line)}
+.av2-kv div:last-child{border-bottom:0}
+.av2-kv span{color:var(--vg-muted)}
+.av2-kv b{font-weight:600;text-align:right}
+.av2-gold{display:inline-flex;min-height:52px;width:100%;align-items:center;justify-content:center;gap:8px;padding:0 22px;font-family:var(--display);font-size:15px;font-weight:700;background:linear-gradient(135deg,#ffefb8 0%,#f2c14a 42%,#c48a12 100%);color:#1a1200;border:0;border-radius:999px;cursor:pointer;box-shadow:0 0 0 1px rgba(255,222,140,.4),0 10px 38px rgba(242,193,74,.3),inset 0 1px 0 rgba(255,255,255,.6);transition:box-shadow .2s ease,transform .15s ease}
+.av2-gold:hover{box-shadow:0 0 0 1px rgba(255,230,150,.6),0 12px 44px rgba(242,193,74,.46),inset 0 1px 0 rgba(255,255,255,.7)}
+.av2-gold:active{transform:scale(.98)}
+.av2-gold:disabled{cursor:not-allowed}
+.av2-gold:focus-visible{outline:2px solid var(--vg-focus);outline-offset:3px}
+@media(max-width:1180px){.av2-ws{grid-template-columns:minmax(300px,380px) minmax(0,1fr)}.av2-ws>aside{grid-column:1/-1}}
+@media(max-width:820px){.av2-ws{grid-template-columns:minmax(0,1fr)}.av2-stage{order:-1;min-height:300px}}
+`;
+
+function CreateStudio({ connection, busy, setBusy, setError, setResult, picked, result }: any) {
   const [mode, setMode] = useState('avatar'); const [script, setScript] = useState(''); const [title, setTitle] = useState('Avatar App video');
   const [avatarId, setAvatarId] = useState(picked?.id || ''); const [voiceId, setVoiceId] = useState(picked?.voiceId || ''); const [mediaUrl, setMediaUrl] = useState('');
   const [aspect, setAspect] = useState<'9:16' | '1:1' | '16:9'>('9:16'); const [engine, setEngine] = useState('avatar_iv'); const [duration, setDuration] = useState(10);
@@ -149,19 +183,47 @@ function CreateStudio({ connection, busy, setBusy, setError, setResult, picked }
     } catch (error: any) { setError(String(error?.message || error)); } finally { setBusy(''); setProgress(''); }
   };
   const modes = [{ id: 'avatar', label: 'Avatar III / IV / V' }, { id: 'image', label: 'Image to video' }, { id: 'audio', label: 'Audio to video' }, { id: 'cinematic', label: 'Cinematic avatar' }, { id: 'transparent', label: 'Transparent avatar' }, { id: 'video-agent', label: 'Video Agent' }];
-  return <section style={{ display: 'grid', gap: 16, maxWidth: 1000 }}>
+  const modeLabel = modes.find((item) => item.id === mode)?.label || 'Avatar';
+  const lookRow = looks.find((look) => look.id === avatarId.trim());
+  const stageImage = mode === 'image' ? mediaUrl.trim() : String(lookRow?.preview_image_url || lookRow?.image_url || lookRow?.thumbnail_url || '');
+  const resultData = unwrap(result);
+  const resultUrl = String(resultData?.video_url || resultData?.videoUrl || result?.videoUrl || '');
+  const frameWidth = aspect === '9:16' ? 'min(250px, 100%)' : aspect === '1:1' ? 'min(400px, 100%)' : '100%';
+  return <section className="av2">
+    <style>{AV2_CSS}</style>
+    <div className="av2-ws">
+    <div className="av2-panel">
     <div><h2 style={{ fontFamily: FONT.heading, fontSize: 19, margin: 0 }}>Avatar production</h2><p style={{ color: COLORS.muted, fontSize: 13, margin: '4px 0 0' }}>Choose a documented HeyGen v3 mode. Every paid action shows a credit estimate first.</p></div>
     <p style={{ ...noteStyle, margin: '0 0 -8px' }}>{HELPER.mode}</p>
     <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))' }}>{modes.map((item) => <button key={item.id} onClick={() => setMode(item.id)} type="button" style={{ ...secondary, background: mode === item.id ? COLORS.accentSoft : COLORS.surface, borderColor: mode === item.id ? COLORS.accent : COLORS.border, color: mode === item.id ? COLORS.accent : COLORS.secondary }}><span style={{ display: 'grid', gap: 3, padding: '8px 0', textAlign: 'center' }}><span>{item.label}</span>{MODE_NOTES[item.id] ? <span style={noteStyle}>{MODE_NOTES[item.id]}</span> : null}</span></button>)}</div>
-    <div style={{ ...cardStyle, display: 'grid', gap: 13 }}>
+    <div style={{ display: 'grid', gap: 13 }}>
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))' }}><label style={labelStyle}>Title<input value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle} /></label><label style={labelStyle}>Format<select value={aspect} onChange={(e) => setAspect(e.target.value as any)} style={inputStyle}><option>9:16</option><option>1:1</option><option>16:9</option></select><OptionThumb src={previewFor('format', aspect)} ratio={aspect.replace(':', ' / ')} style={formatThumbStyle} /><span style={noteStyle}>{FORMAT_NOTES[aspect]}</span></label>{!['cinematic','video-agent','image'].includes(mode) ? <label style={labelStyle}>Engine (switches to one the look supports)<select value={engine} onChange={(e) => setEngine(e.target.value)} style={inputStyle}><option value="avatar_iii">Avatar III</option><option value="avatar_iv">Avatar IV</option><option value="avatar_v">Avatar V</option></select>{ENGINE_NOTES[engine] ? <span style={noteStyle}>{ENGINE_NOTES[engine]}</span> : null}</label> : null}</div>
       {mode !== 'image' ? <label style={labelStyle}>{mode === 'cinematic' ? 'Avatar look IDs (up to 3, comma separated)' : 'Avatar look ID'}<input list="avatar-app-looks" value={avatarId} onChange={(e) => setAvatarId(e.target.value)} style={inputStyle} placeholder="Pick a look or paste a look ID" /><datalist id="avatar-app-looks">{looks.map((look) => <option key={look.id} value={look.id}>{look.name || look.id}</option>)}</datalist><span style={noteStyle}>{HELPER.look}</span></label> : null}
       {['avatar','image','transparent'].includes(mode) ? <label style={labelStyle}>Voice ID (optional when the look has a default voice)<input list="avatar-app-voices" value={voiceId} onChange={(e) => setVoiceId(e.target.value)} style={inputStyle} placeholder="Pick a voice or paste a voice ID" /><datalist id="avatar-app-voices">{voices.map((voice) => <option key={voice.voice_id} value={voice.voice_id}>{[voice.name, voice.language].filter(Boolean).join(' · ')}</option>)}</datalist><span style={noteStyle}>{HELPER.voice}</span></label> : null}
       {['image','audio'].includes(mode) ? <label style={labelStyle}>{mode === 'image' ? 'Public image URL' : 'Public audio URL'}<input value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} style={inputStyle} placeholder="https://…" /></label> : null}
       {mode === 'cinematic' ? <label style={labelStyle}>Duration · 5–15 seconds<input type="number" min={5} max={15} value={duration} onChange={(e) => setDuration(Number(e.target.value))} style={inputStyle} /></label> : null}
       {mode !== 'audio' ? <label style={labelStyle}>{mode === 'cinematic' || mode === 'video-agent' ? 'Creative prompt' : 'Script'}<textarea value={script} onChange={(e) => setScript(e.target.value)} style={{ ...inputStyle, minHeight: 120, padding: 11, resize: 'vertical' }} /></label> : null}
-      <div style={{ alignItems: 'center', background: COLORS.raised, borderRadius: RADIUS.sm, display: 'flex', flexWrap: 'wrap', gap: 10, padding: 11 }}><span style={{ color: COLORS.secondary, fontSize: 13 }}>Estimate</span><strong style={{ color: COLORS.accent }}>{quote.seconds}s · {quote.credits} credits</strong><span style={{ color: COLORS.muted, fontSize: 11.5 }}>Real HeyGen cost + 30%, in $0.15 credits. Failed renders are refunded.</span><button type="button" disabled={connection !== 'ready' || Boolean(busy)} onClick={run} style={{ ...primary, marginLeft: 'auto', opacity: connection === 'ready' ? 1 : .5 }}>{busy === 'create' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}Generate</button></div>
+    </div>
+    </div>
+    <div className="av2-stage" aria-label="Video preview">
+      {resultUrl && !busy ? <video key={resultUrl} src={resultUrl} controls playsInline className="av2-video" style={{ aspectRatio: aspect.replace(':', ' / '), width: frameWidth }} /> : <div className={'av2-frame' + (stageImage ? ' has-img' : '')} style={{ aspectRatio: aspect.replace(':', ' / '), width: frameWidth }}>
+        {stageImage ? <img src={stageImage} alt="" /> : null}
+        <div className="av2-frame-copy">
+          {busy === 'create' ? <Loader2 size={26} className="animate-spin" /> : stageImage ? null : <UserRound size={30} />}
+          <b>{busy === 'create' ? (progress || 'Working…') : (title || 'Your avatar video')}</b>
+          {busy === 'create' ? null : <span>{script.trim() ? script.trim().slice(0, 160) + (script.trim().length > 160 ? '…' : '') : 'Your presenter appears here. Pick a look, write the script and press Generate.'}</span>}
+        </div>
+      </div>}
+      <div className="av2-meta"><span>{aspect}</span><span>{modeLabel}</span><span>about {quote.seconds}s</span></div>
+    </div>
+    <aside className="av2-panel">
+      <span className="av2-eyebrow">Cost</span>
+      <div className="av2-big"><b>{quote.credits}</b><span>credits</span></div>
+      <div className="av2-kv"><div><span>Length</span><b>about {quote.seconds}s</b></div><div><span>Mode</span><b>{modeLabel}</b></div><div><span>Format</span><b>{aspect}</b></div></div>
+      <p style={{ ...noteStyle, margin: 0 }}>Real HeyGen cost + 30%, in $0.15 credits. You confirm before anything is charged, and failed renders are refunded.</p>
+      <button type="button" disabled={connection !== 'ready' || Boolean(busy)} onClick={run} className="av2-gold" style={{ opacity: connection === 'ready' ? 1 : .5 }}>{busy === 'create' ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}Generate</button>
       {progress ? <span style={{ alignItems: 'center', color: COLORS.accent, display: 'flex', fontSize: 12.5, gap: 7 }}><Loader2 size={14} className="animate-spin" />{progress}</span> : null}
+    </aside>
     </div>
   </section>;
 }
