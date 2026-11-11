@@ -73,9 +73,9 @@ function sceneSeconds(film: Film, scene: FilmScene): number {
 }
 
 const IN_FLIGHT = new Set(['queued', 'submitted', 'processing', 'generating', 'retrying']);
-const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab']);
+const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab', 'needs_review']);
 
-type BlockKey = 'done' | 'skipped' | 'rendering' | 'retrying' | 'starting' | 'writing' | 'queued' | 'look' | 'paused' | 'stalled' | 'failed' | 'needs_action' | 'ready' | 'waiting';
+type BlockKey = 'done' | 'skipped' | 'rendering' | 'retrying' | 'starting' | 'writing' | 'queued' | 'look' | 'paused' | 'stalled' | 'failed' | 'needs_action' | 'needs_review' | 'ready' | 'waiting';
 interface BlockView { key: BlockKey; label: string; detail: string; tone: string; startable: boolean }
 interface RunScope { enabled: boolean; stage: string; paused: boolean; lookPending: boolean; live: boolean; stalled: boolean; until: number | null; first: FilmScene | null }
 
@@ -111,6 +111,10 @@ function blockView(film: Film, scene: FilmScene, scope: RunScope): BlockView {
   if (status === 'skipped') return { key: 'skipped', label: 'Skipped', detail: 'Left out of the film. The next block starts fresh instead of continuing from it.', tone: T.dim, startable: false };
   if (status === 'failed') return { key: 'failed', label: 'Failed', detail: friendlyErrorMessage(scene.error || 'This block could not be made.'), tone: T.fault, startable: true };
   if (status === 'needs_action') return { key: 'needs_action', label: 'Needs you', detail: 'The clip is saved, but its last frame could not be captured, so the next block cannot continue from it yet.', tone: T.fault, startable: false };
+  if (status === 'needs_review') {
+    const reason = String(((state.review || {}) as Record<string, unknown>).reason || scene.validation?.issues || '').trim();
+    return { key: 'needs_review', label: 'Needs review', detail: `This clip did not pass its picture check after one automatic retry${reason ? `: ${reason}` : '.'} Later blocks wait for your choice.`, tone: T.fault, startable: false } as BlockView;
+  }
   if (status === 'retrying' || (IN_FLIGHT.has(status) && String(state.provider_status || '') === 'retrying')) {
     const attempt = Math.min(3, Math.max(1, Math.round(Number(state.attempt || state.retries) || 0) + 1));
     return { key: 'retrying', label: 'Retrying', detail: `The video service did not answer, so the same request is being sent again — attempt ${attempt} of 3. Nothing extra is charged.`, tone: T.live, startable: false };
@@ -358,6 +362,8 @@ export default function RenderRoom(props: {
   runnerIssue: string;
   onRestartRunner: () => void;
   blockStartError: { id: number; message: string } | null;
+  /** [Accept anyway] on a block that failed its picture check twice. */
+  onAcceptReview?: (scene: FilmScene) => void;
 }) {
   const { film, note, busy, auto } = props;
   const scenes = [...(Array.isArray(props.scenes) ? props.scenes : [])].sort((a, b) => a.idx - b.idx);
@@ -377,6 +383,7 @@ export default function RenderRoom(props: {
   const scope = runScope(film, scenes, props.runnerStalled);
   const views = new Map(scenes.map((scene) => [scene.id, blockView(film, scene, scope)] as const));
   const credits = creditSummary(film, scenes);
+  const voiceSpeakers = ((((film.plan as any)?.voice_map?.speakers) || []) as Array<{ name?: string; description?: string }>).filter((speaker) => speaker?.name);
   const coversAll = scope.live && scope.until == null;
   const batchRunning = busy || props.generateAllInFlight || props.sceneInFlightId != null || coversAll || (!!inFlight && !scope.enabled);
   const runFocus = inFlight || scope.first;
@@ -602,6 +609,7 @@ export default function RenderRoom(props: {
               <div>
                 <h2 id="make-progress-title" style={{ color: T.bone, fontSize: 20, margin: 0 }}>Make</h2>
                 <p style={{ color: T.muted, fontSize: 14, margin: '4px 0 0' }}>{signedInTabRequired ? 'Keep this tab open while this model works.' : 'Blocks render one after another so each shot continues from the last. You can close this tab — progress is saved.'}</p>
+                {voiceSpeakers.length ? <p style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, margin: '4px 0 0' }}>Voices · same in every block · {voiceSpeakers.map((speaker) => `${speaker.name}: ${String(speaker.description || '')}`).join(' · ')}</p> : null}
               </div>
               <span style={{ color: T.muted, fontSize: 12 }}>{completed.length} of {scenes.length} done</span>
             </div>
@@ -614,7 +622,7 @@ export default function RenderRoom(props: {
                 const startError = props.blockStartError?.id === scene.id ? props.blockStartError.message : '';
                 const refunded = Boolean(blockBackground.terminal_refunded_key);
                 const actionDisabled = busy || props.generateAllInFlight || props.sceneInFlightId != null;
-                const alarm = view.key === 'failed' || view.key === 'needs_action' || view.key === 'stalled' || Boolean(startError);
+                const alarm = view.key === 'failed' || view.key === 'needs_action' || view.key === 'needs_review' || view.key === 'stalled' || Boolean(startError);
                 const working = view.key === 'rendering' || view.key === 'retrying' || view.key === 'starting' || view.key === 'writing';
                 return <div key={scene.id} style={{ display: 'grid', gridTemplateColumns: scene.asset_url ? '72px minmax(0,1fr) auto' : 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', minHeight: 64, background: T.raised, border: `1px solid ${alarm ? T.fault : T.line}`, borderRadius: 10, padding: 10 }}>
                   {scene.asset_url ? <video src={scene.asset_url} muted playsInline preload="metadata" style={{ width: 72, height: 46, objectFit: 'cover', borderRadius: 7, background: T.canvas }} /> : null}
@@ -626,11 +634,17 @@ export default function RenderRoom(props: {
                     <div role={view.key === 'failed' ? 'alert' : undefined} style={{ color: alarm ? T.fault : T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 5 }}>{view.detail}</div>
                     {view.key === 'failed' ? <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.45, marginTop: 3 }}>{refunded ? 'Its credits were returned. Retry sends it again and charges it once; Skip leaves it out of the film.' : 'Retry sends it again on the credits already held for it — nothing is charged twice. Skip leaves it out of the film.'}</div> : null}
                     {startError ? <div role="alert" style={{ color: T.fault, fontSize: 12, lineHeight: 1.45, marginTop: 5 }}>Couldn’t start this block: {friendlyErrorMessage(startError)}</div> : null}
+                    {view.key === 'needs_review' && scene.asset_url ? <video src={scene.asset_url} controls muted playsInline preload="metadata" style={{ display: 'block', width: '100%', maxWidth: 280, marginTop: 8, borderRadius: 7, background: T.canvas }} /> : null}
                     {providerDetail ? <details style={{ marginTop: 4 }}><summary style={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer', color: T.dim, fontSize: 12 }}>What the provider actually said</summary><div style={{ color: T.muted, fontFamily: T.mono, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}>{providerDetail}</div></details> : null}
                   </div>
                   <div style={{ display: 'grid', gap: 6, justifyItems: 'end' }}>
                     {view.key === 'done' ? <Check size={18} color={T.done} />
                       : working ? <VergeLoader size={32} label={`${view.label} block ${scene.idx + 1}`} />
+                        : view.key === 'needs_review' ? <>
+                          <button type="button" disabled={actionDisabled || !props.onAcceptReview} onClick={() => props.onAcceptReview?.(scene)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--vg-on-btn)', border: 0, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 800 }}><Check size={12} /> Accept anyway</button>
+                          <button type="button" disabled={actionDisabled} onClick={() => props.onStartScene(scene)} style={{ minHeight: 32, display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 9, padding: '6px 11px', fontSize: 12, fontWeight: 700 }}><RefreshCw size={11} /> Retry</button>
+                          <button type="button" disabled={actionDisabled} onClick={() => props.onRegenPrompt(scene)} style={{ minHeight: 32, display: 'flex', alignItems: 'center', gap: 5, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 9, padding: '6px 11px', fontSize: 12, fontWeight: 700 }}><Sparkles size={11} /> Edit prompt</button>
+                        </>
                         : view.key === 'needs_action' ? <>
                           <button type="button" disabled={actionDisabled} onClick={() => props.onRetryFrame(scene)} style={{ minHeight: 44, display: 'inline-flex', alignItems: 'center', gap: 6, background: T.live, color: 'var(--vg-on-btn)', border: 0, borderRadius: 9, padding: '8px 13px', fontSize: 12, fontWeight: 800 }}><RefreshCw size={12} /> Retry frame</button>
                           <button type="button" disabled={actionDisabled} onClick={() => { if (window.confirm('Continue without a continuity frame? The next block will not inherit this block’s final visual state, and this choice will be recorded.')) props.onContinueWithoutFrame(scene); }} style={{ minHeight: 32, background: 'transparent', border: `1px solid ${T.dim}`, color: T.muted, borderRadius: 9, padding: '6px 11px', fontSize: 12, fontWeight: 700 }}>Continue without it</button>

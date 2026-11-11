@@ -19,7 +19,7 @@ import type { ReactNode } from 'react';
 import { AlertCircle, ArrowLeft, Download } from 'lucide-react';
 import { Film, FilmCharacter, FilmScene, StoredReference, T, db, generateBackdropImage, newSceneKey, referenceSlug, uploadDataUrl } from './api';
 import {
-  AssemblyProgress, acceptMusicCandidate, allScenesDone, assembleReadyFilm,
+  AssemblyProgress, acceptMusicCandidate, acceptReviewedScene, allScenesDone, assembleReadyFilm,
   autoPostProduce, autoProduce, changeMusicDirection, changeNarrationVoice,
   changeVoiceSource, continueWithoutContinuityFrame, createAndSegmentFilm, createManualScriptFilm,
   generateCharacterSheet, generateScene, prepareFilmAudioStage, prepareScene,
@@ -100,7 +100,7 @@ function requiresSignedInVideoTab(film: Film, scenes: FilmScene[]): boolean {
 const DURABLE_VIDEO_MODEL_IDS = RUNNER_MODEL_IDS;
 
 const IN_FLIGHT_STATUSES = new Set(['queued', 'submitted', 'processing', 'generating', 'retrying']);
-const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab']);
+const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab', 'needs_review']);
 
 /** The durable runner renews its lease on every tick and every provider poll,
  * so a run that should be moving but has no live lease and no tick for 90s has
@@ -1204,6 +1204,7 @@ function ScriptToVideoApp() {
         ...(patch.sound !== undefined ? { sound: String(patch.sound) } : {}),
         ...(patch.continuity_notes !== undefined ? { continuity_notes: String(patch.continuity_notes) } : {}),
         ...(patch.characters !== undefined ? { characters: String(patch.characters).split(',').map((item) => item.trim()).filter(Boolean) } : {}),
+        ...(patch.characters !== undefined ? { no_characters_reason: String(patch.characters).trim() ? undefined : 'Creator marked nobody on screen.' } : {}),
         ...(patch.timed_beats !== undefined && Array.isArray(patch.timed_beats) ? { timed_beats: patch.timed_beats } : {}),
         engine_id: nextModelId,
         engine_reason: String(patch.engine_reason || `Creator-approved ${model.label} assignment.`),
@@ -1518,6 +1519,12 @@ function ScriptToVideoApp() {
         // Re-prove the signed-in credit session now (and once internally on a
         // 401) before either credits or a provider request can move.
         await requireVerifiedCreditSession();
+        // Browser-run films never call Start, so the whole-film credit check and
+        // the one-voice-per-speaker map are taken here, before any block runs.
+        const walletCheck = await callHook<{ affordable?: boolean; error?: string }>('stv-scene-generate', { op: 'wallet-check', filmId: f.id }).catch(() => null);
+        if (walletCheck?.affordable === false && walletCheck.error) throw new Error(walletCheck.error);
+        const voiceLock = await callHook<{ voiceMap?: unknown }>('stv-scene-generate', { op: 'voice-map', filmId: f.id }).catch(() => null);
+        if (voiceLock?.voiceMap && f.plan && !(f.plan as any).voice_map) Object.assign(f, { plan: { ...f.plan, voice_map: voiceLock.voiceMap } });
         // A previous server attempt may have failed before saving a provider
         // operation. Stop its read-only background adoption before the browser
         // owns this retry, but keep every prompt, clip and checkpoint.
@@ -1625,7 +1632,7 @@ function ScriptToVideoApp() {
   const handleRetry = withEngine(retryEngineScene);
   const handleStartForegroundScene = withEngine(async (f, list, s) => {
     const status = String(s.status || 'waiting');
-    if (status === 'failed') { await retryEngineScene(f, list, s); return; }
+    if (status === 'failed' || status === 'needs_review') { await retryEngineScene(f, list, s); return; }
     await requireVerifiedCreditSession();
     if (status === 'waiting' || status === 'idle' || status === 'pending' || !String(s.prompt || '').trim()) {
       await prepareScene(f, list, s, hooks);
@@ -1643,7 +1650,7 @@ function ScriptToVideoApp() {
     if (running.current) { setNote('Another step is still finishing — press Start again in a moment.'); return; }
     const durable = !requiresSignedInVideoTab(f, engineScenes.current);
     setBlockStartError(null);
-    if (!durable && String(target.status) === 'failed') {
+    if (!durable && (String(target.status) === 'failed' || String(target.status) === 'needs_review')) {
       handleStartForegroundScene(target);
       return;
     }
@@ -1702,6 +1709,22 @@ function ScriptToVideoApp() {
       await continueWithoutContinuityFrame(f, engineScenes.current, target, hooks);
       if (f.plan?.background?.enabled) {
         kickRunner(f, 'creator-continued-without-frame');
+      } else if (autoRef.current) {
+        await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
+      }
+      await maybeAdvancePost();
+    });
+  };
+  /** [Accept anyway] keeps a clip that failed its picture check twice and lets
+   * the film continue; the durable runner is nudged to pick up the next block. */
+  const handleAcceptReview = (scene: FilmScene) => {
+    const f = engineFilm.current;
+    const target = engineScenes.current.find((item) => item.id === scene.id);
+    if (!f || !target || String(target.status) !== 'needs_review') return;
+    void run(async () => {
+      await acceptReviewedScene(f, engineScenes.current, target, hooks);
+      if (f.plan?.background?.enabled) {
+        kickRunner(f, 'creator-accepted-review');
       } else if (autoRef.current) {
         await autoProduce(f, engineScenes.current, hooks, () => autoRef.current);
       }
@@ -2586,6 +2609,7 @@ function ScriptToVideoApp() {
           runnerIssue={runnerIssue}
           onRestartRunner={handleRestartRunner}
           blockStartError={blockStartError}
+          onAcceptReview={handleAcceptReview}
         /></Suspense>
       ) : null}
 
