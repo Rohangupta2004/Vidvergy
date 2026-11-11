@@ -70,7 +70,7 @@
     {
       "id": "video-provider-lab",
       "name": "Video Provider Lab",
-      "description": "Direct single-clip generation with the workspace's configured video models; owner diagnostics remain in Health.",
+      "description": "Direct single-clip generation with the workspace's video models, plus a 3D Scene Builder to compose, render and animate custom scenes; owner diagnostics remain in Health.",
       "icon": "FlaskConical",
       "component": "apps/VideoProviderLab/App.tsx"
     },
