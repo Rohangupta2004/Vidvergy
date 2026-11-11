@@ -2,6 +2,7 @@ import {
   KLING_3_0, KLING_3_0_OMNI, SEEDANCE_2_5, VIDEO_MODEL, VideoModelConfig,
 } from './pipeline/videoModelService';
 import { engineHealthWarning } from '../../lib/videoEngines';
+import { NEEDS_TAB_NOTE, RUNNER_MODEL_IDS } from './runnerModels';
 
 export interface PickerAvailability {
   ready: boolean;
@@ -31,7 +32,8 @@ export const PICKER_DISPLAY_MODELS: VideoModelConfig[] = [...PICKER_MODELS_BY_PR
 // v6 adds `caution`. A v5 entry cached in a returning browser has no such
 // field, and reusing it would silently hide the engine-health warning.
 // v7 adds Kling 3.0; a cached v6 map has no entry for it.
-const CACHE_KEY = 's2v:model-availability:v7';
+// v8 adds the needs-this-tab-open caution for models the runner cannot run.
+const CACHE_KEY = 's2v:model-availability:v8';
 const CACHE_MS = 10 * 60_000;
 let memoryCache: PickerAvailabilityMap | null = null;
 
@@ -44,7 +46,7 @@ function baseAvailability(): PickerAvailabilityMap {
     // the picker cannot keep advertising an engine the last sweep caught
     // failing — which is how a film ended up locked to a model whose provider
     // key was over its spending limit.
-    caution: engineHealthWarning(model.apiModel) || '',
+    caution: [RUNNER_MODEL_IDS.has(model.id) ? '' : NEEDS_TAB_NOTE, engineHealthWarning(model.apiModel) || ''].filter(Boolean).join(' '),
     checkedAt: now,
   });
   return {

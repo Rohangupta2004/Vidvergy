@@ -33,7 +33,7 @@ import {
 import type { AudioPolicy, CodeMotionEngine, ControlMode, ExecutionMode, VideoStyleId } from './v2Contracts';
 import ModelGrid, { ModelGridOption } from './ModelGrid';
 import { checkPickerAvailability, pickerDisplayModels, pickerModelById, pickerModels, type PickerAvailabilityMap } from './modelPicker';
-import { recommendDefaultModel, recommendationExplanation, scoreVideoModels, scriptHasDialogue } from './modelRecommendation';
+import { recommendDefaultModel, recommendationExplanation, scoreVideoModels, scriptHasDialogue, scriptHasRecurringPeople } from './modelRecommendation';
 import QuickStartPanel, { type StartTab } from './QuickStartPanel';
 import { markQuickStartPending, readQuickStartPending } from './AutoRunChecklist';
 import { planBigScenes } from './pipeline/bigScenePlanner';
@@ -774,11 +774,16 @@ export function CreateScreen(props: {
   // exact and are never remapped; saved films keep their own model.
   const quickParsed = useMemo(() => parseManualScript(text), [text]);
   const scriptDialogue = charactersSpeak && scriptHasDialogue(text);
+  // The same people across shots default to Kling 3.0 Omni, which keeps them
+  // consistent; every other film keeps Kling 3.0.
+  const recurringPeople = scriptHasRecurringPeople(text, { sceneSpeakers: quickParsed.scenes.map((scene) => scene.dialogue.map((line) => line.speaker)) });
+  const defaultKling = recurringPeople ? KLING_3_0_OMNI : KLING_3_0;
   const defaultPick = recommendDefaultModel({
-    kling: KLING_3_0, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
+    kling: defaultKling, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
     duration: mode === 'manual' && quickParsed.scenes.length ? quickParsed.scenes.reduce((sum, scene) => sum + scene.durationSec, 0) : targetDuration,
     sceneDurations: mode === 'manual' ? quickParsed.scenes.map((scene) => scene.durationSec) : [],
-    available: modelAvailability[KLING_3_0.id]?.ready !== false,
+    available: modelAvailability[defaultKling.id]?.ready !== false,
+    recurringPeople,
   });
   const autoRecommendation = rankedModels.find((entry) => entry.model.id === defaultPick.model.id) || rankedModels[0];
   const autoPick = defaultPick.model;
@@ -1305,10 +1310,11 @@ export function CreateScreen(props: {
   const quickSceneSeconds = quickParsed.scenes.map((scene) => scene.durationSec);
   const quickEstimate = quickSceneSeconds.length ? quickSceneSeconds.reduce((sum, value) => sum + value, 0) : Math.max(4, Math.min(600, Math.round(quickWords / 2.35)));
   const quickPick = recommendDefaultModel({
-    kling: KLING_3_0, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
+    kling: defaultKling, fallback: VIDEO_MODEL, needsNativeAudio: requiresNativeAudio, dialogue: scriptDialogue,
     duration: quickSceneSeconds.length ? quickEstimate : Math.max(5, Math.ceil(quickEstimate / 5) * 5),
     sceneDurations: quickSceneSeconds,
-    available: modelAvailability[KLING_3_0.id]?.ready !== false,
+    available: modelAvailability[defaultKling.id]?.ready !== false,
+    recurringPeople,
   });
   const quickModel = modelMode === 'manual' ? chosenModel : quickPick.model;
   const quickSeconds = quickSceneSeconds.length
@@ -1317,7 +1323,7 @@ export function CreateScreen(props: {
   const quickClips = Math.max(1, quickSceneSeconds.length || Math.ceil(quickSeconds / Math.max(1, quickModel.safeMaxDuration)));
   const quickCostMessage = costConfirmMessage(quickModel, quickSeconds / quickClips, quickClips);
   useEffect(() => { setQuickCostOk(false); }, [quickModel.id, quickCostMessage]);
-  const quickModelReady = modelAvailability[quickModel.id]?.ready ?? (quickModel.id === VIDEO_MODEL.id || quickModel.id === KLING_3_0.id);
+  const quickModelReady = modelAvailability[quickModel.id]?.ready ?? (quickModel.id === VIDEO_MODEL.id || quickModel.id === KLING_3_0.id || quickModel.id === KLING_3_0_OMNI.id);
   const quickProblem = quickWords < 3 ? 'Paste at least a few words of your script.'
     : quickSeconds > 600 ? 'This script runs longer than the 10-minute maximum. Split it into two films.'
       : requiresNativeAudio && !quickModel.audioSupported ? `${quickModel.label} is silent. Choose a model with native sound in Advanced, or change Sound.`
@@ -1375,7 +1381,7 @@ export function CreateScreen(props: {
           detectedScenes={quickSceneSeconds.length}
           seconds={quickSeconds}
           modelLabel={quickModel.label}
-          modelRecommended={quickModel.id === KLING_3_0.id}
+          modelRecommended={quickModel.id === defaultKling.id}
           modelReason={modelMode === 'manual' ? `${quickModel.label} selected.` : quickPick.reason}
           styleLabel={quickStyleLabel}
           aspect={aspect as '16:9' | '9:16' | '1:1'}

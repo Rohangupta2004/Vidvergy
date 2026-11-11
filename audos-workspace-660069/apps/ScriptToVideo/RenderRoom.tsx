@@ -27,6 +27,7 @@ import type { ClipAudioProbe } from './pipeline/capture';
 import { recoveryDecision } from './pipeline/errorRecovery';
 import { ProductionOverview } from './StudioChrome';
 import { OMNI_LABEL, OMNI_MODEL_ID, classifyError, friendlyErrorMessage } from './friendlyErrors';
+import { RUNNER_MODEL_IDS } from './runnerModels';
 
 const DONE = new Set(['completed', 'skipped']);
 
@@ -104,7 +105,8 @@ function blockView(film: Film, scene: FilmScene, scope: RunScope): BlockView {
   const isFirst = scope.first?.id === scene.id;
   if (status === 'completed' || status === 'succeeded') {
     const swap = String(state.model_fallback || '');
-    return { key: 'done', label: 'Done', detail: swap ? `Clip saved. Rendered with a stand-in model: ${swap}.` : 'Clip saved.', tone: T.done, startable: false };
+    const fallbackNote = String(state.fallback_note || '');
+    return { key: 'done', label: 'Done', detail: fallbackNote ? `Clip saved. ${fallbackNote}.` : swap ? `Clip saved. Rendered with a stand-in model: ${swap}.` : 'Clip saved.', tone: T.done, startable: false };
   }
   if (status === 'skipped') return { key: 'skipped', label: 'Skipped', detail: 'Left out of the film. The next block starts fresh instead of continuing from it.', tone: T.dim, startable: false };
   if (status === 'failed') return { key: 'failed', label: 'Failed', detail: friendlyErrorMessage(scene.error || 'This block could not be made.'), tone: T.fault, startable: true };
@@ -113,7 +115,7 @@ function blockView(film: Film, scene: FilmScene, scope: RunScope): BlockView {
     const attempt = Math.min(3, Math.max(1, Math.round(Number(state.attempt || state.retries) || 0) + 1));
     return { key: 'retrying', label: 'Retrying', detail: `The video service did not answer, so the same request is being sent again — attempt ${attempt} of 3. Nothing extra is charged.`, tone: T.live, startable: false };
   }
-  if (IN_FLIGHT.has(status)) return { key: 'rendering', label: 'Rendering', detail: `The video model is making this ${seconds}s clip. This usually takes a few minutes.`, tone: T.live, startable: false };
+  if (IN_FLIGHT.has(status)) return { key: 'rendering', label: 'Rendering', detail: `${state.fallback_note ? `${String(state.fallback_note)}. ` : ''}The video model is making this ${seconds}s clip. This usually takes a few minutes.`, tone: T.live, startable: false };
   if (scope.lookPending) return { key: 'look', label: 'Waiting for look check', detail: 'Approve Block 1’s look above, then the rest continue.', tone: T.muted, startable: false };
   if (scope.paused && inRun) return { key: 'paused', label: 'Paused', detail: 'Production is paused. Press Resume above to continue.', tone: T.muted, startable: false };
   if (scope.stalled && inRun && isFirst) return { key: 'stalled', label: 'Not started', detail: 'The background runner has not picked this block up. Press Start to send it again — nothing is charged twice.', tone: T.fault, startable: true };
@@ -407,8 +409,10 @@ export default function RenderRoom(props: {
   const incompatibleSpeakingScenes = film.plan?.characters_speak
     ? scenes.filter((scene) => scene.dialogue?.kind === 'character' && Boolean(String(scene.dialogue?.line || '').trim()) && !resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).audioSupported)
     : [];
-  const durableModelIds = new Set(['seedance-2.5', 'seedance-2.0', 'kling-3.0-omni', 'kling-3.0', 'omni-1.1-flash']);
-  const unsupportedBackgroundScenes = scenes.filter((scene) => !durableModelIds.has(resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).id));
+  const durableModelIds = RUNNER_MODEL_IDS;
+  // Seedance cannot run in the background but still starts from this open tab.
+  const startableModelIds = new Set(['seedance-2.5', 'seedance-2.0', ...RUNNER_MODEL_IDS]);
+  const unsupportedBackgroundScenes = scenes.filter((scene) => !startableModelIds.has(resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).id));
   const modelBlockers = Array.from(new Set([...incompatibleSpeakingScenes, ...unsupportedBackgroundScenes]));
   const signedInTabRequired = scenes.some((scene) => !durableModelIds.has(resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).id));
   const startReady = castReady && modelBlockers.length === 0 && !busy && !generating;

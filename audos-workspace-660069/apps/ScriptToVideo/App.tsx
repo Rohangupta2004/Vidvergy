@@ -71,6 +71,7 @@ import { STUDIO_CHROME_CSS, StudioStepper, StudioToast } from './StudioChrome';
 import { saveVideoToHistory } from '../../lib/videoHistory';
 import { workspaceFetch } from '../../lib/workspace';
 import { checkPickerAvailability, pickerDisplayModels } from './modelPicker';
+import { RUNNER_MODEL_IDS } from './runnerModels';
 import { bridgeRequest, createControllerBus, useAppController, type AppController, type FieldSpec } from '../../lib/appBridge';
 
 type Screen = 'library' | 'create' | 'board' | 'final' | 'legacy';
@@ -87,7 +88,7 @@ function friendlyAppError(value: unknown): string {
 }
 
 function requiresSignedInVideoTab(film: Film, scenes: FilmScene[]): boolean {
-  // Runway, Kling 2.x and Seedance 2.0 render only while this tab stays open.
+  // Runway, Kling 2.x and Seedance render only while this tab stays open.
   // The durable runner renders every block on the film's one model, so a film
   // that mixes models stays on the tab too.
   const filmModel = resolveVideoModel(film.video_model).id;
@@ -95,10 +96,8 @@ function requiresSignedInVideoTab(film: Film, scenes: FilmScene[]): boolean {
   return scenes.some((scene) => resolveVideoModel((scene.spec as any)?.engine_id || film.video_model).id !== filmModel);
 }
 
-/** Models the server runner (s2v-recovery-sweeper) can drive on its own. Seedance
- * 2.5 and Kling 3.0 bill this workspace's wallet through the server function's
- * signed identity. Keep in step with durableModels in stv-scene-generate. */
-const DURABLE_VIDEO_MODEL_IDS = new Set(['omni-1.1-flash', 'seedance-2.5', 'kling-3.0', 'kling-3.0-omni']);
+/** Models the server runner (s2v-recovery-sweeper) can drive on its own. */
+const DURABLE_VIDEO_MODEL_IDS = RUNNER_MODEL_IDS;
 
 const IN_FLIGHT_STATUSES = new Set(['queued', 'submitted', 'processing', 'generating', 'retrying']);
 const RUNNER_RESTING_STAGES = new Set(['idle', 'paused', 'cancelled', 'failed', 'ready', 'waiting_for_look', 'waiting_for_tab']);

@@ -47,6 +47,21 @@ export function scriptHasDialogue(script: string): boolean {
   return /(?:dialogue|says?|speaks?|voice|“|”|"[^"\n]{2,}")/i.test(String(script || ''));
 }
 
+/**
+ * True when the same person appears in more than one shot: an @name used twice
+ * or more, one speaker in two or more scenes, or a cast reference image that
+ * every clip reuses.
+ */
+export function scriptHasRecurringPeople(script: string, options: { castReference?: boolean; sceneSpeakers?: string[][] } = {}): boolean {
+  if (options.castReference) return true;
+  const mentions = new Map<string, number>();
+  (String(script || '').match(/@[a-z0-9_-]+/gi) || []).forEach((name) => mentions.set(name.toLowerCase(), (mentions.get(name.toLowerCase()) || 0) + 1));
+  if (Array.from(mentions.values()).some((count) => count >= 2)) return true;
+  const scenesBySpeaker = new Map<string, number>();
+  (options.sceneSpeakers || []).forEach((speakers) => new Set(speakers.map((speaker) => speaker.trim().toLowerCase()).filter(Boolean)).forEach((speaker) => scenesBySpeaker.set(speaker, (scenesBySpeaker.get(speaker) || 0) + 1)));
+  return Array.from(scenesBySpeaker.values()).some((count) => count >= 2);
+}
+
 export interface DefaultModelPick {
   model: VideoModelConfig;
   /** True when the pick is the recommended best-value model itself. */
@@ -68,6 +83,8 @@ export function recommendDefaultModel(input: {
   duration: number;
   sceneDurations?: number[];
   available?: boolean;
+  /** The kling model was chosen because the same people recur across shots. */
+  recurringPeople?: boolean;
 }): DefaultModelPick {
   const { kling, fallback } = input;
   const legal = kling.supportedDurations.map(Number);
@@ -78,6 +95,7 @@ export function recommendDefaultModel(input: {
   if (input.needsNativeAudio || input.dialogue) return { model: fallback, recommended: false, reason: `Your script has spoken lines and ${kling.label} is silent, so ${fallback.label} renders them with native sound and lip-sync.` };
   if (scenes.length && scenes.some((value) => !legal.includes(value))) return { model: fallback, recommended: false, reason: `${kling.label} only makes ${legal.join('s or ')}s clips and your scene lengths differ, so ${fallback.label} keeps them exactly.` };
   if (!scenes.length && (seconds < step || seconds % step !== 0)) return { model: fallback, recommended: false, reason: `${kling.label} needs a length in steps of ${step} seconds, so ${fallback.label} is used for ${seconds}s.` };
+  if (input.recurringPeople) return { model: kling, recommended: true, reason: `Recommended — the same people appear across your shots, and ${kling.label} keeps them consistent with up to ${kling.maxReferenceImages} references, in ${legal.join('s or ')}s clips.` };
   return { model: kling, recommended: true, reason: `Recommended — best value: ${kling.label} has strong, grounded motion at the lowest price per second, in ${legal.join('s or ')}s clips.` };
 }
 
