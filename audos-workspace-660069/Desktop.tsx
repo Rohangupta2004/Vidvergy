@@ -30,6 +30,8 @@ import BrandLogo from './components/BrandLogo';
 import GlobalStyles from './components/ui/GlobalStyles';
 import BackgroundJobsTray from './components/shared/BackgroundJobsTray';
 import { ShellDock, ShellHeader } from './components/ShellNav';
+import { Launcher as SecondCutLauncher, StudioHead } from './components/secondcut/Shell';
+import { isStudioApp } from './components/studioHues';
 import type { ShellNavItem, WorkspaceMode } from './components/ShellNav';
 import BrandContextLayer from './components/BrandContextLayer';
 import { requestBrandDocPanel } from './lib/brandDoc';
@@ -376,6 +378,26 @@ function SidebarNavItem({ icon: Icon, label, active, collapsed, onClick }: Sideb
 }
 
 function ManualLauncher({
+  apps,
+  onOpen,
+  onOpenLibrary,
+}: {
+  apps: AppConfig[];
+  workspaceName: string;
+  onOpen: (appId: string) => void;
+  onOpenLibrary: () => void;
+}) {
+  return (
+    <SecondCutLauncher
+      items={apps.map((app) => ({ id: app.id, label: appNavLabel(app), Icon: app.icon && iconMap[app.icon] ? iconMap[app.icon] : Activity }))}
+      onOpen={onOpen}
+      onOpenLibrary={onOpenLibrary}
+    />
+  );
+}
+
+// Previous launcher layout. ManualLauncher above renders the second design.
+function LegacyManualLauncher({
   apps,
   workspaceName,
   onOpen,
@@ -986,7 +1008,7 @@ export default function SpaceDesktop({
     // Theme ground: rich black in dark, soft white in light. `--void` is
     // theme-aware (the light overrides in GlobalStyles win over inline vars),
     // so the shell flips with the ThemeToggle without any gradient layer.
-    background: 'var(--void, #0b0d12)',
+    background: 'radial-gradient(70% 55% at 100% 0%, rgba(255,214,130,.12), transparent 60%), var(--void, #000)',
   } as React.CSSProperties;
 
   // Public pathname pages (/pricing, /terms, /privacy, /refund) render on their
@@ -1110,7 +1132,7 @@ export default function SpaceDesktop({
       <GlobalStyles />
 
       <div
-        className="isolate h-screen overflow-hidden pt-[60px] vv-dark transition-[padding] duration-200 md:pt-0"
+        className="isolate h-screen overflow-hidden pt-[56px] vv-dark transition-[padding] duration-200"
         style={{ ...rootStyle, paddingLeft: isMobile ? 0 : 'var(--vv-sidebar-width, 244px)' }}
       >
         {/* The one header and the one dock, mounted once for the whole shell so
@@ -1120,6 +1142,8 @@ export default function SpaceDesktop({
         <ShellHeader
           workspaceName={workspaceName}
           sectionLabel={sectionLabel}
+          activeId={activeWindowId}
+          onVerger={() => openApp('vidverge-agent')}
           jobsSlot={<BackgroundJobsTray variant="compact" />}
           creditsSlot={<CreditBalance variant="text" />}
           onHome={goHome}
@@ -1144,6 +1168,7 @@ export default function SpaceDesktop({
           onHome={goHome}
           drawerOpen={navDrawerOpen}
           onDrawerClose={() => setNavDrawerOpen(false)}
+          onDrawerOpen={() => setNavDrawerOpen(true)}
           mode={workspaceMode}
           onModeChange={changeWorkspaceMode}
           jobsSlot={<BackgroundJobsTray variant="compact" />}
@@ -1299,7 +1324,8 @@ export default function SpaceDesktop({
                     app inherits the dark ground, dark scrollbars and the
                     light-utility neutraliser whether or not it opted into the
                     design system itself. */}
-                <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark" style={{ background: 'transparent' }}>
+                <div className={`relative flex-1 overflow-y-auto min-h-0 vv-dark${isStudioApp(activeWindowId) ? ' vv-studio-skin' : ''}`} data-vv-studio={isStudioApp(activeWindowId) ? String(activeWindowId) : undefined} style={{ background: 'transparent' }}>
+                  <StudioHead appId={isAppWindow ? activeWindowId : null} />
                   {activeWindowId === 'files' && (
                     <FileBrowser fileAccessLogs={fileAccessLogs} />
                   )}
@@ -1326,7 +1352,7 @@ export default function SpaceDesktop({
       </div>
 
       {/* Mobile: Vertical Stack Layout */}
-      <div className="md:hidden fixed inset-x-0 top-[60px] bottom-0 flex flex-col overflow-hidden">
+      <div className="md:hidden fixed inset-x-0 top-[56px] bottom-[70px] flex flex-col overflow-hidden">
         {/* Main content - two-app home or active app */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Mobile Manual mode uses the same complete app grid. */}
@@ -1344,7 +1370,8 @@ export default function SpaceDesktop({
             <div className="h-full flex flex-col bg-transparent">
               {/* Same reasoning as the desktop branch: the shell header is the
                   only header, and it carries this section's name and Close. */}
-              <div className="relative flex-1 overflow-y-auto min-h-0 vv-dark" style={{ background: 'transparent' }}>
+              <div className={`relative flex-1 overflow-y-auto min-h-0 vv-dark${isStudioApp(activeWindowId) ? ' vv-studio-skin' : ''}`} data-vv-studio={isStudioApp(activeWindowId) ? String(activeWindowId) : undefined} style={{ background: 'transparent' }}>
+                <StudioHead appId={isAppWindow ? activeWindowId : null} />
                 {activeWindowId === 'files' && (
                   <FileBrowser fileAccessLogs={fileAccessLogs} />
                 )}
