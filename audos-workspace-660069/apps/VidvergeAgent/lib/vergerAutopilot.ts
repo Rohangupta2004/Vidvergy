@@ -80,6 +80,8 @@ const TOOL_DOC = `TOOLS — call one by adding {"name": "...", "input": {...}} t
 • check_frames {"videoUrl": string, "timestamps": number[], "criteria": string} — extract frames and vision-check them.
 • route_brief {"appId": string, "brief": string} — when open_app cannot connect, hand a complete self-contained brief straight to that studio's intake instead. Never ask the user to open anything.
 • ask_user {"purpose": "brand" | "budget", "label": string, "question": string, "options": string[], "multi"?: boolean, "requiredCredits"?: number} — ONLY brand intake ("brand") or budget approval ("budget"). Any other purpose is refused.
+• list_weekly_videos {} — list the user's weekly autopilot series (title, topic, day, status, last outcome).
+• schedule_weekly_video {"topic": string, "title"?: string, "weekday"?: number (1 = Monday, default), "hour"?: number (0-23, default 9), "filmTitle"?: string} — turn one of the user's FINISHED Script-to-Video films (the one named, else the newest) into "one new video every week on this topic" with the same look, cast and settings. It shows the user the real weekly credit price and asks them to approve it itself. Use it only when the user asked for a recurring or weekly video. Posting to social media is not available.
 • deliver {"videoId": string, "appId": string} — deliver the finished, checked video.`;
 
 function systemPrompt(budget: number): string {
@@ -99,6 +101,7 @@ function systemPrompt(budget: number): string {
     '- If open_app fails after its one automatic remount, do NOT call open_app for that app again in this run. Do NOT surface a technical instruction — immediately call route_brief with a complete self-contained brief (goal, audience, brand facts, script or direction, seconds, ratio, voice/music), or choose the other suitable production app.',
     `- BUDGET: ${pricingRuleText()} Total budget for this run: ${budget} credits. run_paid is refused when a live estimate would break it; if the plan truly needs more, ask_user with purpose "budget", a requiredCredits number, and plain words (e.g. "This video needs 90 credits; your budget is 60.").`,
     '- QUALITY: after each finished shot, check three frames (same character, story beats, readable text, no extra people); re-render one shot at most twice. Before delivery probe duration and check six frames. Never invent progress, never automatically retry a paid submit, and finish only after a real finished event.',
+    '- WEEKLY: when the user wants a recurring video ("every Monday", "weekly", "each week"), make sure one finished Script-to-Video film exists first (make it in this run if needed), then call schedule_weekly_video; it asks the user to approve the weekly price itself, so do not ask again.',
     '- LANGUAGE: anything the user could read (ask_user label/question/options, summary) is warm plain language — never app ids, slugs, tool or model names, JSON, or error text.',
     '',
     TOOL_DOC,
@@ -185,6 +188,8 @@ function toolLabel(name: string, input: Record<string, any>): string {
   if (name === 'check_frames') return 'Reviewing the finished frames';
   if (name === 'route_brief') return `Sending the complete brief to ${app}`;
   if (name === 'ask_user') return input.purpose === 'budget' ? 'Checking the production budget' : 'Confirming your brand details';
+  if (name === 'schedule_weekly_video') return 'Setting up your weekly video';
+  if (name === 'list_weekly_videos') return 'Checking your weekly videos';
   if (name === 'deliver') return 'Preparing your finished video';
   return 'Working on your video';
 }
@@ -219,6 +224,8 @@ function toolSuccess(name: string, input: Record<string, any>, result: any): str
   if (name === 'wait_for') return result?.type === 'still_working' ? 'Production is still working. Your project is saved, and I will keep checking.' : 'A new production update arrived.';
   if (name === 'check_frames') return result?.pass === false ? 'Quality review found something to correct.' : 'Frame quality check passed.';
   if (name === 'route_brief') return 'The complete brief is saved in the selected studio.';
+  if (name === 'schedule_weekly_video') return result?.scheduled ? `Weekly video set: every ${result.day} at ${result.time}.` : 'The weekly video was not set up.';
+  if (name === 'list_weekly_videos') return Array.isArray(result) && result.length ? `${result.length} weekly video series found.` : 'No weekly videos yet.';
   if (name === 'deliver') return 'Finished video ready.';
   if (name === 'list_library') return 'Video library checked.';
   return 'Completed.';
@@ -519,6 +526,45 @@ export async function runAutopilot(goal: string, budget: number, callbacks: Auto
           if (needed > approvedBudget) approvedBudget = needed;
         }
         return { answer };
+      }
+      case 'list_weekly_videos': {
+        const listed = await callHook<any>('s2v-series', { op: 'list' });
+        if (listed?.ok !== true) throw new Error(String(listed?.error || 'Weekly videos could not be read.'));
+        return (Array.isArray(listed.series) ? listed.series : []).map((s: any) => ({ title: s.title, topic: s.topic, status: s.status, weekday: s.weekday, hour: s.hour_local, episodes: s.episodes, last: s.last_status }));
+      }
+      case 'schedule_weekly_video': {
+        const topic = String(input.topic || '').trim().slice(0, 600);
+        if (topic.length < 4) throw new Error('schedule_weekly_video needs the topic every episode is about.');
+        const wanted = String(input.filmTitle || '').trim().toLowerCase();
+        const wdb = (window as any).__workspaceDb;
+        if (!wdb) throw new Error('Your session is still loading.');
+        const { data } = await wdb.from('s2v_films').orderBy('created_at', 'desc').limit(50).get();
+        const finished = (Array.isArray(data) ? data : []).filter((row: any) => row && row.final_video_url);
+        const film = (wanted ? finished.find((row: any) => String(row.title || '').toLowerCase().includes(wanted)) : null) || finished[0];
+        if (!film) throw new Error('No finished Script-to-Video film exists yet. Make one first; the weekly series copies its look, cast and settings.');
+        const quoted = await callHook<any>('s2v-series', { op: 'quote', filmId: film.id });
+        if (quoted?.ok !== true) throw new Error(String(quoted?.error || 'The weekly price could not be checked.'));
+        const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        const weekday = Math.min(7, Math.max(1, Math.round(Number(input.weekday) || 1)));
+        const hour = Math.min(23, Math.max(0, Math.round(Number(input.hour ?? 9) || 0)));
+        const credits = quoted.quote?.credits == null ? null : Math.round(Number(quoted.quote.credits));
+        const price = quoted.quote?.exempt ? 'no credits on your account' : credits != null ? `about ${credits} credits each week` : 'the usual credits for each episode';
+        const time = `${hour % 12 === 0 ? 12 : hour % 12}:00 ${hour < 12 ? 'am' : 'pm'}`;
+        const answer = await callbacks.askUser({
+          purpose: 'budget',
+          label: 'Weekly video',
+          question: `Make a new video about “${topic}” every ${days[weekday - 1]} at ${time}, with the look and cast of “${film.title || 'your film'}”? That is ${price}. A week is skipped and nothing is charged if your balance is short, and you can pause or cancel any time.`,
+          options: ['Yes, start it', 'Not now'],
+        });
+        if (!/^\s*(yes|start|ok|approve|go)/i.test(String(answer || ''))) return { scheduled: false, reason: 'The user did not approve the weekly price.' };
+        const created = await callHook<any>('s2v-series', {
+          op: 'create', filmId: film.id, topic, title: String(input.title || film.title || 'Weekly video').slice(0, 120), weekday, hourLocal: hour,
+          utcOffsetMin: -new Date().getTimezoneOffset(),
+          timezone: (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } })(),
+          creditCap: credits || 0,
+        });
+        if (created?.ok !== true) throw new Error(String(created?.error || 'The weekly video could not be set up.'));
+        return { scheduled: true, day: days[weekday - 1], time, credits, series: created.series?.title || film.title };
       }
       case 'deliver': {
         if (!delivered) throw new Error('No finished event exists to deliver yet.');

@@ -96,6 +96,12 @@ export interface ScriptBrief {
   audience?: string;
   model: StudioModel;
   characterNotes?: string;
+  /** Recurring cast from a saved profile or series, with their @slugs. */
+  castNotes?: string;
+  /** Look carried over from a saved profile or series; kept word for word. */
+  lockedStyle?: string;
+  /** Series context, e.g. "Episode 5 of ...". */
+  seriesNotes?: string;
 }
 
 function briefLines(brief: ScriptBrief): string {
@@ -106,6 +112,9 @@ function briefLines(brief: ScriptBrief): string {
     brief.audience ? `Audience: ${brief.audience}.` : '',
     `Video model: ${brief.model.label} — clips of at most ${brief.model.maxSeconds}s, ${brief.model.audio ? 'renders spoken dialogue and sound' : 'renders silent video (voice is added later as narration)'}.`,
     brief.characterNotes ? `Saved characters the user referenced with @: ${brief.characterNotes}` : '',
+    brief.castNotes ? `Recurring cast — keep them in the story and refer to each one with their exact @slug: ${brief.castNotes}` : '',
+    brief.lockedStyle ? `Visual style (locked — keep it exactly): ${brief.lockedStyle}` : '',
+    brief.seriesNotes ? `Series: ${brief.seriesNotes}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -199,6 +208,8 @@ export interface StudioPlan {
   notes: string[];
   /** Script version this plan was built from. */
   script_version_id?: string;
+  /** Only a pure motion-design film may have no cast. */
+  film_kind?: 'live_action' | 'animation' | 'motion_design';
 }
 
 function newKey(): string {
@@ -408,11 +419,18 @@ export interface PlanOptions {
   model: StudioModel;
   savedCharacters: StudioCharacter[];
   onProgress?: (label: string) => void;
+  /** Saved/series look: replaces the planner's visual_style before prompts are written. */
+  lockedStyle?: string;
+  /** Saved/series cast: matching characters reuse these sheets instead of drawing new ones. */
+  lockedCast?: StudioCharacter[];
 }
 
-const BREAKDOWN_SYSTEM = `You are the director and first assistant director of an AI video production. Read the WHOLE script, then break it into filmable scenes for an AI video model. Keep the story, order, intent and every spoken line word for word. Return ONLY JSON in this shape:
+const BREAKDOWN_SYSTEM = `You are the director and first assistant director of an AI video production. Read the WHOLE script, then break it into filmable scenes for an AI video model. Keep the story, order, intent and every spoken line word for word.
+CAST RULE: every film except pure motion design (text, shapes, charts, UI animation with no people) needs a cast. List EVERY person who appears on screen — presenter, protagonist, customer, expert, the lead of a crowd — even when the script does not name them (give them a short role name such as "Presenter" or "Young mother"). Lock each one with a very specific appearance (face, hair, skin tone, build, age) and one wardrobe that never changes, so they look identical in every clip. In every scene, list the id of every cast member visible in that scene. Only a motion-design film may return an empty cast.
+Return ONLY JSON in this shape:
 {
   "title": string,
+  "film_kind": "live_action" | "animation" | "motion_design",
   "logline": string,
   "visual_style": string (one rich paragraph: look, palette, lens language, film stock, grade, mood),
   "world": string (the shared setting/era/place),
@@ -428,6 +446,7 @@ export async function breakdownScript(script: string, opts: PlanOptions): Promis
     `VIDEO MODEL: ${opts.model.label}. Each clip can be ${opts.model.minSeconds}–${opts.model.maxSeconds}s${opts.model.durations ? ` (allowed lengths: ${opts.model.durations.join(', ')}s)` : ''}. Make every scene as close as possible to the model's MAXIMUM clip length (${opts.model.maxSeconds}s): group consecutive beats into one scene (described as timed beats) instead of making short scenes — fewer, fuller clips render faster. A beat that truly needs longer than ${opts.model.maxSeconds}s keeps its real length (it will be split into full-length clips automatically).`,
     opts.model.audio ? 'This model renders spoken dialogue and sound, so keep on-camera dialogue in the scene.' : 'This model renders SILENT video; keep dialogue lines in the plan (they become narration/voice-over), but stage scenes so they read without lip sync.',
     saved ? `SAVED CHARACTERS (use their exact @slug in "mention" and keep their appearance):\n${saved}` : '',
+    opts.lockedStyle ? `VISUAL STYLE (locked — return it word for word as "visual_style"):\n${opts.lockedStyle}` : '',
   ].filter(Boolean).join('\n\n');
   const raw = await askOpus(BREAKDOWN_SYSTEM, user, 14000);
   const json = parseJsonLoose<any>(raw);
@@ -447,6 +466,7 @@ export async function breakdownScript(script: string, opts: PlanOptions): Promis
     logline: str(json.logline, 400),
     visual_style: str(json.visual_style, 1500),
     world: str(json.world, 800),
+    film_kind: json.film_kind === 'motion_design' || json.film_kind === 'animation' ? json.film_kind : 'live_action',
     characters,
     scenes: json.scenes.map((s: any, i: number) => normalizeScene(s, i)),
   };
@@ -524,6 +544,62 @@ export function linkSavedCharacters(plan: Omit<StudioPlan, 'model_id' | 'planned
   });
 }
 
+/** Reuse a saved/series cast: a planned character that is the same person keeps the saved sheet, appearance and wardrobe. */
+export function adoptLockedCast(plan: Omit<StudioPlan, 'model_id' | 'planned_at' | 'notes'>, locked: StudioCharacter[]): void {
+  locked.forEach((ref) => {
+    if (!ref.imageUrl) return;
+    const slug = String(ref.mention || '').toLowerCase();
+    const name = String(ref.name || '').toLowerCase();
+    const match = plan.characters.find((c) => (slug && (c.mention === slug || c.id === slug.replace(/-/g, '_'))) || (name && c.name.toLowerCase() === name) || c.id === ref.id);
+    if (!match) return;
+    match.imageUrl = ref.imageUrl;
+    if (slug) match.mention = slug;
+    if (ref.appearance) match.appearance = ref.appearance;
+    if (ref.wardrobe) match.wardrobe = ref.wardrobe;
+    if (ref.voice && !match.voice) match.voice = ref.voice;
+  });
+}
+
+const NARRATOR = /^(narrator|voice[ -]?over|vo|v\.o\.)$/i;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Every film except pure motion design gets a cast; on-screen speakers become cast members if the planner listed none. */
+export function ensureCast(plan: Omit<StudioPlan, 'model_id' | 'planned_at' | 'notes'>): void {
+  if (plan.characters.length || plan.film_kind === 'motion_design') return;
+  const speakers = Array.from(new Set(plan.scenes.flatMap((scene) => scene.dialogue.map((d) => d.speaker.trim())).filter((name) => name && !NARRATOR.test(name))));
+  speakers.forEach((name, i) => {
+    plan.characters.push({ id: slugId(name, `char_${i + 1}`), name, appearance: '', wardrobe: '' });
+  });
+}
+
+/** Link each scene to every cast member it names, speaks for or @mentions, so their reference image rides with that clip. */
+export function linkCastToScenes(plan: Pick<StudioPlan, 'characters' | 'scenes'>): void {
+  plan.scenes.forEach((scene) => {
+    const text = `${scene.script_segment} ${scene.summary} ${scene.prompt} ${scene.dialogue.map((d) => d.speaker).join(' ')}`.toLowerCase();
+    plan.characters.forEach((c) => {
+      if (scene.characters.includes(c.id)) return;
+      const byName = c.name && new RegExp(`(^|[^a-z0-9])${escapeRegExp(c.name.toLowerCase())}([^a-z0-9]|$)`).test(text);
+      const byMention = c.mention && text.includes(`@${c.mention}`);
+      if (byName || byMention) scene.characters.push(c.id);
+    });
+  });
+}
+
+/** Still-image prompt for one character's locked reference sheet, in the film's own look. */
+export function characterSheetPrompt(c: StudioCharacter, plan: Pick<StudioPlan, 'visual_style' | 'film_kind'>): string {
+  return [
+    `Character reference sheet for a film: ${c.name}.`,
+    `Appearance: ${c.appearance || 'as described in the script, distinctive and specific'}.`,
+    c.wardrobe ? `Wardrobe, locked for the whole film: ${c.wardrobe}.` : '',
+    'Layout: a full-body front view and a head-and-shoulders close-up of the SAME person side by side, neutral expression, facing the camera.',
+    'Plain light-grey studio background, soft even light, sharp focus, no text, no logos, no other people.',
+    plan.visual_style ? `Render in the film's look: ${plan.visual_style}` : plan.film_kind === 'animation' ? 'Clean animated style.' : 'Photorealistic.',
+  ].filter(Boolean).join(' ');
+}
+
 export async function planForModel(script: string, opts: PlanOptions): Promise<StudioPlan> {
   opts.onProgress?.('Reading the whole script…');
   let base: Omit<StudioPlan, 'model_id' | 'planned_at' | 'notes'>;
@@ -535,6 +611,10 @@ export async function planForModel(script: string, opts: PlanOptions): Promise<S
     notes.push('The AI planner was unavailable, so scenes were split directly from your script. You can regenerate the plan any time.');
   }
   linkSavedCharacters(base, opts.savedCharacters, script);
+  if (opts.lockedStyle) base.visual_style = opts.lockedStyle;
+  if (opts.lockedCast?.length) adoptLockedCast(base, opts.lockedCast);
+  ensureCast(base);
+  linkCastToScenes(base);
   opts.onProgress?.(`Fitting scenes to ${opts.model.label}…`);
   const fitted = fitScenesToModel(base.scenes, opts.model);
   base.scenes = fitted.scenes;

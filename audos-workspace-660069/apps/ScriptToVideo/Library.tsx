@@ -4,8 +4,8 @@
  * watchable; nothing new is ever written to the old tables).
  */
 import { useState } from 'react';
-import type { CSSProperties } from 'react';
-import { Archive, ArchiveRestore, Clapperboard, MoreVertical, Play, Plus, Sparkles, Trash2 } from 'lucide-react';
+import type { CSSProperties, ReactNode } from 'react';
+import { Archive, ArchiveRestore, CalendarClock, Clapperboard, Copy, MoreVertical, Play, Plus, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import { Film, T } from './api';
 
 export interface LegacyFilm { id: number; title: string; final_url: string | null; created_at: string }
@@ -63,6 +63,28 @@ const menuItemStyle: CSSProperties = {
   fontSize: 13, fontWeight: 500, padding: '9px 11px', cursor: 'pointer',
 };
 
+const rowActionStyle: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', gap: 6, background: 'transparent', border: `1px solid ${T.dim}`,
+  borderRadius: 8, color: T.bone, fontSize: 12, fontWeight: 650, padding: '6px 10px', cursor: 'pointer', minHeight: 32,
+};
+
+/** Episode badge for films made as part of a series ("Make another like this" or weekly autopilot). */
+function SeriesBadge({ f }: { f: Film }) {
+  const series = (f.plan as any)?.studio?.series;
+  if (!series || !series.title) return null;
+  return <span style={{ color: T.live, fontSize: 11.5, fontWeight: 650, border: `1px solid ${T.dim}`, borderRadius: 6, padding: '2px 7px' }}>{series.autopilot ? 'Weekly · ' : ''}Episode {Math.max(1, Number(series.episode) || 1)} · {String(series.title).slice(0, 28)}</span>;
+}
+
+/** Automatic quality check result for the film's current cut. */
+function QaBadge({ f }: { f: Film }) {
+  const qa = (f.plan as any)?.auto_qa;
+  if (!qa || !f.final_video_url || qa.video_url !== f.final_video_url) return null;
+  const refunded = Number(qa.refund?.credits) || 0;
+  if (qa.status === 'passed') return <span style={{ color: T.done, fontSize: 11.5, fontWeight: 650 }}>Quality checked</span>;
+  if (qa.status === 'failed') return <span title={String(qa.summary || '')} style={{ color: T.fault, fontSize: 11.5, fontWeight: 650 }}>{refunded ? `Quality issue · ${refunded} credits refunded` : 'Quality issue found'}</span>;
+  return null;
+}
+
 function StatusWord({ f }: { f: Film }) {
   const map: Record<string, { word: string; color: string; bg: string }> = {
     draft: { word: 'Draft', color: T.muted, bg: 'var(--vg-raised)' },
@@ -87,6 +109,13 @@ export default function Library(props: {
   onQuickCreate: (text: string) => void;
   onArchive: (f: Film, archived: boolean) => void;
   onDelete: (f: Film) => void;
+  /** Open a finished film on its fix panel (every scene previewable). */
+  onFix?: (f: Film) => void;
+  /** Start the next video with this film's look, cast and settings. */
+  onMakeAnother?: (f: Film) => void;
+  onMakeWeekly?: (f: Film) => void;
+  /** Shown above the film list (weekly autopilot series). */
+  topSlot?: ReactNode;
 }) {
   const { loading, onNew, onOpen, onOpenLegacy, onQuickCreate, onArchive, onDelete } = props;
   const [showArchived, setShowArchived] = useState(false);
@@ -164,6 +193,8 @@ export default function Library(props: {
         </div>
       </div>
 
+      {props.topSlot || null}
+
       {loading && !ordered.length ? (
         <div role="status" aria-label="Loading your films" style={{ display: 'grid', gap: 10, padding: '8px 0' }}>
           {[0, 1, 2].map((item) => <div key={item} style={{ display: 'grid', gridTemplateColumns: '112px minmax(0,1fr) 84px', gap: 16, alignItems: 'center', minHeight: 84, padding: 12, border: `1px solid ${T.line}`, borderRadius: 12, background: T.raised }}><span className="lb-shimmer" style={{ display: 'block', width: 104, height: 58, borderRadius: 8, background: `linear-gradient(110deg, ${T.canvas} 20%, color-mix(in srgb, ${T.live} 10%, ${T.raised}) 42%, ${T.canvas} 64%)`, backgroundSize: '220% 100%' }} /><span style={{ display: 'grid', gap: 9 }}><span className="lb-shimmer" style={{ width: `${62 + item * 7}%`, height: 13, borderRadius: 5, background: T.canvas }} /><span className="lb-shimmer" style={{ width: '42%', height: 10, borderRadius: 5, background: T.canvas }} /></span><span className="lb-shimmer" style={{ width: 72, height: 24, borderRadius: 7, background: T.canvas }} /></div>)}
@@ -211,6 +242,8 @@ export default function Library(props: {
                     <span style={{ color: T.muted, fontSize: 12, fontFamily: T.mono }}>{sceneCount ? `${sceneCount} scenes` : 'Scenes pending'}</span>
                     {f.duration_s ? <span style={{ color: T.muted, fontSize: 12, fontFamily: T.mono }}>{Math.round(Number(f.duration_s))}s</span> : null}
                     <StatusWord f={f} />
+                    <SeriesBadge f={f} />
+                    <QaBadge f={f} />
                   </div>
                   {running ? (
                     <div style={{ marginTop: 8, height: 3, background: T.raised, borderRadius: 2, overflow: 'hidden', maxWidth: 360 }}>
@@ -220,6 +253,12 @@ export default function Library(props: {
                   {running && f.stage_note ? <div style={{ color: T.live, fontSize: 12, marginTop: 5 }}>{f.stage_note}</div> : null}
                 </div>
               </button>
+              {f.final_video_url && !archived && (props.onFix || props.onMakeAnother) ? (
+                <div className="s2v-lib-actions" style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  {props.onFix ? <button type="button" className="s2v-ghost" onClick={() => props.onFix!(f)} title="Preview every scene and fix just the one you want" aria-label={`Fix scenes in ${f.title || 'this film'}`} style={rowActionStyle}><Wand2 size={13} /><span className="s2v-lib-label">Fix scenes</span></button> : null}
+                  {props.onMakeAnother ? <button type="button" className="s2v-ghost" onClick={() => props.onMakeAnother!(f)} title="Same look, cast and settings — only a new script" aria-label={`Make another like ${f.title || 'this film'}`} style={rowActionStyle}><Copy size={13} /><span className="s2v-lib-label">Make another</span></button> : null}
+                </div>
+              ) : null}
               {f.final_video_url ? <Play size={16} color={T.muted} /> : <Clapperboard size={16} color={T.dim} />}
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <button
@@ -234,6 +273,11 @@ export default function Library(props: {
                   <>
                     <div onClick={() => setMenuId(null)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
                     <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 178, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 10, boxShadow: '0 12px 32px rgba(0,0,0,0.4)', padding: 5 }}>
+                      {f.final_video_url && props.onMakeWeekly ? (
+                        <button className="s2v-menu-item" onClick={() => { setMenuId(null); props.onMakeWeekly!(f); }} style={menuItemStyle}>
+                          <CalendarClock size={14} /> Make this weekly
+                        </button>
+                      ) : null}
                       <button className="s2v-menu-item" onClick={() => { setMenuId(null); onArchive(f, !archived); }} style={menuItemStyle}>
                         {archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
                         {archived ? 'Unarchive' : 'Archive'}
@@ -287,7 +331,7 @@ export default function Library(props: {
           </div>
         </div>
       ) : null}
-      <style>{`@keyframes s2v-rail { from { transform: translateX(-30%); } to { transform: translateX(240%); } } .s2v-menu-item:hover { background: ${T.raised} !important; } @media(max-width:767px){.s2v-app .s2v-library-shell{padding:20px 16px 120px!important}}`}</style>
+      <style>{`@keyframes s2v-rail { from { transform: translateX(-30%); } to { transform: translateX(240%); } } .s2v-menu-item:hover { background: ${T.raised} !important; } @media(max-width:767px){.s2v-app .s2v-library-shell{padding:20px 16px 120px!important}.s2v-lib-label{display:none}}`}</style>
       </div>
     </div>
   );

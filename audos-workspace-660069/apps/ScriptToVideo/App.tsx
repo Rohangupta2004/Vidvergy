@@ -61,7 +61,7 @@ import { saveVideoSelection } from '../../lib/videoIntegrations';
 import { OMNI_MODEL_ID, OMNI_LABEL, callS2vHook as callHook, classifyError, friendlyErrorMessage } from './friendlyErrors';
 import {
   acquireCreditAuthorization, beginCreditEmailSignIn, CREDIT_AUTH_REFRESHED_EVENT,
-  isCreditAuthorizationError, refundCreditsStrict, requireVerifiedCreditSession,
+  isCreditAuthorizationError, refreshCredits, refundCreditsStrict, requireVerifiedCreditSession,
 } from '../../lib/credits';
 import AppShell from '../../components/ui/AppShell';
 import { withBrandContext } from '../../components/BrandContextLayer';
@@ -75,6 +75,12 @@ import { workspaceFetch } from '../../lib/workspace';
 import { checkPickerAvailability, pickerDisplayModels } from './modelPicker';
 import { RUNNER_MODEL_IDS } from './runnerModels';
 import { bridgeRequest, createControllerBus, useAppController, type AppController, type FieldSpec } from '../../lib/appBridge';
+import FilmFixPanel from './FilmFixPanel';
+import { WeeklyAutopilotDialog, WeeklyAutopilotList } from './SeriesAutopilot';
+import { autoQaFor, runAutoQa } from './autoQa';
+import type { AutoQaRecord } from './autoQa';
+import { createRetakeFromStoryboard } from './storyboardTake';
+import { buildProfileFromFilm, loadStudioProfile, nextEpisodeFrom, persistCastToCharacterStore, readLocalProfile, saveStudioProfile, stashSeriesPreset } from './studioProfile';
 
 type Screen = 'library' | 'create' | 'board' | 'final' | 'legacy';
 
@@ -382,6 +388,12 @@ function ScriptToVideoApp() {
   const [jobsOpen, setJobsOpen] = useState(false);
   const [adminDiagnoses, setAdminDiagnoses] = useState<any[]>([]);
   const [manualMode, setManualMode] = useState(false);
+  const [qa, setQa] = useState<AutoQaRecord | null>(null);
+  const [qaRunning, setQaRunning] = useState(false);
+  const [weeklyFor, setWeeklyFor] = useState<Film | null>(null);
+  const [weeklyRefresh, setWeeklyRefresh] = useState(0);
+  const [studioMount, setStudioMount] = useState(0);
+  const [fixFocusFor, setFixFocusFor] = useState<number | null>(null);
   const bridgeBus = useRef(createControllerBus()).current;
   const bridgeValues = useRef<Record<string, unknown>>({ length: 30, shape: '16:9', model: 'auto' });
   const bridgeScreen = useRef<Screen>(screen);
@@ -490,6 +502,43 @@ function ScriptToVideoApp() {
   // a saved project reopened in a fresh tab — from failing with a missing
   // credit authorization.
   useEffect(() => { void acquireCreditAuthorization(); }, []);
+  // The finish choices saved with the last finished film (caption style,
+  // transition, captions on/off) are the starting point for the next one.
+  useEffect(() => {
+    let live = true;
+    void loadStudioProfile().then((profile) => {
+      if (!live || !profile) return;
+      setFinishPrefs((prev) => ({ ...prev, captionStyle: (profile.caption_style || prev.captionStyle) as FinishOptions['captionStyle'], transition: (profile.transition || prev.transition) as FinishOptions['transition'] }));
+      if (profile.captions) setCaptions(true);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
+  // Quality guarantee: each finished cut is checked once, on the film view.
+  const qaRunFor = useRef('');
+  useEffect(() => {
+    const url = film?.final_video_url ? String(film.final_video_url) : '';
+    const saved = autoQaFor(film);
+    setQa(saved);
+    if (!film || !url || screen !== 'final' || film.status !== 'ready' || saved || qaRunFor.current === url) return;
+    qaRunFor.current = url;
+    void runFilmQa(false);
+  }, [film?.id, film?.final_video_url, film?.status, screen]);
+  // Saved cast & brand: every finished film refreshes the profile the next video offers to reuse.
+  const profileSavedFor = useRef('');
+  useEffect(() => {
+    const f = engineFilm.current;
+    if (!f || f.id !== film?.id || !f.final_video_url || f.status !== 'ready') return;
+    const key = `${f.id}:${f.final_video_url}`;
+    if (profileSavedFor.current === key) return;
+    profileSavedFor.current = key;
+    const saved = readLocalProfile();
+    if (saved && Number(saved.source_film_id) >= f.id) return;
+    void (async () => {
+      const cast = await persistCastToCharacterStore(f).catch(() => []);
+      const profile = await buildProfileFromFilm(f, engineScenes.current, cast, { captions: captionsRef.current, captionStyle: String(finishPrefsRef.current.captionStyle || 'clean'), transition: String(finishPrefsRef.current.transition || 'cut'), voiceSource, openaiVoice });
+      await saveStudioProfile(profile);
+    })().catch(() => undefined);
+  }, [film?.id, film?.final_video_url, film?.status]);
   // Warm only the next likely screen after the library paints. This keeps the
   // large planning UI out of the critical bundle without making New Film wait
   // on a cold download.
@@ -1868,11 +1917,12 @@ function ScriptToVideoApp() {
     setEditingId(target.id);
     await run(async () => {
       try {
+        const creditKey = `stv:film:${f.id}:scene:${target.id}:omni-edit:${Date.now()}`;
         const result = await VideoModelService.editVideo({
           sourceUrl: target.asset_url!, instruction,
           aspect: (f.aspect_ratio || '16:9') as any,
           durationS: Number(target.duration_s) || 0,
-          creditKey: `stv:film:${f.id}:scene:${target.id}:omni-edit:${Date.now()}`,
+          creditKey,
           generateAudio: f.plan?.audio_enabled !== false,
         });
         const validation = { ...(target.validation || {}) } as NonNullable<FilmScene['validation']>;
@@ -1886,6 +1936,7 @@ function ScriptToVideoApp() {
           assembled_from_window: result.assembledFromWindow,
           boundary_evidence: result.boundaryEvidence,
           operation_id: result.operationId,
+          credit_key: creditKey,
           incremental_cost: 'provider receipt pending reconciliation',
           status: 'preview' as const, created_at: new Date().toISOString(),
         };
@@ -1904,6 +1955,105 @@ function ScriptToVideoApp() {
     assembleKickedFor.current = null;
     advancedFor.current = null;
     window.setTimeout(() => { if (!running.current) void run(() => maybeAdvancePost(), { block: true }); }, 400);
+  }
+
+  /** [Discard] on an Omni fix preview: the film's clip never changed, so nothing is re-assembled. */
+  async function handleDiscardRevision(scene: FilmScene, revisionId: string) {
+    const target = engineScenes.current.find((item) => item.id === scene.id);
+    if (!target) return;
+    await run(async () => {
+      const validation = { ...(target.validation || {}) } as NonNullable<FilmScene['validation']>;
+      const revisions = [...(validation.revisions || [])];
+      if (!revisions.some((revision) => revision.id === revisionId && revision.status === 'preview')) return;
+      validation.revisions = revisions.map((revision) => (revision.id === revisionId ? { ...revision, status: 'undone' as const } : revision));
+      const accepted = [...validation.revisions].reverse().find((revision) => revision.status === 'accepted') || null;
+      validation.active_revision_id = accepted?.id || null;
+      await db.updateScene(target.id, { validation });
+      Object.assign(target, { validation });
+      setScenes((items) => items.map((item) => (item.id === target.id ? { ...item, validation } : item)));
+    });
+  }
+
+  /** [Regenerate scene N] on the finished film (models other than Omni Flash): only that block re-renders, then the film re-assembles. */
+  function handleFinalRegenerateScene(scene: FilmScene) {
+    const f = engineFilm.current;
+    const target = engineScenes.current.find((item) => item.id === scene.id);
+    if (!f || !target) return;
+    if (running.current) { setNote('Another step is still finishing — try again in a moment.'); return; }
+    if (f.plan?.background?.enabled && f.status !== 'ready') { setNote('This film is still being made on the server. Fix scenes once it has finished.'); return; }
+    const seconds = Math.max(1, Math.round(Number(target.duration_s) || 0));
+    if (!window.confirm(`Regenerate only scene ${target.idx + 1}?\n\nEvery other scene stays exactly as it is. This charges credits for ${seconds}s on the scene's model (real engine cost + 30%), refunded automatically if the render fails. The film re-assembles itself afterwards.`)) return;
+    setRedoingId(target.id);
+    void run(async () => {
+      try {
+        const handBack = reopenForFinish(f);
+        if (handBack.plan) { await db.updateFilm(f.id, handBack); Object.assign(f, handBack); }
+        await regenerateScenePrompt(f, engineScenes.current, target, hooks);
+        await generateScene(f, engineScenes.current, target, hooks);
+        if (String(target.status) === 'completed' && target.asset_url) {
+          const patch: Partial<Film> = { final_video_url: null, final_thumb_url: null, status: 'producing', machine_state: allScenesDone(engineScenes.current) ? 'ALL_SCENES_COMPLETED' : f.machine_state, stage_note: `Scene ${target.idx + 1} was regenerated — re-assembling your film automatically.`, error: null };
+          await db.updateFilm(f.id, patch);
+          Object.assign(f, patch);
+          setFilm({ ...f });
+        }
+      } finally {
+        setRedoingId(null);
+      }
+    }, { block: true }).then((ok) => { if (ok && !engineFilm.current?.final_video_url) scheduleReassembly(); });
+  }
+
+  /** [Regenerate from storyboard]: a new take from the same plan and storyboard; this film is left untouched. */
+  async function handleRegenerateFromStoryboard() {
+    const f = engineFilm.current;
+    if (!f || running.current) return;
+    if (!window.confirm('Make a new take of this film from the same storyboard and scene plan?\n\nThis film stays exactly as it is. The new take opens on the production board, where you see its credit estimate and press Start.')) return;
+    const made: { film: Film | null } = { film: null };
+    const ok = await run(async () => { made.film = await createRetakeFromStoryboard(f, engineScenes.current); }, { block: true });
+    if (ok && made.film) {
+      await openFilm(made.film);
+      setNote('New take ready — same storyboard, prompts and cast. Review it and press Start when you are ready.');
+    }
+  }
+
+  /** [Make another like this]: the studio opens on the next episode with this film's look, cast and settings. */
+  async function handleMakeAnother(source: Film) {
+    try {
+      setNote('Copying this film’s look, cast and settings…');
+      const list = engineFilm.current?.id === source.id ? engineScenes.current : await db.listScenes(source.id);
+      const cast = await persistCastToCharacterStore(source).catch(() => []);
+      const profile = await buildProfileFromFilm(source, list, cast, { captions: captionsRef.current, captionStyle: String(finishPrefsRef.current.captionStyle || 'clean'), transition: String(finishPrefsRef.current.transition || 'cut'), voiceSource, openaiVoice });
+      const library = films.length ? films : await db.listFilms().catch(() => [] as Film[]);
+      stashSeriesPreset({ series: nextEpisodeFrom(source, library), profile });
+      setQuickText(''); setHandoffIntake(null); setHandoffAttachment(null); setClassicCreate(false);
+      setStudioMount((n) => n + 1);
+      setScreen('create');
+      setNote('');
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    }
+  }
+
+  /** Library [Fix scenes]: open the finished film with its fix panel in view. */
+  function handleFixFilm(target: Film) {
+    setFixFocusFor(target.id);
+    void openFilm(target);
+  }
+
+  /** Automatic quality guarantee for the film's current cut. */
+  async function runFilmQa(force: boolean) {
+    const f = engineFilm.current;
+    if (!f?.final_video_url) return;
+    const url = String(f.final_video_url);
+    setQaRunning(true);
+    try {
+      const record = await runAutoQa(f, engineScenes.current, force);
+      if (!record || engineFilm.current?.id !== f.id || String(engineFilm.current.final_video_url || '') !== url) return;
+      if (f.plan) f.plan = { ...f.plan, auto_qa: record } as typeof f.plan;
+      setFilm({ ...f });
+      setQa(record);
+      if (Number(record.refund?.credits) > 0) { void refreshCredits(); setNote(record.summary); }
+    } catch { /* best effort — it runs again the next time this film opens */ }
+    finally { setQaRunning(false); }
   }
 
   async function handleAcceptRevision(scene: FilmScene, revisionId: string) {
@@ -2628,6 +2778,10 @@ function ScriptToVideoApp() {
           onQuickCreate={(t) => { setQuickText(t); setScreen('create'); }}
           onArchive={handleArchiveFilm}
           onDelete={handleDeleteFilm}
+          onFix={handleFixFilm}
+          onMakeAnother={(f) => { void handleMakeAnother(f); }}
+          onMakeWeekly={(f) => setWeeklyFor(f)}
+          topSlot={<WeeklyAutopilotList refreshKey={weeklyRefresh} onOpenFilm={(id) => { void db.getFilm(id).then((row) => { if (row) void openFilm(row); }).catch(() => undefined); }} />}
         />
       ) : null}
 
@@ -2636,7 +2790,7 @@ function ScriptToVideoApp() {
           <div style={{ maxWidth: 1080, margin: '0 auto' }}>
             <StudioErrorBoundary area="the studio">
               <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}>
-                <StudioV3Flow initialScript={quickText} onOpenFilm={(created) => { setQuickText(''); openFilm(created).catch((openError: any) => { setError(String(openError?.message || openError)); setScreen('library'); }); }} onClassic={() => setClassicCreate(true)} />
+                <StudioV3Flow key={studioMount} initialScript={quickText} onOpenFilm={(created) => { setQuickText(''); openFilm(created).catch((openError: any) => { setError(String(openError?.message || openError)); setScreen('library'); }); }} onClassic={() => setClassicCreate(true)} />
               </Suspense>
             </StudioErrorBoundary>
           </div>
@@ -2736,6 +2890,28 @@ function ScriptToVideoApp() {
           finishPrefs={finishPrefs}
           onFinishPrefs={setFinishPrefs}
           onStopAssembly={handleStopFinish}
+          topSlot={(
+            <FilmFixPanel
+              film={film}
+              scenes={scenes}
+              busy={busy}
+              editingId={editingId}
+              redoingId={redoingId}
+              qa={qa}
+              qaRunning={qaRunning}
+              onRecheckQa={() => { void runFilmQa(true); }}
+              onOmniEdit={handleOmniEdit}
+              onAcceptRevision={handleAcceptRevision}
+              onDiscardRevision={handleDiscardRevision}
+              onUndoRevision={handleUndoRevision}
+              onRegenerateScene={handleFinalRegenerateScene}
+              onRegenerateFromStoryboard={() => { void handleRegenerateFromStoryboard(); }}
+              onRerunAssembly={() => { void handleFinalAssembly({ captions }); }}
+              onMakeAnother={() => { void handleMakeAnother(film); }}
+              onMakeWeekly={() => setWeeklyFor(film)}
+              focusFix={fixFocusFor === film.id}
+            />
+          )}
         /></Suspense></StudioErrorBoundary>
       ) : null}
 
@@ -2757,6 +2933,8 @@ function ScriptToVideoApp() {
           onOpenBoard={() => setScreen('board')}
         /></Suspense>
       ) : null}
+
+      {weeklyFor ? <WeeklyAutopilotDialog film={weeklyFor} onClose={() => setWeeklyFor(null)} onCreated={() => setWeeklyRefresh((n) => n + 1)} /> : null}
 
       {note && !error ? <StudioToast message={note} tone={busy ? 'info' : 'success'} onDismiss={() => setNote('')} /> : null}
 

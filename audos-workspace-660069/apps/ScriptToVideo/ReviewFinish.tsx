@@ -8,6 +8,7 @@
  * exist are reused, so Retry assembly never pays for them twice.
  */
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   AlertTriangle, ArrowLeft, Captions, Check, Circle, Download, Layers,
   Plus, RefreshCw, Square, Trash2, Type,
@@ -294,6 +295,8 @@ export function FinalScreen(props: {
   finishPrefs?: FinishOptions;
   onFinishPrefs?: (prefs: FinishOptions) => void;
   onStopAssembly?: () => void;
+  /** Rendered under the player and its actions: the scene fix panel. */
+  topSlot?: ReactNode;
 }) {
   const { film, busy, assembly, captions } = props;
   const scenes = Array.isArray(props.scenes) ? props.scenes : [];
@@ -490,6 +493,8 @@ export function FinalScreen(props: {
           ) : null}
         </div>
         {settingsChanged && !running ? <div style={{ color: T.live, fontSize: 12, marginTop: 8 }}>Your finish settings changed — Re-run assembly to apply them. Clips and audio are reused.</div> : null}
+
+        {props.topSlot || null}
 
         <Section icon={<Captions size={15} />} title="Finish" hint="applied the next time the film is assembled">
           <div className="s2v-fin-controls">
