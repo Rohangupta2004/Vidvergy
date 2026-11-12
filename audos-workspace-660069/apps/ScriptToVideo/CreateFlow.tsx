@@ -21,7 +21,7 @@ import {
   AlertTriangle, AtSign, Check, Clapperboard, FileUp, Image as ImageIcon, Lock, Plus,
   RefreshCw, Trash2, Undo2, UserRound, Wand2, X,
 } from 'lucide-react';
-import { Aspect, AssetRow, ParsedScript, StoredReference, T, db, referenceSlug, uploadBlob } from './api';
+import { Aspect, AssetRow, ParsedScript, StoredReference, T, db, generateBackdropImage, referenceSlug, uploadBlob } from './api';
 import { aiFormatScript, parseManualScript, serializeManualScript, suggestScriptConcepts } from './manualScript';
 import type { ScriptConcept } from './manualScript';
 import {
@@ -34,7 +34,7 @@ import type { AudioPolicy, CodeMotionEngine, ControlMode, ExecutionMode, VideoSt
 import ModelGrid, { ModelGridOption } from './ModelGrid';
 import { checkPickerAvailability, pickerDisplayModels, pickerModelById, pickerModels, type PickerAvailabilityMap } from './modelPicker';
 import { recommendDefaultModel, recommendationExplanation, scoreVideoModels, scriptHasDialogue, scriptHasRecurringPeople } from './modelRecommendation';
-import QuickStartPanel, { type StartTab } from './QuickStartPanel';
+import QuickStartPanel, { type StartPath, type StoryboardFrameView } from './QuickStartPanel';
 import { markQuickStartPending, readQuickStartPending } from './AutoRunChecklist';
 import { planBigScenes } from './pipeline/bigScenePlanner';
 import {
@@ -187,6 +187,46 @@ function OrientationToggle({ value, onChange, disabled }: { value: Aspect; onCha
 }
 
 export type CreateMode = 'ai' | 'manual';
+
+/** A storyboard the creator made on the first screen: one picture per scene.
+ * With `attach`, each picture becomes that scene's storyboard frame, which the
+ * render paths open new shots on. */
+export interface UserStoryboardFrame { index: number; url: string; text: string; caption: string }
+export interface UserStoryboard { attach: boolean; frames: UserStoryboardFrame[] }
+
+const MAX_STORYBOARD_FRAMES = 24;
+type StoryboardBeat = { label: string; text: string; visual: string };
+type BoardFrame = StoryboardFrameView & { visual: string };
+
+/** Split a script into storyboard beats the way the film will be cut: scene
+ * headings when the script has them, otherwise paragraphs, otherwise groups
+ * of sentences of roughly ten seconds each. */
+function storyboardBeats(script: string, parsedScript: ParsedScript): StoryboardBeat[] {
+  if (parsedScript.scenes.length) {
+    return parsedScript.scenes.slice(0, MAX_STORYBOARD_FRAMES).map((scene, index) => ({
+      label: `Scene ${index + 1}`,
+      text: [scene.title, scene.visual, ...(scene.dialogue || []).map((line) => line.line)].filter(Boolean).join(' — ').slice(0, 400),
+      visual: [scene.visual || scene.title, scene.camera ? `Camera: ${scene.camera}` : ''].filter(Boolean).join('. '),
+    }));
+  }
+  let chunks = script.split(/\n\s*\n/).map((part) => part.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (chunks.length < 2) {
+    const sentences = (script.replace(/\s+/g, ' ').match(/[^.!?]+[.!?]*/g) || []).map((part) => part.trim()).filter(Boolean);
+    chunks = [];
+    let current = '';
+    for (const sentence of sentences) {
+      if (current && `${current} ${sentence}`.split(' ').length > 28) { chunks.push(current); current = sentence; }
+      else current = current ? `${current} ${sentence}` : sentence;
+    }
+    if (current) chunks.push(current);
+  }
+  while (chunks.length > MAX_STORYBOARD_FRAMES) {
+    const merged: string[] = [];
+    for (let index = 0; index < chunks.length; index += 2) merged.push(chunks.slice(index, index + 2).join(' '));
+    chunks = merged;
+  }
+  return chunks.map((chunk, index) => ({ label: `Scene ${index + 1}`, text: chunk.slice(0, 400), visual: chunk }));
+}
 
 const EMPTY_PARSE: ParsedScript = { scenes: [], globalStyle: '' };
 
@@ -640,7 +680,7 @@ export function CreateScreen(props: {
   initialShotName?: string;
   busy: boolean;
   manualMode: boolean;
-  onSubmit: (params: { mode: CreateMode; script: string; aspect: Aspect; targetDuration: number; screenshotUrl: string | null; characterRefUrl: string | null; note: string; videoModel: string; styleLock: boolean; audioEnabled: boolean; narrationEnabled: boolean; charactersSpeak: boolean; entryType: 'idea' | 'script'; controlMode: ControlMode; executionMode: ExecutionMode; motionEngine: CodeMotionEngine; videoStyle: VideoStyleId; customVisualDirection: string; audioPolicy: AudioPolicy; maxAuthorizedCredits: number; storyboardRequested: boolean }) => void;
+  onSubmit: (params: { mode: CreateMode; script: string; aspect: Aspect; targetDuration: number; screenshotUrl: string | null; characterRefUrl: string | null; note: string; videoModel: string; styleLock: boolean; audioEnabled: boolean; narrationEnabled: boolean; charactersSpeak: boolean; entryType: 'idea' | 'script'; controlMode: ControlMode; executionMode: ExecutionMode; motionEngine: CodeMotionEngine; videoStyle: VideoStyleId; customVisualDirection: string; audioPolicy: AudioPolicy; maxAuthorizedCredits: number; storyboardRequested: boolean; userStoryboard?: UserStoryboard }) => void;
 }) {
   const { initialText, initialIntake, initialShotUrl, initialShotName, busy, manualMode, onSubmit } = props;
   const { document: brandKit } = useBrandKit();
@@ -648,12 +688,32 @@ export function CreateScreen(props: {
   const intakeStyle = (initialIntake?.styleConfiguration || {}) as Record<string, any>;
   const intakePresenterLed = Boolean(initialIntake && ['ugc-ad', 'talking-head'].includes(initialIntake.styleId));
   const [text, setText] = useState(() => initialIntake?.generatedScript || initialText || String(readScriptDraft()?.text || '')); 
+  // The simple first screen: idea or script, then review (+ optional storyboard), then Generate.
+  const restoredDraft = useMemo(() => (!initialText && !initialIntake ? readScriptDraft() : null), []);
+  const [quickPath, setQuickPath] = useState<StartPath>(() => (restoredDraft?.quickPath === 'idea' || restoredDraft?.quickPath === 'script'
+    ? restoredDraft.quickPath
+    : initialIntake?.entryType === 'script' || String(initialText || restoredDraft?.text || '').trim() ? 'script' : 'idea'));
+  const [ideaText, setIdeaText] = useState(() => String(restoredDraft?.ideaText || ''));
+  const [scriptFromIdea, setScriptFromIdea] = useState(() => restoredDraft?.scriptFromIdea === true);
+  const [ideaBusy, setIdeaBusy] = useState(false);
+  const [ideaErr, setIdeaErr] = useState('');
+  const [boardFrames, setBoardFrames] = useState<BoardFrame[]>(() => (Array.isArray(restoredDraft?.userStoryboard?.frames) ? restoredDraft.userStoryboard.frames : [])
+    .filter((frame: any) => frame && Number.isFinite(Number(frame.index)))
+    .map((frame: any) => {
+      const url = /^https:\/\//i.test(String(frame.url || '')) ? String(frame.url) : '';
+      return { index: Number(frame.index), label: String(frame.label || `Scene ${Number(frame.index) + 1}`), text: String(frame.text || ''), visual: String(frame.visual || frame.text || ''), url, status: url ? 'ready' : frame.status === 'error' ? 'error' : 'idle', error: url ? '' : String(frame.error || '') } as BoardFrame;
+    }));
+  const [boardSource, setBoardSource] = useState(() => String(restoredDraft?.userStoryboard?.source || ''));
+  const [boardAttach, setBoardAttach] = useState(() => restoredDraft?.userStoryboard?.attach === true);
+  const [boardBusy, setBoardBusy] = useState(false);
+  const [boardError, setBoardError] = useState('');
+  const boardRun = useRef(0);
   const [fetchedBrand, setFetchedBrand] = useState<BrandRecord | null>(null);
   const [brandStatus, setBrandStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [brandError, setBrandError] = useState('');
   const [ignoredBrandKey, setIgnoredBrandKey] = useState('');
   const lastBrandUrl = useRef('');
-  const briefUrlCandidate = text.match(/https?:\/\/[^\s)]+/i)?.[0] || '';
+  const briefUrlCandidate = text.match(/https?:\/\/[^\s)]+/i)?.[0] || ideaText.match(/https?:\/\/[^\s)]+/i)?.[0] || '';
   const briefUrl = /^https?:\/\/[a-z0-9.-]+\.[a-z]{2,}/i.test(briefUrlCandidate) ? briefUrlCandidate : '';
   const [confirmedBrand, setConfirmedBrand] = useState<BrandRecord | null>(null);
   const savedBrandMatch = confirmedBrand && (!briefUrl || !confirmedBrand.websiteUrl || normalizeBrandUrl(briefUrl) === normalizeBrandUrl(confirmedBrand.websiteUrl)) ? confirmedBrand : null;
@@ -910,8 +970,9 @@ export function CreateScreen(props: {
   }, []);
   useEffect(() => {
     if (!draftReady.current) return;
-    try { localStorage.setItem(scriptDraftKey(), JSON.stringify({ text, mode, aspect, targetDuration, audioPolicy, videoStyle, visualStyle, storyboard, modelMode, videoModel, ideaScriptReady, scriptAccepted, ownScriptChoice, tone, language, controlMode, executionMode, motionEngine, styleLock, maxAuthorizedCredits, savedAt: Date.now() })); } catch {}
-  }, [text, mode, aspect, targetDuration, audioPolicy, videoStyle, visualStyle, storyboard, modelMode, videoModel, ideaScriptReady, scriptAccepted, ownScriptChoice, tone, language, controlMode, executionMode, motionEngine, styleLock, maxAuthorizedCredits]);
+    const userStoryboard = { source: boardSource, attach: boardAttach, frames: boardFrames.map(({ index, label, text: frameText, visual, url, status, error }) => ({ index, label, text: frameText, visual, url, status: status === 'loading' ? 'idle' : status, error })) };
+    try { localStorage.setItem(scriptDraftKey(), JSON.stringify({ text, mode, aspect, targetDuration, audioPolicy, videoStyle, visualStyle, storyboard, modelMode, videoModel, ideaScriptReady, scriptAccepted, ownScriptChoice, tone, language, controlMode, executionMode, motionEngine, styleLock, maxAuthorizedCredits, quickPath, ideaText, scriptFromIdea, userStoryboard, savedAt: Date.now() })); } catch {}
+  }, [text, mode, aspect, targetDuration, audioPolicy, videoStyle, visualStyle, storyboard, modelMode, videoModel, ideaScriptReady, scriptAccepted, ownScriptChoice, tone, language, controlMode, executionMode, motionEngine, styleLock, maxAuthorizedCredits, quickPath, ideaText, scriptFromIdea, boardFrames, boardSource, boardAttach]);
 
   function normalizeBrandKey(value: string): string {
     return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
@@ -1171,6 +1232,7 @@ export function CreateScreen(props: {
       videoStyle, customVisualDirection: videoStyle === 'custom' ? visualStyle : '', audioPolicy,
       maxAuthorizedCredits,
       storyboardRequested: storyboard === 'yes',
+      userStoryboard: userStoryboardFor(effectiveModel),
     });
   };
 
@@ -1302,10 +1364,10 @@ export function CreateScreen(props: {
 
   // ---- One-press Start: paste a script, press Start video. The text is sent
   // exactly as typed and the film runs in automatic mode end to end. ----
-  const [startTab, setStartTab] = useState<StartTab>(() => (initialIntake || readScriptDraft()?.scriptAccepted === true ? 'idea' : 'script'));
+  const [fullSetup, setFullSetup] = useState(() => Boolean(initialIntake));
   const [quickCostOk, setQuickCostOk] = useState(false);
   const [quickResume] = useState(() => Boolean(readQuickStartPending()) && text.trim().length > 0);
-  useEffect(() => { if (bridgeFillLabel) setStartTab('idea'); }, [bridgeFillLabel]);
+  useEffect(() => { if (bridgeFillLabel) setFullSetup(true); }, [bridgeFillLabel]);
   const quickWords = text.trim() ? text.trim().split(/\s+/).length : 0;
   const quickSceneSeconds = quickParsed.scenes.map((scene) => scene.durationSec);
   const quickEstimate = quickSceneSeconds.length ? quickSceneSeconds.reduce((sum, value) => sum + value, 0) : Math.max(4, Math.min(600, Math.round(quickWords / 2.35)));
@@ -1324,7 +1386,8 @@ export function CreateScreen(props: {
   const quickCostMessage = costConfirmMessage(quickModel, quickSeconds / quickClips, quickClips);
   useEffect(() => { setQuickCostOk(false); }, [quickModel.id, quickCostMessage]);
   const quickModelReady = modelAvailability[quickModel.id]?.ready ?? (quickModel.id === VIDEO_MODEL.id || quickModel.id === KLING_3_0.id || quickModel.id === KLING_3_0_OMNI.id);
-  const quickProblem = quickWords < 3 ? 'Paste at least a few words of your script.'
+  const quickProblem = quickPath === 'idea' && !scriptFromIdea ? 'Write the script from your idea first.'
+    : quickWords < 3 ? (quickPath === 'idea' ? 'The script is empty. Write it again from your idea.' : 'Paste at least a few words of your script.')
     : quickSeconds > 600 ? 'This script runs longer than the 10-minute maximum. Split it into two films.'
       : requiresNativeAudio && !quickModel.audioSupported ? `${quickModel.label} is silent. Choose a model with native sound in Advanced, or change Sound.`
         : quickModel.imageToVideoOnly && !(charUrl || shotUrl) ? `${quickModel.label} needs a start image. Choose another model in Advanced.`
@@ -1349,13 +1412,112 @@ export function CreateScreen(props: {
       videoStyle, customVisualDirection: videoStyle === 'custom' ? visualStyle : '', audioPolicy,
       maxAuthorizedCredits: Math.max(maxAuthorizedCredits, quickSeconds),
       storyboardRequested: true,
+      userStoryboard: userStoryboardFor(quickModel),
     });
   };
+
+  // ---- Storyboard: one GPT image per scene, made before any paid video. ----
+  const lookTextNow = videoStyle === 'custom' ? visualStyle : styleDirection(videoStyle);
+  const boardCapabilityOf = (model: VideoModelConfig) => {
+    const capability = capabilityFor(model.apiModel) as any;
+    return capability ? Boolean(capability.firstFrame || Number(capability.maxReferences || 0) > 0) : Number(model.maxReferenceImages || 0) > 0;
+  };
+  const boardAttachSupported = boardCapabilityOf(quickModel);
+  const boardReady = boardFrames.filter((frame) => frame.status === 'ready' && /^https:\/\//i.test(frame.url));
+  const boardStale = boardFrames.length > 0 && boardSource.trim() !== text.trim();
+  const userStoryboardFor = (model: VideoModelConfig): UserStoryboard | undefined => (boardReady.length
+    ? { attach: boardAttach && boardCapabilityOf(model), frames: boardReady.map((frame) => ({ index: frame.index, url: frame.url, text: frame.text, caption: frame.label })) }
+    : undefined);
+  const boardPrompt = (frame: BoardFrame, total: number) => [
+    `Storyboard keyframe ${frame.index + 1} of ${total} for one continuous film.`,
+    `Visual style (mandatory): ${lookTextNow}.`,
+    `Scene: ${frame.visual.slice(0, 900)}`,
+    `Exact ${aspect} composition, cinematic framing; keep characters, wardrobe and setting consistent with the other frames.`,
+    'No text, captions, subtitles, logos, interfaces or watermarks.',
+  ].join(' ');
+  async function drawBoardFrame(frame: BoardFrame, total: number, run: number): Promise<boolean> {
+    setBoardFrames((list) => list.map((item) => (item.index === frame.index ? { ...item, status: 'loading', error: '' } : item)));
+    try {
+      const url = await generateBackdropImage(boardPrompt(frame, total), aspect, 'draft');
+      if (boardRun.current !== run) return false;
+      setBoardFrames((list) => list.map((item) => (item.index === frame.index ? { ...item, url, status: 'ready', error: '' } : item)));
+      return true;
+    } catch (caught: any) {
+      if (boardRun.current !== run) return false;
+      setBoardFrames((list) => list.map((item) => (item.index === frame.index ? { ...item, status: 'error', error: friendlyErrorMessage(caught) } : item)));
+      return false;
+    }
+  }
+  async function generateStoryboard() {
+    if (boardBusy || busy) return;
+    const beats = storyboardBeats(text, quickParsed);
+    if (!beats.length) { setBoardError('Add your script first.'); return; }
+    const run = boardRun.current + 1;
+    boardRun.current = run;
+    const frames: BoardFrame[] = beats.map((beat, index) => ({ index, ...beat, url: '', status: 'loading', error: '' }));
+    setBoardFrames(frames); setBoardSource(text); setBoardError(''); setBoardBusy(true);
+    let drawn = 0;
+    try {
+      for (let start = 0; start < frames.length; start += 3) {
+        const results = await Promise.all(frames.slice(start, start + 3).map((frame) => drawBoardFrame(frame, frames.length, run)));
+        if (boardRun.current !== run) return;
+        drawn += results.filter(Boolean).length;
+      }
+      if (drawn) { setBoardAttach(true); setSuccessToast(`Storyboard ready: ${drawn} of ${frames.length} pictures.`); }
+      else setBoardError('The storyboard pictures could not be made. Try again, or skip the storyboard.');
+    } finally {
+      if (boardRun.current === run) setBoardBusy(false);
+    }
+  }
+  async function redrawBoardFrame(index: number) {
+    const frame = boardFrames.find((item) => item.index === index);
+    if (!frame || boardBusy || busy || frame.status === 'loading') return;
+    const hadReady = boardReady.length > 0;
+    if (await drawBoardFrame(frame, boardFrames.length, boardRun.current)) { setBoardError(''); if (!hadReady) setBoardAttach(true); }
+  }
+  function clearStoryboard() {
+    boardRun.current += 1;
+    setBoardFrames([]); setBoardSource(''); setBoardAttach(false); setBoardBusy(false); setBoardError('');
+  }
+
+  // ---- Idea path: the writer turns a short idea into a scene-by-scene script. ----
+  async function writeScriptFromIdea() {
+    const idea = ideaText.trim();
+    if (!idea || ideaBusy || busy) return;
+    setIdeaBusy(true); setIdeaErr('');
+    try {
+      const context = `Type: ${filmType}. Tone: ${tone}. Language: ${language}. Length: ${targetDuration} seconds.${brandInUse ? `\nWEBSITE BRAND CONTEXT:\n${brandToContextText(brandInUse)}` : ''}`;
+      const concepts = await suggestScriptConcepts(`${idea}\n${context}`).catch(() => [] as ScriptConcept[]);
+      const concept = concepts[0] || null;
+      const brief = concept
+        ? `${idea}\n\nSELECTED STORY APPROACH — preserve this intent:\n${concept.title}\n${concept.premise}\n${concept.visual_arc}\n${context}`
+        : `${idea}\n${context}`;
+      const formatted = await aiFormatScript(brief, {
+        audioEnabled, narrationEnabled, charactersSpeak,
+        modelLabel: effectiveModel.label,
+        modelDurationRule: durationContract(effectiveModel),
+        modelMinDuration: effectiveModel.minDuration,
+        modelMaxDuration: effectiveModel.safeMaxDuration,
+        modelSupportedDurations: effectiveModel.discreteDurations ? effectiveModel.supportedDurations : undefined,
+        targetDuration,
+        targetSceneDurations: filmBlocks,
+      });
+      const script = serializeManualScript(formatted);
+      if (!script.trim()) throw new Error('The writer returned an empty script. Try again, or add a little more detail to your idea.');
+      setText(script); setMode('manual'); setOwnScriptChoice('skip'); setScriptAccepted(false); setAiFormatProposal('');
+      setScriptFromIdea(true);
+      setSuccessToast('Your script is ready. Review it below.');
+    } catch (caught: any) {
+      setIdeaErr(friendlyErrorMessage(caught));
+    } finally {
+      setIdeaBusy(false);
+    }
+  }
 
   return (
     <div className="s2v-create-scroll" style={{ flex: 1, overflowY: 'auto', padding: '26px 24px 164px' }}>
       <div className="s2v-create-inner" style={{ maxWidth: 980, margin: '0 auto' }}>
-        <section style={{ position: 'relative', overflow: 'hidden', background: 'radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--space-brand-primary-500) 20%, transparent), transparent 36%), var(--vg-gradient-surface)', border: `1px solid color-mix(in srgb, ${T.live} 42%, ${T.dim})`, borderRadius: 18, padding: '24px 24px 22px', boxShadow: '0 24px 64px color-mix(in srgb, var(--space-text-primary) 16%, transparent)', marginBottom: 16 }}>
+        {fullSetup ? <section style={{ position: 'relative', overflow: 'hidden', background: 'radial-gradient(circle at 86% 0%, color-mix(in srgb, var(--space-brand-primary-500) 20%, transparent), transparent 36%), var(--vg-gradient-surface)', border: `1px solid color-mix(in srgb, ${T.live} 42%, ${T.dim})`, borderRadius: 18, padding: '24px 24px 22px', boxShadow: '0 24px 64px color-mix(in srgb, var(--space-text-primary) 16%, transparent)', marginBottom: 16 }}>
           <div style={{ color: T.live, fontSize: 12, fontWeight: 850, letterSpacing: 1.5, textTransform: 'uppercase' }}>Script-to-Video · new film</div>
           <h1 style={{ color: T.bone, fontSize: 'clamp(24px, 4vw, 34px)', lineHeight: 1.08, letterSpacing: -0.8, margin: '8px 0 8px', maxWidth: 680 }}>Build one continuous film from a clear source</h1>
           <p style={{ color: T.muted, fontSize: 13.5, lineHeight: 1.65, margin: 0, maxWidth: 720 }}>Set the runtime, bring an idea or script, choose the look and sound, then start. The planner preserves accepted wording, checks every scene before spending, and carries characters and ending frames forward.</p>
@@ -1367,16 +1529,38 @@ export function CreateScreen(props: {
               ['4', 'Finish', 'Sound, captions and export'],
             ].map(([number, label, detail]) => <div key={number} style={{ display: 'flex', gap: 9, alignItems: 'center', background: 'color-mix(in srgb, var(--space-surface-panel-strong) 82%, transparent)', border: `1px solid ${T.line}`, borderRadius: 11, padding: '10px 11px' }}><span style={{ width: 24, height: 24, borderRadius: 8, display: 'grid', placeItems: 'center', flexShrink: 0, background: 'color-mix(in srgb, var(--space-brand-primary-500) 16%, transparent)', color: T.live, fontFamily: T.mono, fontSize: 12, fontWeight: 850 }}>{number}</span><span><strong style={{ display: 'block', color: T.bone, fontSize: 12 }}>{label}</strong><span style={{ display: 'block', color: T.dim, fontSize: 12, marginTop: 1 }}>{detail}</span></span></div>)}
           </div>
-        </section>
+        </section> : null}
 
         {bridgeFillLabel ? <div role="status" style={{ marginBottom: 12, border: `1px solid ${T.live}`, borderRadius: 12, padding: '10px 13px', color: T.live, background: 'color-mix(in srgb, var(--space-brand-primary-500) 10%, transparent)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--space-brand-primary-500) 12%, transparent)', fontSize: 12.5, fontWeight: 800 }}>{bridgeFillLabel}</div> : null}
         {successToast ? <div role="status" aria-live="polite" style={{ position: 'fixed', right: 20, bottom: 96, zIndex: 40, maxWidth: 360, display: 'flex', alignItems: 'center', gap: 8, background: T.raised, color: T.bone, border: `1px solid ${T.done}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 16px 44px color-mix(in srgb, var(--space-text-primary) 18%, transparent)', fontSize: 14 }}><Check size={15} color={T.done} />{successToast}</div> : null}
 
-        <QuickStartPanel
-          tab={startTab}
-          onTab={setStartTab}
+        {fullSetup ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+            <button type="button" onClick={() => setFullSetup(false)} disabled={busy} style={optionButton(false)}>← Back to the simple setup</button>
+            <span style={{ color: T.muted, fontSize: 12.5 }}>Full step-by-step setup: every option, same film.</span>
+          </div>
+        ) : <QuickStartPanel
+          path={quickPath}
+          onPath={(next) => { setQuickPath(next); setErr(''); }}
+          idea={ideaText}
+          onIdea={(value) => { setIdeaText(value); setIdeaErr(''); }}
+          onWriteScript={() => void writeScriptFromIdea()}
+          writing={ideaBusy}
+          writeError={ideaErr}
+          scriptFromIdea={scriptFromIdea}
           text={text}
           onText={(value) => { setText(value); setMode('manual'); setScriptAccepted(false); setAiFormatProposal(''); }}
+          storyboard={{
+            frames: boardFrames, busy: boardBusy, error: boardError, stale: boardStale, attach: boardAttach, attachSupported: boardAttachSupported,
+            attachNote: boardAttachSupported
+              ? 'Each new shot opens on its storyboard picture. Shots that continue the previous clip start from its last frame, so motion stays smooth.'
+              : `${quickModel.label} can’t take a start image, so the storyboard stays a visual guide. Pick another model in Advanced to attach it.`,
+          }}
+          onGenerateStoryboard={() => void generateStoryboard()}
+          onRegenerateFrame={(index) => void redrawBoardFrame(index)}
+          onAttachStoryboard={setBoardAttach}
+          onClearStoryboard={clearStoryboard}
+          lengthControl={renderLengthControl('Video length')}
           wordCount={quickWords}
           detectedScenes={quickSceneSeconds.length}
           seconds={quickSeconds}
@@ -1405,13 +1589,13 @@ export function CreateScreen(props: {
           canStart={quickCanStart}
           disabledReason={quickProblem}
           busy={busy}
-          error={startTab === 'script' && err ? friendlyErrorMessage(err) : ''}
+          error={err ? friendlyErrorMessage(err) : ''}
           resumeNotice={quickResume && !busy}
           onStart={startQuickVideo}
-          onOpenFullSetup={() => { setStartTab('idea'); setMode('manual'); setOwnScriptChoice('skip'); }}
-        />
+          onOpenFullSetup={() => { setFullSetup(true); if (quickPath === 'idea' && !scriptFromIdea) { setMode('ai'); if (ideaText.trim()) setText(ideaText); } else { setMode('manual'); setOwnScriptChoice('skip'); } }}
+        />}
 
-        <div className="s2v-v4-script" style={{ display: startTab === 'script' ? 'none' : 'grid', gap: 16 }}>
+        <div className="s2v-v4-script" style={{ display: fullSetup ? 'grid' : 'none', gap: 16 }}>
           {!scriptAccepted ? <>
             <section aria-labelledby="source-choice-title" style={setupCard}>
               <h2 id="source-choice-title" style={{ color: T.bone, fontSize: 20, lineHeight: 1.3, margin: 0 }}>How do you want to start?</h2>

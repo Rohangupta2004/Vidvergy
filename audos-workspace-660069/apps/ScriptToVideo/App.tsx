@@ -43,7 +43,7 @@ import type { VoiceSourceId } from './pipeline/voiceSource';
 import { LB_SHIMMER_CSS } from '../../components/LightBeam';
 import ProductSuiteHeader from '../../components/ProductSuiteHeader';
 import Library, { LegacyFilm } from './Library';
-import type { CreateMode } from './CreateFlow';
+import type { CreateMode, UserStoryboard, UserStoryboardFrame } from './CreateFlow';
 import { audioPolicyFlags } from './v2Contracts';
 import type { AudioPolicy, CodeMotionEngine, ControlMode, ExecutionMode, VideoStyleId } from './v2Contracts';
 import type { AgentMessage, AgentMetrics, AgentProposal, AgentUndo } from './assistantRuntime';
@@ -933,7 +933,7 @@ function ScriptToVideoApp() {
     return result;
   }
 
-  async function handleCreate(params: { mode?: CreateMode; script: string; aspect: any; targetDuration?: number; screenshotUrl: string | null; characterRefUrl?: string | null; note: string; videoModel?: string; styleLock?: boolean; audioEnabled?: boolean; narrationEnabled?: boolean; charactersSpeak?: boolean; entryType?: 'idea' | 'script'; controlMode?: ControlMode; executionMode?: ExecutionMode; motionEngine?: CodeMotionEngine; videoStyle?: VideoStyleId; customVisualDirection?: string; audioPolicy?: AudioPolicy; maxAuthorizedCredits?: number; storyboardRequested?: boolean }) {
+  async function handleCreate(params: { mode?: CreateMode; script: string; aspect: any; targetDuration?: number; screenshotUrl: string | null; characterRefUrl?: string | null; note: string; videoModel?: string; styleLock?: boolean; audioEnabled?: boolean; narrationEnabled?: boolean; charactersSpeak?: boolean; entryType?: 'idea' | 'script'; controlMode?: ControlMode; executionMode?: ExecutionMode; motionEngine?: CodeMotionEngine; videoStyle?: VideoStyleId; customVisualDirection?: string; audioPolicy?: AudioPolicy; maxAuthorizedCredits?: number; storyboardRequested?: boolean; userStoryboard?: UserStoryboard }) {
     lastCreateAttempt.current = params;
     if (running.current) return;
     running.current = true;
@@ -949,12 +949,17 @@ function ScriptToVideoApp() {
         : await createAndSegmentFilm({ script: params.script, aspect: params.aspect, targetDuration: params.targetDuration, referenceImageUrl: params.screenshotUrl, characterRefUrl: params.characterRefUrl || null, note: params.note, videoModel: params.videoModel, styleLock: params.styleLock !== false, audioEnabled: params.audioEnabled !== false, narrationEnabled: params.narrationEnabled === true, charactersSpeak: params.charactersSpeak === true, entryType: params.entryType, controlMode: params.controlMode, executionMode: params.executionMode, motionEngine: params.motionEngine, videoStyle: params.videoStyle, customVisualDirection: params.customVisualDirection, audioPolicy: params.audioPolicy, maxAuthorizedCredits: params.maxAuthorizedCredits, storyboardRequested: params.storyboardRequested }, hooks);
       let createdFilm = res.film;
       if (createdFilm.plan) {
-        const storyboardPlan = { ...createdFilm.plan, storyboard_requested: true } as typeof createdFilm.plan;
+        const userBoard = params.userStoryboard && Array.isArray(params.userStoryboard.frames) && params.userStoryboard.frames.length ? params.userStoryboard : null;
+        const storyboardPlan = { ...createdFilm.plan, storyboard_requested: true, ...(userBoard ? { user_storyboard: { attach: userBoard.attach === true, frames: userBoard.frames, saved_at: new Date().toISOString() } } : {}) } as typeof createdFilm.plan;
         await db.updateFilm(createdFilm.id, { plan: storyboardPlan });
         createdFilm = { ...createdFilm, plan: storyboardPlan };
+        const boardFilmId = createdFilm.id;
+        if (userBoard) void Promise.all(userBoard.frames.map((frame) => db.addAsset({ film_id: boardFilmId, kind: 'storyboard', name: `${frame.caption || `Scene ${frame.index + 1}`} storyboard`, description: String(frame.text || '').slice(0, 200), url: frame.url, tags: ['storyboard', 'creator-storyboard'] }))).catch(() => undefined);
         const orderedStoryboards = [...res.scenes].sort((a, b) => a.idx - b.idx);
-        if (orderedStoryboards[0]) await generateStoryboardFrame(createdFilm, orderedStoryboards[0]);
-        for (let index = 1; index < orderedStoryboards.length; index += 3) await Promise.all(orderedStoryboards.slice(index, index + 3).map((scene) => generateStoryboardFrame(createdFilm, scene)));
+        const attachedBoards = userBoard?.attach ? await attachUserStoryboard(createdFilm, orderedStoryboards, userBoard.frames) : new Set<number>();
+        const boardsToDraw = orderedStoryboards.filter((scene) => !attachedBoards.has(scene.id));
+        if (boardsToDraw[0]) await generateStoryboardFrame(createdFilm, boardsToDraw[0]);
+        for (let index = 1; index < boardsToDraw.length; index += 3) await Promise.all(boardsToDraw.slice(index, index + 3).map((scene) => generateStoryboardFrame(createdFilm, scene)));
         if (params.executionMode === 'automatic') {
           // One-press runs retry a failed frame twice on a short backoff before
           // production starts; a frame that still fails is left to the checklist.
@@ -1307,6 +1312,56 @@ function ScriptToVideoApp() {
       Object.assign(target, { spec: failedSpec });
       setNote(`Block ${target.idx + 1} storyboard needs Retry, but the plan can still start.`);
     }
+  }
+
+  /** The creator's storyboard from the first screen becomes each scene's
+   * storyboard frame. Both render paths already open new shots on
+   * `spec.storyboard_url`, so production needs nothing else. A scene with no
+   * matching picture keeps the usual generated storyboard. */
+  async function attachUserStoryboard(f: Film, ordered: FilmScene[], frames: UserStoryboardFrame[]): Promise<Set<number>> {
+    const attached = new Set<number>();
+    const usable = frames.filter((frame) => /^https:\/\//i.test(String(frame?.url || '')));
+    if (!usable.length || !ordered.length || !f.plan) return attached;
+    const wordsOf = (value: string) => new Set(String(value || '').toLowerCase().match(/[\p{L}\p{N}']{3,}/gu) || []);
+    const frameWords = usable.map((frame) => wordsOf(frame.text));
+    const picks = ordered.map((scene, position) => {
+      if (usable.length === ordered.length) return position;
+      const sceneWords = wordsOf(`${scene.script_segment || ''} ${(scene.spec as any)?.visual_goal || ''}`);
+      let best = -1;
+      let bestScore = 0;
+      frameWords.forEach((words, index) => {
+        if (!words.size || !sceneWords.size) return;
+        let shared = 0;
+        words.forEach((word) => { if (sceneWords.has(word)) shared += 1; });
+        const score = shared / Math.min(words.size, sceneWords.size);
+        if (score > bestScore) { bestScore = score; best = index; }
+      });
+      return best >= 0 && bestScore >= 0.2 ? best : Math.min(usable.length - 1, Math.floor((position * usable.length) / ordered.length));
+    });
+    const used = new Set<number>();
+    for (let position = 0; position < ordered.length; position += 1) {
+      const pick = picks[position];
+      if (used.has(pick)) continue;
+      const scene = ordered[position];
+      const frame = usable[pick];
+      const nextSpec = { ...(scene.spec as any), storyboard_url: frame.url, storyboard_caption: frame.caption || `Block ${scene.idx + 1} storyboard`, storyboard_only: false, storyboard_source: 'creator-storyboard', storyboard_status: 'ready', storyboard_error: null, storyboard_approved: true };
+      try {
+        await db.updateScene(scene.id, { spec: nextSpec });
+        Object.assign(scene, { spec: nextSpec });
+        used.add(pick);
+        attached.add(scene.id);
+      } catch { /* this scene falls back to a generated storyboard */ }
+    }
+    if (!attached.size) return attached;
+    try {
+      await serializeStoryboardPlanWrite(async () => {
+        const specs = new Map(ordered.filter((scene) => attached.has(scene.id)).map((scene) => [scene.scene_key, scene.spec]));
+        const plan = { ...f.plan!, scenes: (f.plan!.scenes || []).map((item) => (specs.has(item.scene_key) ? { ...item, spec: specs.get(item.scene_key) } : item)), storyboard_requested: true } as typeof f.plan;
+        await db.updateFilm(f.id, { plan });
+        Object.assign(f, { plan });
+      });
+    } catch { /* the scene rows already carry the frames; the plan copy catches up on the next plan write */ }
+    return attached;
   }
 
   async function handleGenerateStoryboard(scene: FilmScene) {
@@ -2495,7 +2550,7 @@ function ScriptToVideoApp() {
           <div className="row wrap" style={{ gap: 8 }}>
             <>
               <div role="group" aria-label="Script-to-Video detail level" style={{ display: 'inline-flex', padding: 3, borderRadius: 999, border: `1px solid ${T.dim}`, background: T.canvas }}><button type="button" aria-pressed={!manualMode} onClick={() => setManualMode(false)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: !manualMode ? T.live : 'transparent', color: !manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>Simple</button><button type="button" aria-pressed={manualMode} onClick={() => setManualMode(true)} style={{ minHeight: 36, padding: '6px 11px', border: 'none', borderRadius: 999, background: manualMode ? T.live : 'transparent', color: manualMode ? 'var(--vg-on-btn)' : T.muted, fontSize: 12, fontWeight: 800 }}>More detail</button></div>
-              {scenes.length ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Blocks · {scenes.length}</button> : null}
+              {scenes.length && (screen === 'board' || screen === 'final') ? <button type="button" aria-expanded={jobsOpen} onClick={() => setJobsOpen((value) => !value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: jobsOpen ? T.raised : 'transparent', border: `1px solid ${scenes.some((scene) => scene.status === 'failed') ? T.fault : T.dim}`, color: T.bone, borderRadius: 9, padding: '8px 11px', fontSize: 12, fontWeight: 750 }}><AlertCircle size={14} color={scenes.some((scene) => scene.status === 'failed') ? T.fault : T.live} />Blocks · {scenes.length}</button> : null}
               {showBack ? (
                 <button className="s2v-ghost" onClick={() => { setScreen('library'); setLegacyOpen(null); setAuto(false); autoRef.current = false; setJobsOpen(false); loadLibrary(); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1px solid ${T.dim}`, color: T.muted, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', padding: '7px 11px', borderRadius: 9 }}>
                   <ArrowLeft size={14} /> Library
@@ -2523,7 +2578,7 @@ function ScriptToVideoApp() {
         />
       ) : null}
 
-      {jobsOpen && scenes.length ? <section aria-label="Film jobs" style={{ flexShrink: 0, maxHeight: 320, overflowY: 'auto', background: T.raised, borderBottom: `1px solid ${T.line}`, padding: '10px 20px' }}><div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 6 }}>{[...scenes].sort((a, b) => a.idx - b.idx).map((scene) => <div key={scene.id} style={{ minHeight: 44, display: 'grid', gridTemplateColumns: '72px 110px minmax(0,1fr)', gap: 8, alignItems: 'center', color: T.muted, fontSize: 12 }}><span style={{ color: T.bone, fontFamily: T.mono }}>Scene {scene.idx + 1}</span><span style={{ color: scene.status === 'failed' ? T.fault : scene.status === 'completed' ? T.done : T.live, textTransform: 'capitalize' }}>{String(scene.status || 'waiting').replace(/_/g, ' ')}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{scene.error ? friendlyAppError(scene.error) : scene.asset_url ? 'Clip saved.' : scene.prompt ? 'Prompt ready.' : 'Waiting for its turn.'}</span></div>)}{adminDiagnoses.length ? <details style={{ marginTop: 6, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', color: T.live, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>Founder diagnostics across users · {adminDiagnoses.length}</summary><div style={{ display: 'grid', gap: 7 }}>{adminDiagnoses.map((item) => <div key={item.id} style={{ background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 8, padding: 9, color: T.muted, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}><b style={{ color: T.bone }}>{item.diagnosis?.category || 'unknown'} · {item.provider_model || 'unknown model'}</b><br />User/job: {item.user_session_id || 'unknown'} / {item.operation_id || item.id}<br />Raw provider error: {item.diagnosis?.raw_provider_error || 'not recorded'}<br />Next debug step: {item.diagnosis?.next_debug_step || 'Inspect provider request evidence.'}</div>)}</div></details> : null}</div></section> : null}
+      {jobsOpen && scenes.length && (screen === 'board' || screen === 'final') ? <section aria-label="Film jobs" style={{ flexShrink: 0, maxHeight: 320, overflowY: 'auto', background: T.raised, borderBottom: `1px solid ${T.line}`, padding: '10px 20px' }}><div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 6 }}>{[...scenes].sort((a, b) => a.idx - b.idx).map((scene) => <div key={scene.id} style={{ minHeight: 44, display: 'grid', gridTemplateColumns: '72px 110px minmax(0,1fr)', gap: 8, alignItems: 'center', color: T.muted, fontSize: 12 }}><span style={{ color: T.bone, fontFamily: T.mono }}>Scene {scene.idx + 1}</span><span style={{ color: scene.status === 'failed' ? T.fault : scene.status === 'completed' ? T.done : T.live, textTransform: 'capitalize' }}>{String(scene.status || 'waiting').replace(/_/g, ' ')}</span><span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{scene.error ? friendlyAppError(scene.error) : scene.asset_url ? 'Clip saved.' : scene.prompt ? 'Prompt ready.' : 'Waiting for its turn.'}</span></div>)}{adminDiagnoses.length ? <details style={{ marginTop: 6, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}><summary style={{ minHeight: 44, display: 'flex', alignItems: 'center', color: T.live, cursor: 'pointer', fontSize: 12, fontWeight: 800 }}>Founder diagnostics across users · {adminDiagnoses.length}</summary><div style={{ display: 'grid', gap: 7 }}>{adminDiagnoses.map((item) => <div key={item.id} style={{ background: T.canvas, border: `1px solid ${T.line}`, borderRadius: 8, padding: 9, color: T.muted, fontSize: 12, lineHeight: 1.5, overflowWrap: 'anywhere' }}><b style={{ color: T.bone }}>{item.diagnosis?.category || 'unknown'} · {item.provider_model || 'unknown model'}</b><br />User/job: {item.user_session_id || 'unknown'} / {item.operation_id || item.id}<br />Raw provider error: {item.diagnosis?.raw_provider_error || 'not recorded'}<br />Next debug step: {item.diagnosis?.next_debug_step || 'Inspect provider request evidence.'}</div>)}</div></details> : null}</div></section> : null}
 
       {error ? (
         <div className="s2v-error-banner" role="alert">
@@ -2722,7 +2777,7 @@ class S2VBoundary extends Component<{ children?: ReactNode }, { error: Error | n
               Your film's progress is saved after every step — reopen it from the library and it picks up where it left off.
             </div>
             <button onClick={() => this.setState({ error: null })} style={{ background: CTA_GRADIENT, color: ON_ACCENT, border: 'none', borderRadius: 10, padding: '11px 24px', fontSize: 13.5, fontWeight: 700, cursor: 'pointer' }}>
-              Back to your films
+              Try again
             </button>
           </div>
         </div>

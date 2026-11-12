@@ -1851,11 +1851,13 @@ function AdsStudioApp() {
                         return <div key={step.id} className="ads-rise" style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 7px', borderRadius: 8, background: T.panel, animationDelay: `${phaseIndex * 35}ms` }}><span style={{ display: 'flex', color: step.status === 'done' ? T.good : step.status === 'running' ? T.highlight : step.status === 'failed' ? T.bad : T.muted }}>{step.status === 'done' ? <Check size={11} /> : step.status === 'running' ? <Spin /> : step.status === 'failed' ? <AlertTriangle size={11} /> : <Circle size={10} />}</span><span style={{ minWidth: 0, flex: 1, color: step.status === 'pending' ? T.muted : T.soft, fontSize: 11 }}>{step.label}</span><span style={{ color: step.status === 'running' ? T.highlight : step.status === 'failed' ? T.bad : T.muted, fontSize: 9.5, fontFamily: T.mono, textTransform: 'uppercase' }}>{step.status}</span><span style={{ minWidth: 52, textAlign: 'right', color: T.muted, fontSize: 9.5, fontFamily: T.mono, fontVariantNumeric: 'tabular-nums' }}>{elapsed}</span></div>;
                       })}
                     </div>
+                    {clip?.videoUrl || status === 'generating' || status === 'inspecting' ? (
                     <div style={{ background: '#000', borderRadius: 10, overflow: 'hidden', aspectRatio: s.aspect === '9:16' ? '9/16' : s.aspect === '1:1' ? '1/1' : '16/9', maxHeight: 260, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {clip?.videoUrl ? (
                         <video src={clip.videoUrl} controls preload="metadata" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                      ) : (status === 'generating' ? <VideoGeneratingState label={`Filming clip ${sc.clip_number}`} detail={stageNote || engineDisplayName(clipEngine)} compact style={{ width: '100%', margin: 10 }} /> : <div style={{ display: 'grid', placeItems: 'center', gap: 7, padding: 18, color: T.muted, fontSize: 12, textAlign: 'center' }}><Film size={22} color={T.accent} /><span>Ready for its first take</span></div>)}
+                      ) : <VideoGeneratingState label={`Filming clip ${sc.clip_number}`} detail={stageNote || engineDisplayName(clipEngine)} compact style={{ width: '100%', margin: 10 }} />}
                     </div>
+                    ) : <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 0', color: T.muted, fontSize: 12 }}><Film size={16} color={T.accent} /><span>Ready for its first take</span></div>}
                     {clip && clip.issues.length > 0 ? (
                       <div style={{ marginTop: 8, fontSize: 12, color: T.warn }}>{clip.issues.slice(0, 3).map((iss, x) => <div key={x}>• {iss}</div>)}</div>
                     ) : null}
@@ -2070,10 +2072,6 @@ function AdsStudioApp() {
         )}
         </>
         )}
-
-        <div style={{ marginTop: 28, maxWidth: 1060 }}>
-          
-        </div>
       </main>
 
       {toast ? (

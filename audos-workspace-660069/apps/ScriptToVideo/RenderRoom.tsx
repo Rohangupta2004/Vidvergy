@@ -740,11 +740,11 @@ export default function RenderRoom(props: {
             </div>
           ) : null}
 
-          {allDone && !selected ? (
+          {allDone ? (
             <div style={{ color: T.done, fontSize: 14, marginTop: 30, textAlign: 'center' }}>All scenes are complete — assemble the final film.</div>
           ) : null}
 
-          {selected && !makeStarted ? <ScenePanel key={selected.id} {...props} scene={selected} scenes={scenes} film={film} isActive={selectedIsActive} busy={busy} auto={auto} manualMode={props.manualMode} /> : null}
+          {selected && (!makeStarted || !['waiting', 'ready'].includes(String(selected.status))) ? <ScenePanel key={selected.id} {...props} scene={selected} scenes={scenes} film={film} isActive={selectedIsActive} busy={busy} auto={auto} manualMode={props.manualMode} /> : null}
         </div>
       </div>
     </div>

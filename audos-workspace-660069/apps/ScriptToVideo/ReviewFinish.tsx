@@ -417,7 +417,9 @@ export function FinalScreen(props: {
         </div>
 
         {/* The frame takes the film's own shape, so a 9:16 cut is reviewed portrait. */}
-        <div style={{ margin: '16px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--space-surface-bg)', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--vg-border)', width: '100%', maxWidth: portrait ? 340 : film.aspect_ratio === '1:1' ? 640 : 920, aspectRatio: portrait ? '9 / 16' : film.aspect_ratio === '1:1' ? '1 / 1' : '16 / 9' }}>
+        <div style={videoUrl || running || serverAssembling
+          ? { margin: '16px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--space-surface-bg)', borderRadius: 14, overflow: 'hidden', border: '1px solid var(--vg-border)', width: '100%', maxWidth: portrait ? 340 : film.aspect_ratio === '1:1' ? 640 : 920, aspectRatio: portrait ? '9 / 16' : film.aspect_ratio === '1:1' ? '1 / 1' : '16 / 9' }
+          : { margin: '16px auto 0', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 12, border: '1px dashed var(--vg-border)', width: '100%', maxWidth: 920 }}>
           {videoUrl ? (
             <ProbedVideo
               key={videoUrl}
