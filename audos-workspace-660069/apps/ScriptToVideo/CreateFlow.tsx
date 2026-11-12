@@ -66,12 +66,10 @@ import { FILM_TYPE_NOTES, LANGUAGE_NOTES, LOOK_NOTES, OptionThumb, PICKER_HELP, 
  * paid for, by the same shared contract Vidverge Multi-Shot validates against
  * (lib/videoEngines.ts).
  *
- * The scene ceiling is deliberately generous rather than the contract's
- * default of 12: that default exists to stop a planning AGENT returning sixty
- * scenes for a thirty-second ad. A person who has written out forty scenes
- * means it, and capping them would be the tool arguing with its own input.
+ * There is no scene-count ceiling: a script has as many scenes as its length
+ * and the model's maximum clip length call for. Only each scene's own length
+ * is checked.
  */
-const MAX_SCRIPT_SCENES = 60;
 /** Film length presets on the brief step; Custom accepts any whole second in range. */
 const DURATION_PRESETS = [15, 30, 45, 60, 90, 120, 180] as const;
 const MIN_TARGET_SECONDS = 4;
@@ -194,7 +192,8 @@ export type CreateMode = 'ai' | 'manual';
 export interface UserStoryboardFrame { index: number; url: string; text: string; caption: string }
 export interface UserStoryboard { attach: boolean; frames: UserStoryboardFrame[] }
 
-const MAX_STORYBOARD_FRAMES = 24;
+/** One storyboard frame per scene: there is no fixed frame cap. */
+const MAX_STORYBOARD_FRAMES = Number.MAX_SAFE_INTEGER;
 type StoryboardBeat = { label: string; text: string; visual: string };
 type BoardFrame = StoryboardFrameView & { visual: string };
 
@@ -1140,7 +1139,7 @@ export function CreateScreen(props: {
       ? validateSceneDurations(
         effectiveApiModel,
         parsed.scenes.map((scene) => scene.durationSec),
-        { limits: sceneLimits, maxScenes: MAX_SCRIPT_SCENES },
+        { limits: sceneLimits },
       )
       : []),
     [mode, parsed, effectiveApiModel, sceneLimits.minS, sceneLimits.maxS, sceneLimits.source],

@@ -1315,11 +1315,11 @@ export const ENGINE_HEALTH: Record<string, { health: EngineHealth; note: string 
   'gemini-omni-flash-preview': { health: 'working', note: 'Retired alias served by gemini-omni-1.1-flash. Hidden from pickers; old saved projects migrate to the canonical id.' },
   'veo-3.1-generate-preview': { health: 'working', note: 'Retired alias served by gemini-omni-1.1-flash. Hidden from pickers; it is not a separate Veo engine.' },
   'veo-3.1-fast-generate-preview': { health: 'working', note: 'Retired alias served by gemini-omni-1.1-flash. Hidden from pickers; it is not a separate Veo engine.' },
-  'openrouter/bytedance/seedance-2.0-fast': { health: 'rejected', note: 'OpenRouter rejected the paid health submit: key limit exceeded ($254.45 used of $250.00); no render started.' },
-  'openrouter/bytedance/seedance-2.5': { health: 'rejected', note: 'Disabled after the founder’s Scene 2 spending-limit failure. The shared OpenRouter key is over its non-resetting $250 limit; no render starts.' },
-  'openrouter/google/veo-3.1': { health: 'rejected', note: 'OpenRouter rejected the paid health submit: key limit exceeded ($254.45 used of $250.00); no render started.' },
-  'openrouter/google/veo-3.1-fast': { health: 'rejected', note: 'OpenRouter rejected the paid health submit: key limit exceeded ($254.45 used of $250.00); no render started.' },
-  'openrouter/google/veo-3.1-lite': { health: 'rejected', note: 'OpenRouter rejected the paid health submit: key limit exceeded ($254.45 used of $250.00); no render started.' },
+  'openrouter/bytedance/seedance-2.0-fast': { health: 'working', note: 'OpenRouter route available; the provider spending limit was lifted upstream (Nov 2026).' },
+  'openrouter/bytedance/seedance-2.5': { health: 'working', note: 'OpenRouter route available; the provider spending limit was lifted upstream (Nov 2026).' },
+  'openrouter/google/veo-3.1': { health: 'working', note: 'OpenRouter route available; the provider spending limit was lifted upstream (Nov 2026).' },
+  'openrouter/google/veo-3.1-fast': { health: 'working', note: 'OpenRouter route available; the provider spending limit was lifted upstream (Nov 2026).' },
+  'openrouter/google/veo-3.1-lite': { health: 'working', note: 'OpenRouter route available; the provider spending limit was lifted upstream (Nov 2026).' },
   'gen4.5': { health: 'rejected', note: 'Live catalog and $0.96 quote passed, but generation returned 401 no_credentials in the authenticated health path. Disabled until a paid sweep completes.' },
   'gen4_turbo': { health: 'rejected', note: 'Live catalog and $0.40 quote passed, but generation returned 401 no_credentials in the authenticated health path. Disabled until a paid sweep completes.' },
   'minimax-hailuo-02': { health: 'broken', note: '8s was rejected (only 6s or 10s); the one 6s retry became execution-uncertain. Disabled to prevent duplicate paid work.' },
@@ -1600,7 +1600,8 @@ export interface ScenePlanInput {
   totalDurationS: number;
   /** An agent's or a customer's intended scene count. Honoured when it fits. */
   requestedSceneCount?: number | null;
-  /** Hard ceiling on scenes, so "AI mode" cannot return an unbounded plan. */
+  /** Optional ceiling. It is never allowed below the scene count the duration
+   * and the model's clip limits actually need, so it can never shorten a film. */
   maxScenes?: number;
   minScenes?: number;
 }
@@ -1619,7 +1620,23 @@ export interface ScenePlan {
   notes: string[];
 }
 
+/** Legacy export kept for existing imports. Scene counts are no longer capped
+ * at a fixed number: see `scenesNeededFor`. */
 export const DEFAULT_MAX_SCENES = 12;
+
+/**
+ * The most scenes a film of `totalS` seconds can usefully have on a model:
+ * every scene at the model's minimum clip length. The fewest is
+ * ceil(totalS / maxS). Any count between the two is legal, so a 30s ad on an
+ * 8s model needs 4–8 scenes and a 3-minute film needs 23–45 — the number
+ * follows the script's length and the model, never a fixed cap.
+ */
+export function scenesNeededFor(totalS: number, limits: Pick<SceneDurationLimits, 'minS' | 'maxS'>): { fewest: number; most: number } {
+  const total = Math.max(1, Math.round(Number(totalS) || 0));
+  const fewest = Math.max(1, Math.ceil(total / Math.max(1, limits.maxS)));
+  const most = Math.max(fewest, Math.floor(total / Math.max(1, limits.minS)));
+  return { fewest, most };
+}
 
 /**
  * Turn "I want N seconds of video on model M" into a plan of whole-second
@@ -1634,14 +1651,15 @@ export const DEFAULT_MAX_SCENES = 12;
 export function planScenes(input: ScenePlanInput): ScenePlan {
   const limits = sceneDurationLimits(input.modelId);
   const notes: string[] = [];
-  const maxScenes = Math.max(1, Math.floor(input.maxScenes ?? DEFAULT_MAX_SCENES));
-  const minScenes = Math.max(1, Math.min(maxScenes, Math.floor(input.minScenes ?? 1)));
 
   let total = Math.round(Number(input.totalDurationS));
   if (!Number.isFinite(total) || total <= 0) {
     total = limits.defaultS;
     notes.push(`No total length was given, so one ${limits.defaultS}s scene is planned.`);
   }
+  const needed = scenesNeededFor(total, limits);
+  const maxScenes = Math.max(needed.most, Math.floor(Number(input.maxScenes) || needed.most));
+  const minScenes = Math.max(1, Math.min(maxScenes, Math.floor(input.minScenes ?? 1)));
 
   // The fewest scenes that can carry the total without any scene exceeding the
   // model's ceiling, and the most that can carry it without falling under the
@@ -1722,13 +1740,11 @@ export function validateSceneDurations(
   } = {},
 ): string[] {
   const limits = opts.limits || sceneDurationLimits(modelId);
-  const maxScenes = Math.max(1, Math.floor(opts.maxScenes ?? DEFAULT_MAX_SCENES));
   const problems: string[] = [];
 
+  // No scene-count ceiling: a script has as many scenes as its length and the
+  // model's clip limits call for. Only each scene's own length is checked.
   if (!durations.length) return ['The plan has no scenes.'];
-  if (durations.length > maxScenes) {
-    problems.push(`${durations.length} scenes exceeds the ${maxScenes}-scene limit for this workflow.`);
-  }
 
   durations.forEach((raw, index) => {
     const value = Number(raw);

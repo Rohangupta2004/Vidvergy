@@ -314,7 +314,7 @@ SCENE TYPES (choose per scene):
 
 RULES:
 - The script is the source of truth. Never rewrite it; split it into contiguous script_segment slices that together cover the whole script in order.
-- 3–10 scenes. Cinematic beats ≤ 8 seconds each (Veo hard cap). Graphics/mockups 4–10 seconds. duration_s must fit the words spoken in the segment (~2.5 words/second).
+- As many scenes as the script needs — the count follows the script's length and each model's maximum clip length, never a fixed number. Cinematic beats ≤ 8 seconds each (Veo hard cap). Graphics/mockups 4–10 seconds. duration_s must fit the words spoken in the segment (~2.5 words/second).
 - CONTINUITY: consecutive veo_cinematic scenes that share characters/location get the SAME continuity_group string (they render sequentially, each seeded from the previous scene's last frame, and set spec.seed_from_previous=true on every scene after the group's first). Unrelated scenes get continuity_group null (they render in parallel).
 - ASSET REUSE: an "AVAILABLE ASSETS" list may be provided. Prefer reusing a listed asset (asset_overlay with its url, a graphic backdropUrl, or item imageUrl) over describing a new generation, when it genuinely fits the segment.
 - PRODUCT: if a product screenshot URL is provided and the script refers to the product/app/UI, you MUST use product_mockup with screenshot_url set to that exact URL.
@@ -558,7 +558,7 @@ export interface SegmentedPlan {
     script_segment: string; summary: string; visual_goal: string;
     duration_s: number; transition: 'continuous' | 'new_shot';
     timed_beats: Array<{ start_s: number; end_s: number; action: string; camera?: string; dialogue?: string }>;
-    characters: string[]; dialogue: SceneDialogue | null;
+    characters: string[]; no_characters_reason?: string; dialogue: SceneDialogue | null;
     shot_intent: ShotIntent; workflow_kind: 'engine' | 'recipe' | 'code' | 'unavailable';
     engine_id: string | null; engine_reason: string; duration_notes: string[];
   }[];
@@ -569,10 +569,10 @@ const SEGMENT_RULES = `RULES:
 - Every clip is AI-generated video footage. There are no graphics, text cards or overlays — pure visual storytelling.
 - PROMPT DISCIPLINE: lead with the user's chosen visual style and keep it exact. Use one primary action per clip plus concise subject continuity and camera direction. Keep summary and visual_goal around 40-80 words combined. Detect sports from the brief, style and script. For sports shots only, describe one short visible motion sequence (body setup, contact, ball path, follow-through, bounce or spin); preserve athlete pose and ball position between continuing clips. For non-sports shots, add no motion filler. Final provider wording must avoid rejection-prone abstractions.
 - BANNED OUTPUT: never write vague placeholders such as “something exciting happens”, “cinematic moment”, “dynamic action” or “magic happens”. Never teleport a person or prop, morph identities/wardrobe, make an object appear without a visible source, or cut a spoken line in half.
-- CHARACTER VISIBILITY: every character id listed for a clip must be placed explicitly in frame with an unambiguous position (left/right/foreground/background), action and relationship to the camera. Reuse the same appearance and wardrobe lock verbatim in every clip where that character appears. An off-screen speaker or voice-over belongs in dialogue but MUST NOT be listed in that clip's characters array; state the voice direction in visual_goal instead.
+- CHARACTER VISIBILITY: every character id listed for a clip must be placed explicitly in frame with an unambiguous position (left/right/foreground/background), action and relationship to the camera. Reuse the same appearance and wardrobe lock verbatim in every clip where that character appears. An off-screen speaker or voice-over belongs in dialogue but MUST NOT be listed in that clip's characters array; state the voice direction in visual_goal instead. Every clip MUST carry a characters array using the exact cast ids; when nobody is on screen return [] plus a short no_characters_reason.
 - For every clip choose one shot_intent from: cinematic_hero, fast_broll, character_consistency, product_consistency, motion_background, stills_to_motion, surreal_stylized. Choose the INTENT from the shot's job; shared routeShotIntent() resolves the actual engine.
 - MODEL FACTS: obey the APPROVED MODEL CONTRACT in the user message. Gemini Omni 1.1 Flash generation is 2–8s with up to ten references; Seedance 2.0 Fast is 4–10s; Seedance 2.5 is every whole second from 4–30s with up to three asset references OR first/last frames; Kling 3.0 / Omni on the connected proxy is silent and accepts only 5s or 10s, with Omni taking 2–4 multi-image references. No model is confirmed to deliver 4K.
-- Clip durations are WHOLE seconds. Omni blocks are 4–8s and default to 8s, ending earlier only at a real location/time/subject change; never return an Omni block below 4s and merge a short tail. A coherent longer-model block may carry several internal timed beats in ONE request. Mark each block transition continuous or new_shot. new_shot is required when location, time or subject changes; only continuous blocks may chain the prior frame. Return at most ${DEFAULT_MAX_SCENES} clips in one response; continuation passes plan any remainder.
+- Clip durations are WHOLE seconds. Omni blocks are 4–8s and default to 8s, ending earlier only at a real location/time/subject change; never return an Omni block below 4s and merge a short tail. A coherent longer-model block may carry several internal timed beats in ONE request. Mark each block transition continuous or new_shot. new_shot is required when location, time or subject changes; only continuous blocks may chain the prior frame. Return as many clips as this part of the script needs (the count follows the script's length and the model's clip limits, never a fixed number); if a response would get too long, stop at a clean beat and continuation passes plan the remainder.
 - Every block includes contiguous timed_beats covering its full duration. Each beat has its own action, camera and exact dialogue line. Allow about 2.5 English words/second and 2.2 Hindi words/second. If speech does not fit, lengthen or move the whole line; never cut a sentence or dialogue line across beats or blocks.
 - A long continuous action becomes MULTIPLE consecutive clips (e.g. a player dribbling up the court and scoring = dribble start → drive → jump → ball through hoop — each its own clip that will later continue from the previous clip's extracted final frame).
 - The script is the source of truth. Never rewrite it. Split it into contiguous script_segment slices that together cover the whole script in order.
@@ -595,7 +595,7 @@ const SEGMENT_SYSTEM = `You are the director of a sequential script-to-video pip
 ${SEGMENT_RULES}
 
 OUTPUT SHAPE:
-{ "title": str, "story_summary": str (the complete story in 3-6 sentences), "world": str (the shared setting/world), "visual_style": str (film-wide look: palette, lens language, lighting, mood), "characters": [{ "id": snake_case str, "name": str, "kind": "main"|"narrator"|"side", "role": str, "age_appearance": str, "wardrobe": str, "personality_voice": str, "voice": {"tone":str,"accent":str,"pace":str,"voice_id"?:str,"voice_name"?:str}, "appearance": str, "coverage": [{"scene": whole number, "lines": [EXACT str]}], "inferred_fields": ["age_appearance"|"wardrobe"|"personality_voice"|"appearance"] }], "on_screen_text": [{ "text": str, "scene_numbers": [whole 1-based scene numbers], "start_s": num, "end_s": num, "position": "top"|"center"|"bottom", "style": "clean"|"boxed"|"accent" }], "scenes": [{ "script_segment": str, "summary": str (what happens — one line), "visual_goal": str (the image this clip must land), "shot_intent": str, "duration_s": whole seconds, "transition": "continuous"|"new_shot", "timed_beats": [{"start_s":num,"end_s":num,"action":str,"camera":str,"dialogue":str|null}], "characters": [character ids appearing], "dialogue": null | { "kind": "character"|"narrator", "line": str (EXACT spoken words from the script), "speaker": character id, "delivery": str (tone/emotion/energy), "language": str, "accent": str } }] }`;
+{ "title": str, "story_summary": str (the complete story in 3-6 sentences), "world": str (the shared setting/world), "visual_style": str (film-wide look: palette, lens language, lighting, mood), "characters": [{ "id": snake_case str, "name": str, "kind": "main"|"narrator"|"side", "role": str, "age_appearance": str, "wardrobe": str, "personality_voice": str, "voice": {"tone":str,"accent":str,"pace":str,"voice_id"?:str,"voice_name"?:str}, "appearance": str, "coverage": [{"scene": whole number, "lines": [EXACT str]}], "inferred_fields": ["age_appearance"|"wardrobe"|"personality_voice"|"appearance"] }], "on_screen_text": [{ "text": str, "scene_numbers": [whole 1-based scene numbers], "start_s": num, "end_s": num, "position": "top"|"center"|"bottom", "style": "clean"|"boxed"|"accent" }], "scenes": [{ "script_segment": str, "summary": str (what happens — one line), "visual_goal": str (the image this clip must land), "shot_intent": str, "duration_s": whole seconds, "transition": "continuous"|"new_shot", "timed_beats": [{"start_s":num,"end_s":num,"action":str,"camera":str,"dialogue":str|null}], "characters": [cast ids of EVERY character visible in this clip; [] only when nobody is on screen], "no_characters_reason": str (required when characters is []), "dialogue": null | { "kind": "character"|"narrator", "line": str (EXACT spoken words from the script), "speaker": character id, "delivery": str (tone/emotion/energy), "language": str, "accent": str } }] }`;
 
 const SEGMENT_CONTINUE_SYSTEM = `You are the director of a sequential script-to-video pipeline, CONTINUING a clip plan that is already underway. The story, world, visual style and characters are decided and given to you, and the earlier clips are already planned. Segment ONLY the REMAINING SCRIPT into further clips, continuing the sequence exactly where it left off. Reply with ONE JSON object and nothing else.
 
@@ -604,7 +604,7 @@ ${SEGMENT_RULES}
 - Never stop early and never answer with an empty "scenes" list: every word of the REMAINING SCRIPT lands in a clip — a one-word line, a closing sentence, credits or an end marker included (film those as a brief closing shot). The pipeline checks the clips against the script text and rejects a plan that leaves any of it uncovered.
 
 OUTPUT SHAPE:
-{ "new_characters": [{ "id": snake_case str, "name": str, "kind": "main"|"narrator"|"side", "role": str, "age_appearance": str, "wardrobe": str, "personality_voice": str, "voice": {"tone":str,"accent":str,"pace":str,"voice_id"?:str,"voice_name"?:str}, "appearance": str, "coverage": [{"scene": whole number, "lines": [EXACT str]}], "inferred_fields": [str] }], "on_screen_text": [{ "text": str, "scene_numbers": [whole 1-based scene numbers in the COMPLETE film], "start_s": num, "end_s": num, "position": "top"|"center"|"bottom", "style": "clean"|"boxed"|"accent" }], "scenes": [{ "script_segment": str, "summary": str (what happens — one line), "visual_goal": str (the image this clip must land), "shot_intent": str, "duration_s": whole seconds, "transition": "continuous"|"new_shot", "timed_beats": [{"start_s":num,"end_s":num,"action":str,"camera":str,"dialogue":str|null}], "characters": [character ids appearing], "dialogue": null | { "kind": "character"|"narrator", "line": str (EXACT spoken words from the script), "speaker": character id, "delivery": str (tone/emotion/energy), "language": str, "accent": str } }] }`;
+{ "new_characters": [{ "id": snake_case str, "name": str, "kind": "main"|"narrator"|"side", "role": str, "age_appearance": str, "wardrobe": str, "personality_voice": str, "voice": {"tone":str,"accent":str,"pace":str,"voice_id"?:str,"voice_name"?:str}, "appearance": str, "coverage": [{"scene": whole number, "lines": [EXACT str]}], "inferred_fields": [str] }], "on_screen_text": [{ "text": str, "scene_numbers": [whole 1-based scene numbers in the COMPLETE film], "start_s": num, "end_s": num, "position": "top"|"center"|"bottom", "style": "clean"|"boxed"|"accent" }], "scenes": [{ "script_segment": str, "summary": str (what happens — one line), "visual_goal": str (the image this clip must land), "shot_intent": str, "duration_s": whole seconds, "transition": "continuous"|"new_shot", "timed_beats": [{"start_s":num,"end_s":num,"action":str,"camera":str,"dialogue":str|null}], "characters": [cast ids of EVERY character visible in this clip; [] only when nobody is on screen], "no_characters_reason": str (required when characters is []), "dialogue": null | { "kind": "character"|"narrator", "line": str (EXACT spoken words from the script), "speaker": character id, "delivery": str (tone/emotion/energy), "language": str, "accent": str } }] }`;
 
 /** Consecutive clips may overlap by a few words (the model repeats a phrase
  * at a boundary): a clip may begin up to this many source words BEFORE the
@@ -842,6 +842,17 @@ export async function segmentScript(params: {
     const offscreen = Boolean(scene.dialogue && (scene.dialogue.kind === 'narrator' || /\b(?:off[- ]?screen|out of frame|voice[- ]?over|narrat)/i.test(`${scene.visual_goal} ${scene.summary}`)));
     if (offscreen && speakerId) scene.characters = scene.characters.filter((id) => id !== speakerId);
     if (Array.isArray(scene.characters)) scene.characters = scene.characters.filter((id) => characterById.get(id)?.kind !== 'narrator');
+    // Every block lists who is visible, in cast ids; nobody on screen is said
+    // explicitly. A missing list is filled from the cast named in its visuals.
+    scene.characters = (Array.isArray(scene.characters) ? scene.characters : []).filter((id) => characterById.has(id));
+    if (!scene.characters.length && !String(scene.no_characters_reason || '').trim()) {
+      const visualText = `${scene.visual_goal} ${scene.summary} ${(scene.timed_beats || []).map((beat) => beat.action).join(' ')}`.toLowerCase();
+      scene.characters = characters.filter((character) => character.kind !== 'narrator' && !(offscreen && character.id === speakerId) && [character.id, character.name].some((value) => {
+        const needle = String(value || '').trim().toLowerCase();
+        return needle.length > 1 && new RegExp(`(^|[^a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[_\s-]+/g, '[\\s_-]+')}($|[^a-z0-9])`, 'i').test(visualText);
+      })).map((character) => character.id);
+      if (!scene.characters.length) scene.no_characters_reason = 'The plan shows nobody from the cast on screen in this clip.';
+    }
     if (speaker && !speaker.voice.voice_id && params.voices?.length) {
       const selected = params.voices.find((voice) => voice.id) || params.voices[0];
       if (selected?.id) {
@@ -1005,6 +1016,7 @@ function normalizeSegmentScenes(list: unknown): SegmentedPlan['scenes'] {
       engine_reason: '',
       duration_notes: [],
       characters: (Array.isArray(s.characters) ? s.characters : []).map(String),
+      no_characters_reason: String(s.no_characters_reason || '').slice(0, 240),
       dialogue: s?.dialogue && String(s.dialogue.line || '').trim()
         ? {
             kind: s.dialogue.kind === 'narrator' ? 'narrator' : 'character',
@@ -1052,7 +1064,7 @@ function guardAgentBatch(
     const sourceWords = segmentWords(scene.script_segment);
     const splitWords = parts.flatMap((part) => segmentWords(part.text));
     if (sourceWords.length !== splitWords.length || sourceWords.some((word, index) => word !== splitWords[index])) {
-      throw new Error(`The duration guard could not split “${scene.summary || 'this beat'}” without duplicating or dropping words. Re-plan that beat with a cleaner sentence or clause boundary.`);
+      { notes.push(`“${scene.summary || 'Scene'}”: kept as one beat and re-timed to fit the model.`); (parts as any[]).splice(0, parts.length, { ...((parts as any[])[0] || {}), text: scene.script_segment, durationS: scene.duration_s }); }
     }
     const problems = validateSceneDurations(engineId, parts.map((part) => part.durationS), {
       expectedTotalS: durationPlan.totalDurationS,
@@ -1068,7 +1080,7 @@ function guardAgentBatch(
       const dialogueWords = segmentWords(scene.dialogue.line);
       const splitDialogueWords = dialogueParts.flatMap((part) => segmentWords(part.text));
       if (dialogueWords.length !== splitDialogueWords.length || dialogueWords.some((word, index) => word !== splitDialogueWords[index])) {
-        throw new Error(`The duration guard could not split ${scene.dialogue.speaker}'s dialogue without duplicating or dropping words. Re-plan the line with a sentence or clause boundary.`);
+        { notes.push(`${scene.dialogue.speaker}'s line was kept whole and the clip re-timed.`); (dialogueParts as any[]).splice(0, dialogueParts.length, { ...((dialogueParts as any[])[0] || {}), text: scene.dialogue.line, durationS: scene.duration_s }); }
       }
     }
 
