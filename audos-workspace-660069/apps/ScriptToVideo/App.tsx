@@ -52,6 +52,7 @@ const CreateScreen = lazy(() => import('./CreateFlow').then((module) => ({ defau
 const RenderRoom = lazy(() => import('./RenderRoom'));
 const FinalScreen = lazy(() => import('./ReviewFinish').then((module) => ({ default: module.FinalScreen })));
 const AgentPanel = lazy(() => import('./AgentPanel'));
+const StudioV3Flow = lazy(() => import('./StudioV3Flow'));
 const AssemblyBar = lazy(() => import('./AssemblyBar')); 
 import { videoEngine } from '../../lib/videoEngines';
 import { consumeVidvergeHandoff } from '../../lib/vidvergeHandoff';
@@ -67,6 +68,7 @@ import { withBrandContext } from '../../components/BrandContextLayer';
 import ProbedVideo from './ClipAudioStatus';
 import type { ClipAudioProbe } from './pipeline/capture';
 import CampaignSetLauncher from './CampaignSetLauncher';
+import StudioErrorBoundary from './StudioErrorBoundary';
 import { STUDIO_CHROME_CSS, StudioStepper, StudioToast } from './StudioChrome';
 import { saveVideoToHistory } from '../../lib/videoHistory';
 import { workspaceFetch } from '../../lib/workspace';
@@ -94,6 +96,14 @@ function requiresSignedInVideoTab(film: Film, scenes: FilmScene[]): boolean {
   const filmModel = resolveVideoModel(film.video_model).id;
   if (!DURABLE_VIDEO_MODEL_IDS.has(filmModel)) return true;
   return scenes.some((scene) => resolveVideoModel((scene.spec as any)?.engine_id || film.video_model).id !== filmModel);
+}
+
+/** A film the server finished hands control back to this tab, so a fixed
+ * scene can be re-assembled here. Films still rendering are never touched. */
+function reopenForFinish(f: Film): Partial<Film> {
+  const background = f.plan?.background;
+  if (!f.plan || !background?.enabled || f.status !== 'ready') return {};
+  return { plan: { ...f.plan, background: { ...background, enabled: false, stage: 'waiting_for_tab' as const } } };
 }
 
 /** Models the server runner (s2v-recovery-sweeper) can drive on its own. */
@@ -324,6 +334,9 @@ const ON_ACCENT = 'var(--vg-on-accent, var(--space-text-on-primary))';
 
 function ScriptToVideoApp() {
   const [screen, setScreen] = useState<Screen>('create');
+  // The three-step studio is the default create screen; the classic editor
+  // stays available and still receives Vidverge handoffs (intake/attachments).
+  const [classicCreate, setClassicCreate] = useState(false);
   const [films, setFilms] = useState<Film[]>([]);
   const [legacy, setLegacy] = useState<LegacyFilm[]>([]);
   const [libLoading, setLibLoading] = useState(true);
@@ -926,7 +939,7 @@ function ScriptToVideoApp() {
     // Retry use. No browser-only workspace token is needed after this call.
     setNote('Authorizing credits for this run — nothing has been submitted to a provider yet…');
     const result = await callHook<{ success?: boolean; status?: string; error?: string; runUntilIdx?: number | null }>('stv-scene-generate', {
-      op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: targetFilm.plan?.execution_mode !== 'automatic',
+      op: 'start', filmId: targetFilm.id, reviewBeforeAssembly, captions: includeCaptions, lookCheck: false,
       ...(runUntilSceneId != null ? { runUntilSceneId } : {}),
     });
     if (!result?.success) throw new Error(result?.error || 'The background runner did not accept this film.');
@@ -1847,7 +1860,11 @@ function ScriptToVideoApp() {
   async function handleOmniEdit(scene: FilmScene, instruction: string) {
     const f = engineFilm.current;
     const target = engineScenes.current.find((item) => item.id === scene.id);
-    if (!f || !target?.asset_url || f.plan?.background?.enabled || running.current) return;
+    if (!f || !target?.asset_url) return;
+    if ((f.plan?.background?.enabled && f.status !== 'ready') || running.current) {
+      setNote('Another step is still running — fix this scene as soon as it finishes.');
+      return;
+    }
     setEditingId(target.id);
     await run(async () => {
       try {
@@ -1882,6 +1899,13 @@ function ScriptToVideoApp() {
     });
   }
 
+  /** After a scene fix is accepted or undone, the film re-assembles itself (saved audio is reused). */
+  function scheduleReassembly() {
+    assembleKickedFor.current = null;
+    advancedFor.current = null;
+    window.setTimeout(() => { if (!running.current) void run(() => maybeAdvancePost(), { block: true }); }, 400);
+  }
+
   async function handleAcceptRevision(scene: FilmScene, revisionId: string) {
     const f = engineFilm.current;
     const target = engineScenes.current.find((item) => item.id === scene.id);
@@ -1898,8 +1922,9 @@ function ScriptToVideoApp() {
       Object.assign(target, { asset_url: selected.after_url, keyframe_url: null, validation });
       setScenes((items) => items.map((item) => item.id === target.id ? { ...item, asset_url: selected.after_url, keyframe_url: null, validation } : item));
       await retryFinalFrame(f, engineScenes.current, target, hooks);
-      const filmPatch: Partial<Film> = { final_video_url: null, final_thumb_url: null, status: 'producing', machine_state: allScenesDone(engineScenes.current) ? 'ALL_SCENES_COMPLETED' : f.machine_state, stage_note: target.status === 'needs_action' ? `Scene ${target.idx + 1} edit accepted. Retry its continuity frame before any later scene can run.` : `Scene ${target.idx + 1} edit accepted and its new outgoing frame was validated.`, error: null };
+      const filmPatch: Partial<Film> = { ...reopenForFinish(f), final_video_url: null, final_thumb_url: null, status: 'producing', machine_state: allScenesDone(engineScenes.current) ? 'ALL_SCENES_COMPLETED' : f.machine_state, stage_note: target.status === 'needs_action' ? `Scene ${target.idx + 1} edit accepted. Retry its continuity frame before any later scene can run.` : `Scene ${target.idx + 1} fix accepted — re-assembling your film automatically.`, error: null };
       await db.updateFilm(f.id, filmPatch); Object.assign(f, filmPatch); setFilm({ ...f });
+      scheduleReassembly();
     }, { block: true });
   }
 
@@ -1919,8 +1944,9 @@ function ScriptToVideoApp() {
       await db.updateScene(target.id, { asset_url: selected.before_url, keyframe_url: selected.before_keyframe_url || null, validation });
       Object.assign(target, { asset_url: selected.before_url, keyframe_url: selected.before_keyframe_url || null, validation });
       setScenes((items) => items.map((item) => item.id === target.id ? { ...item, asset_url: selected.before_url, keyframe_url: selected.before_keyframe_url || null, validation } : item));
-      const filmPatch: Partial<Film> = { final_video_url: null, final_thumb_url: null, status: 'producing', machine_state: allScenesDone(engineScenes.current) ? 'ALL_SCENES_COMPLETED' : f.machine_state, stage_note: `Scene ${target.idx + 1} restored to the immutable original. Reassemble when ready.`, error: null };
+      const filmPatch: Partial<Film> = { ...reopenForFinish(f), final_video_url: null, final_thumb_url: null, status: 'producing', machine_state: allScenesDone(engineScenes.current) ? 'ALL_SCENES_COMPLETED' : f.machine_state, stage_note: `Scene ${target.idx + 1} restored to the original — re-assembling your film automatically.`, error: null };
       await db.updateFilm(f.id, filmPatch); Object.assign(f, filmPatch); setFilm({ ...f });
+      scheduleReassembly();
     }, { block: true });
   }
 
@@ -2605,10 +2631,28 @@ function ScriptToVideoApp() {
         />
       ) : null}
 
-      {screen === 'create' ? <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}><CreateScreen initialText={quickText} initialIntake={handoffIntake || undefined} initialShotUrl={handoffAttachment?.type.startsWith('image/') ? handoffAttachment.url : (typeof handoffIntake?.brandKit?.logoUrl === 'string' ? handoffIntake.brandKit.logoUrl : undefined)} initialShotName={handoffAttachment?.name || (handoffIntake ? `${String(handoffIntake.brandKit?.name || 'Brand')} logo` : undefined)} busy={busy} manualMode={manualMode} onSubmit={handleCreate} /></Suspense> : null}
+      {screen === 'create' && !classicCreate && !handoffIntake && !handoffAttachment ? (
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '18px clamp(14px, 3vw, 28px) 0' }}>
+          <div style={{ maxWidth: 1080, margin: '0 auto' }}>
+            <StudioErrorBoundary area="the studio">
+              <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}>
+                <StudioV3Flow initialScript={quickText} onOpenFilm={(created) => { setQuickText(''); openFilm(created).catch((openError: any) => { setError(String(openError?.message || openError)); setScreen('library'); }); }} onClassic={() => setClassicCreate(true)} />
+              </Suspense>
+            </StudioErrorBoundary>
+          </div>
+        </div>
+      ) : null}
+
+      {screen === 'create' && classicCreate && !handoffIntake && !handoffAttachment ? (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 20px 0' }}>
+          <button type="button" className="s2v-ghost" onClick={() => setClassicCreate(false)} style={{ background: 'transparent', border: `1px solid ${T.line}`, color: T.muted, borderRadius: 10, padding: '8px 14px', fontWeight: 650, cursor: 'pointer' }}>Back to the new 3-step studio</button>
+        </div>
+      ) : null}
+
+      {screen === 'create' && (classicCreate || handoffIntake || handoffAttachment) ? <StudioErrorBoundary area="the classic editor"><Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the creation studio"><span /></div>}><CreateScreen initialText={quickText} initialIntake={handoffIntake || undefined} initialShotUrl={handoffAttachment?.type.startsWith('image/') ? handoffAttachment.url : (typeof handoffIntake?.brandKit?.logoUrl === 'string' ? handoffIntake.brandKit.logoUrl : undefined)} initialShotName={handoffAttachment?.name || (handoffIntake ? `${String(handoffIntake.brandKit?.name || 'Brand')} logo` : undefined)} busy={busy} manualMode={manualMode} onSubmit={handleCreate} /></Suspense></StudioErrorBoundary> : null}
 
       {screen === 'board' && film ? (
-        <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the production board"><span /></div>}><RenderRoom
+        <StudioErrorBoundary area="the production board" resetKey={film.id}><Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading the production board"><span /></div>}><RenderRoom
           film={film}
           scenes={scenes}
           note={note}
@@ -2662,11 +2706,11 @@ function ScriptToVideoApp() {
           onRestartRunner={handleRestartRunner}
           blockStartError={blockStartError}
           onAcceptReview={handleAcceptReview}
-        /></Suspense>
+        /></Suspense></StudioErrorBoundary>
       ) : null}
 
       {screen === 'final' && film ? (
-        <Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading post-production"><span /></div>}><FinalScreen
+        <StudioErrorBoundary area="post-production" resetKey={film.id}><Suspense fallback={<div className="s2v-screen-skeleton" aria-label="Loading post-production"><span /></div>}><FinalScreen
           film={film}
           scenes={scenes}
           busy={busy}
@@ -2692,7 +2736,7 @@ function ScriptToVideoApp() {
           finishPrefs={finishPrefs}
           onFinishPrefs={setFinishPrefs}
           onStopAssembly={handleStopFinish}
-        /></Suspense>
+        /></Suspense></StudioErrorBoundary>
       ) : null}
 
       {screen === 'legacy' && legacyOpen ? <LegacyViewer legacy={legacyOpen} /> : null}

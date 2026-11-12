@@ -412,7 +412,7 @@ export function FinalScreen(props: {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ color: T.bone, fontSize: 21, fontWeight: 700, letterSpacing: -0.3, minWidth: 0 }}>{film.title || 'Your film'}</div>
           <button type="button" className="s2v-fin-btn" onClick={props.onBackToBoard} style={{ minHeight: 38, padding: '7px 13px', fontSize: 12.5 }}>
-            <ArrowLeft size={13} /> Back to scene board
+            <ArrowLeft size={13} /> Fix a scene
           </button>
         </div>
 

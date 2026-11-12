@@ -208,7 +208,7 @@ function CastReview(props: {
     <section style={{ marginBottom: 14, background: T.card, border: `1px solid ${ready ? T.done : T.live}`, borderRadius: 13, padding: '15px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Cast approval · {cast.length || 'no clear characters'}</div>
+          <div style={{ color: T.bone, fontSize: 14, fontWeight: 800 }}>Cast approval · {cast.length || 'no cast yet'}</div>
           <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.55, marginTop: 4 }}>
             Generated from the full script. Review every quoted line and any field marked inferred. Approved sheets become reusable <span style={{ fontFamily: T.mono }}>@name</span> references and stay locked across all blocks.
           </div>
@@ -220,11 +220,11 @@ function CastReview(props: {
       </div>
       {!cast.length ? (
         <div style={{ marginTop: 12, background: T.raised, border: `1px solid ${T.line}`, borderRadius: 10, padding: 12 }}>
-          <div style={{ color: T.bone, fontSize: 14, fontWeight: 700 }}>This script needs no characters — Continue.</div>
-          <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>Add a cast member if identity must persist, or confirm that this is intentionally character-free.</div>
+          <div style={{ color: T.bone, fontSize: 14, fontWeight: 700 }}>No cast yet — add your presenter or main character.</div>
+          <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>Every video except pure motion design needs a cast: each person gets one locked reference sheet that rides with every block they appear in, so their face, hair and wardrobe stay the same. Only confirm no cast for a motion-design or graphics-only video.</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
             <button disabled={props.disabled} onClick={props.onAdd} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '8px 12px', fontSize: 12, cursor: 'pointer' }}><Plus size={12} /> Add character</button>
-            <button disabled={props.disabled || reviewed} onClick={props.onConfirmEmpty} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: reviewed ? T.raised : T.live, color: reviewed ? T.done : 'var(--vg-on-btn)', border: 'none', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} /> {reviewed ? 'No-cast plan confirmed' : 'Confirm no cast needed'}</button>
+            <button disabled={props.disabled || reviewed} onClick={props.onConfirmEmpty} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: reviewed ? T.raised : T.live, color: reviewed ? T.done : 'var(--vg-on-btn)', border: 'none', borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 750, cursor: 'pointer' }}><Check size={12} /> {reviewed ? 'Motion design — no cast confirmed' : 'Motion design only — no cast'}</button>
           </div>
         </div>
       ) : (
@@ -423,7 +423,9 @@ export default function RenderRoom(props: {
   const modelBlockers = Array.from(new Set([...incompatibleSpeakingScenes, ...unsupportedBackgroundScenes]));
   const signedInTabRequired = scenes.some((scene) => !durableModelIds.has(resolveVideoModel((scene.spec as VideoClipSpec)?.engine_id || film.video_model).id));
   const startReady = castReady && modelBlockers.length === 0 && !busy && !generating;
-  const startDisabledReason = missingSheets.length
+  const startDisabledReason = film.plan?.cast_reviewed !== true && !missingSheets.length && !unapprovedSheets.length
+    ? (characterSheets.length ? 'Approve the cast first.' : 'Add a character, or confirm this is motion design with no cast.')
+    : missingSheets.length
     ? `Add ${missingSheets[0]?.name || 'the missing character'}’s sheet.`
     : unapprovedSheets.length
       ? `Approve ${unapprovedSheets[0]?.name || 'the remaining character'}’s sheet.`
@@ -528,7 +530,7 @@ export default function RenderRoom(props: {
                   <div style={{ color: T.bone, fontSize: 15, fontWeight: 850 }}>{completed.length && startReady ? `Ready to continue · ${scenes.length - completed.length} block${scenes.length - completed.length === 1 ? '' : 's'} left` : startReady ? 'Ready to start production' : 'Finish these checks, then Start'}</div>
                   <div role="list" aria-label="Production readiness checks" style={{ display: 'grid', gap: 5, marginTop: 8 }}>
                     {[
-                      { label: 'Cast references approved', pass: !missingSheets.length && !unapprovedSheets.length, detail: missingSheets.length ? `${missingSheets.length} image${missingSheets.length === 1 ? '' : 's'} missing` : unapprovedSheets.length ? `${unapprovedSheets.length} sheet${unapprovedSheets.length === 1 ? '' : 's'} need review` : 'ready' },
+                      { label: 'Cast references approved', pass: film.plan?.cast_reviewed === true && !missingSheets.length && !unapprovedSheets.length, detail: film.plan?.cast_reviewed !== true && !missingSheets.length && !unapprovedSheets.length ? (characterSheets.length ? 'approve the cast' : 'add a character') : missingSheets.length ? `${missingSheets.length} image${missingSheets.length === 1 ? '' : 's'} missing` : unapprovedSheets.length ? `${unapprovedSheets.length} sheet${unapprovedSheets.length === 1 ? '' : 's'} need review` : 'ready' },
                       { label: 'Model and dialogue compatible', pass: !modelBlockers.length, detail: modelBlockers.length ? `${modelBlockers.length} conflict${modelBlockers.length === 1 ? '' : 's'}` : 'ready' },
                       { label: 'Exact scene timing saved', pass: scenes.length > 0 && scenes.every((scene) => sceneSeconds(film, scene) > 0), detail: `${scenes.length} big scene${scenes.length === 1 ? '' : 's'}` },
                     ].map((check) => <div key={check.label} role="listitem" style={{ minHeight: 28, display: 'flex', alignItems: 'center', gap: 7, color: check.pass ? T.done : T.fault, fontSize: 12 }}><span aria-hidden>{check.pass ? '✓' : '!'}</span><span style={{ color: T.bone }}>{check.label}</span><span style={{ color: T.dim }}>· {check.detail}</span></div>)}
@@ -1093,15 +1095,16 @@ function ScenePanel(props: {
         <div style={{ color: T.fault, fontSize: 12, marginTop: 10 }}><AlertTriangle size={11} style={{ display: 'inline', marginRight: 5, verticalAlign: '-1px' }} />Director flag: {s.validation.issues || 'does not match the segment'} — use “New prompt” below to redo it.</div>
       ) : null}
 
-      {s.status === 'completed' && s.asset_url && !film.plan?.background?.enabled ? (
+      {s.status === 'completed' && s.asset_url && (!film.plan?.background?.enabled || film.status === 'ready') ? (
         <div style={{ marginTop: 16, background: T.canvas, border: `1px solid ${T.dim}`, borderRadius: 11, padding: '13px 14px' }}>
-          <div style={{ color: T.bone, fontSize: 12.5, fontWeight: 750 }}>Targeted Edit · Google Omni 1.1 Flash</div>
+          <div style={{ color: T.bone, fontSize: 12.5, fontWeight: 750 }}>Fix this scene · Gemini Omni Flash</div>
+          <div style={{ color: T.muted, fontSize: 12, lineHeight: 1.5, marginTop: 4 }}>Omni Flash takes this finished clip as its input and changes only what you describe. Compare the result, then accept it — the film re-assembles automatically. Works on any scene, whichever model made it.</div>
           <div style={{ color: T.dim, fontSize: 12, lineHeight: 1.55, marginTop: 4 }}>
             Billable AI Edit uses the separate Gemini Omni 1.1 Flash existing-video operation. Its verified window is up to 8s. For this {Math.round(Number(s.duration_s || 0))}s source, the app edits <b style={{ color: T.bone }}>00:00–00:{String(Math.min(8, Math.round(Number(s.duration_s || 0)))).padStart(2, '0')}</b>, preserves the untouched remainder, then splices both parts into a new non-destructive version. Scene {s.idx + 1}'s immutable original and every other scene stay unchanged. Generate a revision, compare it, then Accept or Undo.
           </div>
           {omniEditSupported ? (
             <div style={{ marginTop: 10 }}>
-              <textarea value={editInstruction} onChange={(e) => { setEditInstruction(e.target.value); setEditAuthorized(false); }} rows={2} placeholder="Describe the desired result for this selected shot. Keep the request short and state what must remain unchanged." style={{ width: '100%', minWidth: 0, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '9px 10px', fontSize: 12, lineHeight: 1.5, resize: 'vertical' }} />
+              <textarea value={editInstruction} onChange={(e) => { setEditInstruction(e.target.value); setEditAuthorized(false); }} rows={2} placeholder="What should change in this clip? e.g. “Make her jacket red and keep everything else the same.”" style={{ width: '100%', minWidth: 0, background: T.raised, color: T.bone, border: `1px solid ${T.dim}`, borderRadius: 8, padding: '9px 10px', fontSize: 12, lineHeight: 1.5, resize: 'vertical' }} />
               <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 9, color: T.muted, fontSize: 12, lineHeight: 1.45 }}>
                 <input type="checkbox" checked={editAuthorized} onChange={(event) => setEditAuthorized(event.target.checked)} />
                 <span><b style={{ color: T.bone }}>Paid edit authorization:</b> planning reserve up to $0.40 for Scene {s.idx + 1} only; the provider quote/receipt is authoritative. No other scene is regenerated.</span>
